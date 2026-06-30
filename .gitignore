@@ -1,0 +1,8 @@
+# example run artifacts
+.tmp-work
+.run
+.*
+!.gitignore
+data
+*.log
+*.log.*
