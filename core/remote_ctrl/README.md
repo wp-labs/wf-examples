@@ -12,7 +12,8 @@
 
 ## 远端仓库
 
-- **wf-conf-example**:`https://github.com/wp-labs/wf-conf-example.git` — 提供 infra 组(conf/topology/connectors),也用作工作目录的初始项目来源
+- **wf-conf-example**:`https://github.com/wp-labs/wf-conf-example.git` — 提供 infra 组(conf/topology/connectors),也用作工作目录的初始项目来源;其 `conf/wfusion.toml` 自带 `[project_remote]` dual-repo 配置
+  - 引导版本:`v0.1.1`(含 `[project_remote]` 配置)
 - **wf-rules**:`https://github.com/wp-labs/wf-rules.git` — 提供 models 组(models/),本用例对它做版本切换
   - 初始版本:`v0.1.0`
   - 切换目标:`v0.1.1`
@@ -28,7 +29,7 @@ cd core/remote_ctrl
 
 ```bash
 CONF_REPO=https://github.com/wp-labs/wf-conf-example.git \
-RULES_REPO=https://github.com/wp-labs/wf-rules.git \
+CONF_INIT_VERSION=0.1.1 \
 INIT_VERSION=0.1.0 \
 TARGET_VERSION=0.1.1 \
 WORK_ROOT="$PWD/.tmp-work" \
@@ -37,11 +38,10 @@ WORK_ROOT="$PWD/.tmp-work" \
 
 ## 脚本流程
 
-1. `wfadm init --repo <wf-conf-example> --version 0.1.0` 从远端引导工作目录(建骨架 + 同步 managed dirs 到 v0.1.0)。
-2. 在 `conf/wfusion.toml` 追加 `[project_remote]` dual-repo 配置(models=wf-rules, infra=wf-conf-example)。
-3. `wfadm conf update --group models --version 0.1.0` 首次同步 models 组到 wf-rules v0.1.0。
-4. `wfadm conf update --group models --version 0.1.1` 切换 models 组到 v0.1.1。
-5. 校验 `.run/project_remote_state.json` 的 `models.version` 已切换,且 `models/rules/` 规则文件就位。
+1. `wfadm init --repo <wf-conf-example> --version 0.1.1` 从远端引导工作目录(建骨架 + 同步 managed dirs;拉下的 `conf/wfusion.toml` 已含 `[project_remote]` dual-repo 配置)。
+2. `wfadm conf update --group models --version 0.1.0` 首次同步 models 组到 wf-rules v0.1.0。
+3. `wfadm conf update --group models --version 0.1.1` 切换 models 组到 v0.1.1。
+4. 校验 `.run/project_remote_state.json` 的 `models.version` 已切换,且 `models/rules/` 规则文件就位。
 
 ## 说明
 

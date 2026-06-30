@@ -15,7 +15,9 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 CONF_REPO="${CONF_REPO:-https://github.com/wp-labs/wf-conf-example.git}"
-RULES_REPO="${RULES_REPO:-https://github.com/wp-labs/wf-rules.git}"
+# wf-conf-example tag carrying the [project_remote] config (bootstrap target)
+CONF_INIT_VERSION="${CONF_INIT_VERSION:-0.1.1}"
+# wf-rules models-group versions (first sync → switch)
 INIT_VERSION="${INIT_VERSION:-0.1.0}"
 TARGET_VERSION="${TARGET_VERSION:-0.1.1}"
 WORK_ROOT="${WORK_ROOT:-$PWD/.tmp-work}"
@@ -29,26 +31,11 @@ for cmd in wfadm; do
   fi
 done
 
-echo "1> bootstrap work root from $CONF_REPO via wfadm init --repo"
+echo "1> bootstrap work root from $CONF_REPO @ $CONF_INIT_VERSION via wfadm init --repo"
 rm -rf "$WORK_ROOT"
-wfadm init --dir "$WORK_ROOT" --repo "$CONF_REPO" --version "$INIT_VERSION" >/dev/null
+wfadm init --dir "$WORK_ROOT" --repo "$CONF_REPO" --version "$CONF_INIT_VERSION" >/dev/null
 
-echo "2> append [project_remote] dual-repo config (models=wf-rules, infra=wf-conf-example)"
-cat >> "$WORK_ROOT/conf/wfusion.toml" <<EOF
-
-[project_remote]
-enabled = true
-
-[project_remote.models]
-repo = "$RULES_REPO"
-init_version = "$INIT_VERSION"
-
-[project_remote.infra]
-repo = "$CONF_REPO"
-init_version = "$INIT_VERSION"
-EOF
-
-echo "3> conf update models group to $INIT_VERSION"
+echo "2> conf update models group to $INIT_VERSION (rules from wf-rules)"
 wfadm conf update --work-root "$WORK_ROOT" --group models --version "$INIT_VERSION" --json
 
 if [[ ! -f "$STATE_FILE" ]]; then
@@ -62,7 +49,7 @@ if ! grep -Eq "\"version\"[[:space:]]*:[[:space:]]*\"$INIT_VERSION\"" "$STATE_FI
 fi
 echo "   models group at $INIT_VERSION ✓"
 
-echo "4> conf update models group to $TARGET_VERSION (version switch)"
+echo "3> conf update models group to $TARGET_VERSION (version switch)"
 wfadm conf update --work-root "$WORK_ROOT" --group models --version "$TARGET_VERSION" --json
 
 if ! grep -Eq "\"version\"[[:space:]]*:[[:space:]]*\"$TARGET_VERSION\"" "$STATE_FILE"; then
@@ -72,7 +59,7 @@ if ! grep -Eq "\"version\"[[:space:]]*:[[:space:]]*\"$TARGET_VERSION\"" "$STATE_
 fi
 echo "   models group switched to $TARGET_VERSION ✓"
 
-echo "5> verify models dir was synced from $RULES_REPO"
+echo "4> verify models dir was synced from wf-rules"
 if [[ ! -f "$WORK_ROOT/models/rules/01-recon/port_scan.wfl" ]]; then
   echo "Error: expected rule file missing after sync"
   exit 1
