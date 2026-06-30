@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
-# remote_ctrl — demonstrate `wfadm conf update` remote rule-source sync.
+# remote_ctrl — demonstrate `wfadm init --repo` + `wfadm conf update` remote
+# rule-source sync. Mirrors wparse's wp-examples/core/remote_ctrl.
 #
-# Mirrors wparse's wp-examples/core/remote_ctrl but adapted to wfusion's
-# current capability: `wfadm conf update` (offline sync + validate). wfusion
-# does not yet have `init --repo` or admin_api reload, so this example seeds
-# the work root from wf-conf-example and exercises version switching on the
-# models group (wf-rules: v0.1.0 → v0.1.1).
+# Flow:
+#   1. `wfadm init --repo wf-conf-example@v0.1.1` bootstraps the work root;
+#      the pulled conf/wfusion.toml already carries [project_remote] dual-repo
+#      config (models=wf-rules, infra=wf-conf-example).
+#   2-3. `wfadm conf update --group models` switches the models group from
+#      wf-rules v0.1.0 → v0.1.1.
+#   4. Verify models were synced from wf-rules (rules use the 01-recon/...
+#      layout that wf-conf-example does not have).
 #
-# Dual-repo layout:
-#   - infra  ← wf-conf-example (conf/topology/connectors)
-#   - models ← wf-rules        (models/), the group we switch versions on
+# wfusion does not yet have admin_api reload (online switch); this example
+# covers the offline `conf update` path only.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -60,8 +63,11 @@ fi
 echo "   models group switched to $TARGET_VERSION ✓"
 
 echo "4> verify models dir was synced from wf-rules"
+# wf-rules uses categorized rule dirs (models/rules/01-recon/...); wf-conf-example
+# uses a flat layout (models/rules/port_scan.wfl). The 01-recon path is therefore
+# wf-rules-specific — its presence proves the models group was replaced.
 if [[ ! -f "$WORK_ROOT/models/rules/01-recon/port_scan.wfl" ]]; then
-  echo "Error: expected rule file missing after sync"
+  echo "Error: expected wf-rules rule layout missing after sync"
   exit 1
 fi
 echo "   models/rules present ✓"
