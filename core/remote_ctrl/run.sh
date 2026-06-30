@@ -22,18 +22,18 @@ WORK_ROOT="${WORK_ROOT:-$PWD/.tmp-work}"
 
 STATE_FILE="$WORK_ROOT/.run/project_remote_state.json"
 
-for cmd in wfadm git; do
+for cmd in wfadm; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "Error: command '$cmd' not found in PATH"
     exit 1
   fi
 done
 
-echo "1> prepare work root from $CONF_REPO"
+echo "1> bootstrap work root from $CONF_REPO via wfadm init --repo"
 rm -rf "$WORK_ROOT"
-git clone --quiet "$CONF_REPO" "$WORK_ROOT"
+wfadm init --dir "$WORK_ROOT" --repo "$CONF_REPO" --version "$INIT_VERSION" >/dev/null
 
-echo "2> append [project_remote] dual-repo config"
+echo "2> append [project_remote] dual-repo config (models=wf-rules, infra=wf-conf-example)"
 cat >> "$WORK_ROOT/conf/wfusion.toml" <<EOF
 
 [project_remote]

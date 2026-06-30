@@ -37,15 +37,15 @@ WORK_ROOT="$PWD/.tmp-work" \
 
 ## 脚本流程
 
-1. 从 `wf-conf-example` clone 出工作目录(得到 conf/topology/connectors/models)。
+1. `wfadm init --repo <wf-conf-example> --version 0.1.0` 从远端引导工作目录(建骨架 + 同步 managed dirs 到 v0.1.0)。
 2. 在 `conf/wfusion.toml` 追加 `[project_remote]` dual-repo 配置(models=wf-rules, infra=wf-conf-example)。
-3. `wfadm conf update --group models --version 0.1.0` 首次同步 models 组到 v0.1.0。
+3. `wfadm conf update --group models --version 0.1.0` 首次同步 models 组到 wf-rules v0.1.0。
 4. `wfadm conf update --group models --version 0.1.1` 切换 models 组到 v0.1.1。
 5. 校验 `.run/project_remote_state.json` 的 `models.version` 已切换,且 `models/rules/` 规则文件就位。
 
 ## 说明
 
-- 本用例依赖网络访问(clone 远端 git 仓库)。
+- 本用例依赖网络访问(`wfadm init --repo` / `conf update` 会 clone 远端 git 仓库)。
 - 工作目录保留在 `.tmp-work` 下,便于失败后排查。
-- 本用例只覆盖 `wfadm conf update`(离线 sync + 校验)。`wfadm init --repo`(远端引导)和 admin_api reload(在线切换)尚未实现,待后续补齐后将扩展为完整的 init → daemon → reload 链路(对齐 wparse remote_ctrl)。
+- 覆盖 `wfadm init --repo`(远端引导)+ `wfadm conf update`(离线 sync + 校验)。admin_api reload(在线切换)尚未实现,待后续补齐后将扩展为完整的 init → daemon → reload 链路(对齐 wparse remote_ctrl)。
 - wf-rules 的 `models/` 在 v0.1.0 与 v0.1.1 之间内容相同(仅根 `version.txt` 变化),因此版本切换体现在 state 文件的 `models.version`,而非 `models/` 目录内容变化。
