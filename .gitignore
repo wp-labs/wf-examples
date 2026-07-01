@@ -1,5 +1,6 @@
 # example run artifacts
 .tmp-work
+tmp-work
 .run
 .*
 !.gitignore
