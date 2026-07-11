@@ -1,0 +1,27 @@
+# wf-rules smoke test config.
+#
+# This config intentionally uses batch/file replay instead of TCP so it can be
+# used as a deterministic availability check for the rule set.
+# mode 由 CLI 控制: wfusion batch
+
+sinks = "topology/sinks"
+windows = "models/schemas/windows.toml"
+
+[[sources]]
+connect = "file_src"
+enable = true
+name = "seed_conn_events"
+path = "data/generated/port_scan_quick.jsonl"
+stream_tag = "conn_events"
+data_format = "ndjson"
+
+[runtime]
+executor_parallelism = 4
+rule_exec_timeout = "30s"
+schemas = "models/schemas/*.wfs"
+rules = "models/rules/01-recon/port_scan.wfl"
+
+[logging]
+level = "info"
+format = "plain"
+file = "data/wfusion.log"

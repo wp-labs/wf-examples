@@ -4,10 +4,10 @@
 # ===========================================================================
 # 验证范围:
 #   远端运维 → 本地 bootstrap → 规则版本切换 → daemon 启动 →
-#   admin_api 在线热重载 (L1/L2/L4)
+#   admin_api 在线热重载/发布 (L1/L2/blocked)
 #
 # 对应 wparse 的 wp-examples/core/remote_ctrl,在 wfusion 中补齐了
-# admin_api reload(在线热切换)部分。
+# admin_api reload/publish(在线热切换/发布)部分。
 #
 # 前置条件:
 #   - wfusion / wfadm / curl 在 PATH 中(通过 gx run build 安装到 $HOME/bin)
@@ -16,30 +16,76 @@
 #
 # 验证的 reload 能力分层(对应设计文档 docs/design/admin_api_reload_design.md §11):
 #   L1: 规则热替换(改 score,不改 window/schema) → 200
-#   L2: 增量新增(pipeline 规则产生内部窗口) → 200
-#   L4: full=true + 阻断变更 → 202 + 进程重启(退出码 75)
+#   L2: admin_api update=true + group/version 在线发布 → 200
+#   blocked: 阻断变更 → 409 + reload_failed
 #   (L3 修改现有 window schema 由单元/集成测试覆盖,未在本脚本中验证)
 #
 # 流程:
 #   步骤 1-4.  wfadm init --repo + conf update 版本切换(离线 sync)
 #   步骤 5.    启动 daemon + admin_api
 #   步骤 6.    L1: 修改已有规则(score 70.0→99.0)→ POST reload → 200
-#   步骤 7.    L2: conf update v0.1.2(pipeline 规则)→ POST reload → 200
+#   步骤 7.    L2: POST update=true group=models version=v0.1.6 → 200
 #   步骤 8.    status 端点:引擎健康检查
 #   步骤 9.    鉴权:无 token → 401
-#   步骤 10.   L4: full=true + blocked(改 over_cap)→ 202 + daemon 退出
+#   步骤 10.   blocked: 修改 over_cap → 409 + reload_failed
 # ===========================================================================
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
+DAEMON_PID=""
+
+cleanup() {
+  if [[ -n "${DAEMON_PID:-}" ]]; then
+    kill "$DAEMON_PID" 2>/dev/null || true
+    wait "$DAEMON_PID" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
+
+assert_stream_tag_config() {
+  local root="$1"
+  local legacy
+
+  legacy=$(
+    find "$root/conf" "$root/models" "$root/topology" "$root/test" \
+      -type f \( -name '*.toml' -o -name '*.wfs' \) -print0 |
+      xargs -0 grep -nE '^[[:space:]]*stream[[:space:]]*=' 2>/dev/null || true
+  )
+  if [[ -n "$legacy" ]]; then
+    echo "错误: 同步后的 case 仍包含旧配置字段 stream =,请更新远端版本为 stream_tag ="
+    echo "$legacy"
+    exit 1
+  fi
+
+  if ! grep -R "stream_tag" "$root/conf" "$root/models" "$root/topology" "$root/test" >/dev/null 2>&1; then
+    echo "错误: 同步后的 case 未包含 stream_tag 配置"
+    exit 1
+  fi
+}
+
+assert_models_version() {
+  local expected="$1"
+  local normalized="${expected#v}"
+  local tag="v$normalized"
+
+  if grep -Eq "\"version\"[[:space:]]*:[[:space:]]*\"($expected|$normalized)\"" "$STATE_FILE" ||
+     grep -Eq "\"tag\"[[:space:]]*:[[:space:]]*\"($expected|$tag)\"" "$STATE_FILE"; then
+    return 0
+  fi
+
+  echo "错误: models 组未同步到 $expected"
+  cat "$STATE_FILE"
+  exit 1
+}
 
 # -- 远端仓库/版本配置(可通过环境变量覆盖) --------------------------------
 CONF_REPO="${CONF_REPO:-https://github.com/wp-labs/wf-conf-example.git}"
 # wf-conf-example 中携带 [project_remote] 配置的 tag(bootstrap 目标)
-CONF_INIT_VERSION="${CONF_INIT_VERSION:-0.1.1}"
+CONF_INIT_VERSION="${CONF_INIT_VERSION:-v0.1.3}"
 # wf-rules models 组的版本(first sync → switch)
-INIT_VERSION="${INIT_VERSION:-0.1.0}"
-TARGET_VERSION="${TARGET_VERSION:-0.1.1}"
+INIT_VERSION="${INIT_VERSION:-v0.1.5}"
+TARGET_VERSION="${TARGET_VERSION:-v0.1.6}"
+L2_VERSION="${L2_VERSION:-v0.1.6}"
 WORK_ROOT="${WORK_ROOT:-$PWD/.tmp-work}"
 
 STATE_FILE="$WORK_ROOT/.run/project_remote_state.json"
@@ -67,21 +113,13 @@ if [[ ! -f "$STATE_FILE" ]]; then
   echo "错误: 状态文件未创建: $STATE_FILE"
   exit 1
 fi
-if ! grep -Eq "\"version\"[[:space:]]*:[[:space:]]*\"$INIT_VERSION\"" "$STATE_FILE"; then
-  echo "错误: models 组未同步到 $INIT_VERSION"
-  cat "$STATE_FILE"
-  exit 1
-fi
+assert_models_version "$INIT_VERSION"
 echo "   ✓ models 组已同步到 $INIT_VERSION"
 
 echo "步骤 3> 切换 models 组到 $TARGET_VERSION (版本切换)"
 wfadm conf update --work-root "$WORK_ROOT" --group models --version "$TARGET_VERSION" --json
 
-if ! grep -Eq "\"version\"[[:space:]]*:[[:space:]]*\"$TARGET_VERSION\"" "$STATE_FILE"; then
-  echo "错误: models 组未切换到 $TARGET_VERSION"
-  cat "$STATE_FILE"
-  exit 1
-fi
+assert_models_version "$TARGET_VERSION"
 echo "   ✓ models 组已切换到 $TARGET_VERSION"
 
 echo "步骤 4> 验证 models 目录已从 wf-rules 同步"
@@ -93,9 +131,11 @@ if [[ ! -f "$WORK_ROOT/models/rules/01-recon/port_scan.wfl" ]]; then
   exit 1
 fi
 echo "   ✓ models/rules 目录存在"
+assert_stream_tag_config "$WORK_ROOT"
+echo "   ✓ stream_tag 配置契约已验证"
 
-# wf-rules 使用嵌套目录布局,但 wf-conf-example 的配置使用扁平 glob。
-# 更新规则 glob 使其匹配嵌套目录。
+# wf-rules 使用嵌套目录布局,但早期 wf-conf-example 的配置使用扁平 glob。
+# 新版本已自带递归 glob；这里保留兼容替换。
 sed -i.bak2 's|models/rules/\*.wfl|models/rules/**/*.wfl|' "$WORK_ROOT/conf/wfusion.toml"
 
 # -- 步骤 5: 启动 daemon + admin_api ----------------------------------------
@@ -125,7 +165,6 @@ sleep 5
 ADMIN_ADDR=$(grep -o 'http://127\.0\.0\.1:[0-9]*' "$wfadmlog" | head -1 | sed 's|http://||')
 if [[ -z "$ADMIN_ADDR" ]]; then
   echo "错误: admin_api 未在 5 秒内启动"
-  kill "$DAEMON_PID" 2>/dev/null || true
   exit 1
 fi
 echo "   ✓ admin_api 已监听 http://$ADMIN_ADDR"
@@ -145,44 +184,41 @@ BODY=$(echo "$RESP" | sed '$d')
 if [[ "$HTTP_CODE" != "200" ]]; then
   echo "错误: L1 规则热替换应返回 200,实际返回 $HTTP_CODE"
   echo "$BODY"
-  kill "$DAEMON_PID" 2>/dev/null || true
   exit 1
 fi
-if ! echo "$BODY" | grep -q '"result".*"applied"'; then
-  echo "错误: L1 热替换结果不是 'applied'"
+if ! echo "$BODY" | grep -q '"result".*"reload_done"'; then
+  echo "错误: L1 热替换结果不是 'reload_done'"
   echo "$BODY"
-  kill "$DAEMON_PID" 2>/dev/null || true
   exit 1
 fi
 echo "   ✓ L1 热替换成功 (score 70.0 → 99.0)"
 
 # -- 步骤 7: L2 验证 (增量新增) --------------------------------------------
-echo "步骤 7> [L2] 增量新增: conf update v0.1.2 (拉取 pipeline 规则) + 在线 reload"
-wfadm conf update --work-root "$WORK_ROOT" --group models --version "0.1.2" --json >/dev/null
-if ! grep -q '"version".*"0.1.2"' "$STATE_FILE"; then
-  echo "错误: models 组未同步到 0.1.2"
-  exit 1
-fi
-echo "   ✓ models 组已更新到 0.1.2"
+echo "步骤 7> [L2] 在线发布: admin_api update=true group=models version=$L2_VERSION"
 RESP=$(curl -s -w "\n%{http_code}" -X POST "http://$ADMIN_ADDR/admin/v1/reloads/model" \
   -H "Authorization: $RELOAD_AUTH" \
   -H "Content-Type: application/json" \
-  -d '{}')
+  -d "{\"update\":true,\"group\":\"models\",\"version\":\"$L2_VERSION\",\"reason\":\"remote_ctrl-l2\"}")
 HTTP_CODE=$(echo "$RESP" | tail -1)
 BODY=$(echo "$RESP" | sed '$d')
 if [[ "$HTTP_CODE" != "200" ]]; then
-  echo "错误: L2 增量新增应返回 200,实际返回 $HTTP_CODE"
+  echo "错误: L2 在线发布应返回 200,实际返回 $HTTP_CODE"
   echo "$BODY"
-  kill "$DAEMON_PID" 2>/dev/null || true
   exit 1
 fi
-if ! echo "$BODY" | grep -q '"result".*"applied"'; then
-  echo "错误: L2 增量新增结果不是 'applied'"
+assert_models_version "$L2_VERSION"
+if ! echo "$BODY" | grep -q '"result".*"reload_done"'; then
+  echo "错误: L2 在线发布结果不是 'reload_done'"
   echo "$BODY"
-  kill "$DAEMON_PID" 2>/dev/null || true
   exit 1
 fi
-echo "   ✓ L2 增量新增成功 (pipeline 规则产生内部窗口)"
+L2_NORMALIZED="${L2_VERSION#v}"
+if ! echo "$BODY" | grep -Eq "\"current_version\"[[:space:]]*:[[:space:]]*\"($L2_VERSION|$L2_NORMALIZED)\""; then
+  echo "错误: L2 响应未返回 current_version=$L2_VERSION"
+  echo "$BODY"
+  exit 1
+fi
+echo "   ✓ L2 在线发布成功 (models=$L2_VERSION, reload-test 规则已应用)"
 
 # -- 步骤 8: status 端点验证 ------------------------------------------------
 echo "步骤 8> 验证 status 端点 (L1+L2 之后引擎健康)"
@@ -190,13 +226,12 @@ STATUS=$(curl -s -w "\n%{http_code}" -X GET "http://$ADMIN_ADDR/admin/v1/runtime
   -H "Authorization: $RELOAD_AUTH")
 HTTP_CODE=$(echo "$STATUS" | tail -1)
 BODY=$(echo "$STATUS" | sed '$d')
-if [[ "$HTTP_CODE" != "200" ]] || ! echo "$BODY" | grep -q '"accepting".*true'; then
+if [[ "$HTTP_CODE" != "200" ]] || ! echo "$BODY" | grep -q '"accepting_commands".*true'; then
   echo "错误: status 端点异常"
   echo "$BODY"
-  kill "$DAEMON_PID" 2>/dev/null || true
   exit 1
 fi
-echo "   ✓ status: accepting=true (引擎正常运行)"
+echo "   ✓ status: accepting_commands=true (引擎正常运行)"
 
 # -- 步骤 9: 鉴权验证 -------------------------------------------------------
 echo "步骤 9> 验证 bearer 鉴权: 无 token → 401"
@@ -206,42 +241,32 @@ RESP=$(curl -s -w "\n%{http_code}" -X POST "http://$ADMIN_ADDR/admin/v1/reloads/
 HTTP_CODE=$(echo "$RESP" | tail -1)
 if [[ "$HTTP_CODE" != "401" ]]; then
   echo "错误: 无 token 应返回 401,实际返回 $HTTP_CODE"
-  kill "$DAEMON_PID" 2>/dev/null || true
   exit 1
 fi
 echo "   ✓ 无 token 正确返回 401"
 
-# -- 步骤 10: L4 验证 (full 重启) -------------------------------------------
-echo "步骤 10> [L4] full=true + 阻断变更 (改 over_cap 30m→1h) → 进程重启"
+# -- 步骤 10: blocked 验证 --------------------------------------------------
+echo "步骤 10> [blocked] 阻断变更 (改 over_cap 30m→1h) → 409 + reload_failed"
 # 修改 over_cap 触发 raw-diff 阻断(类型=Windows,需重启)
-sed -i.bak2 's/over_cap = "30m"/over_cap = "1h"/' "$WORK_ROOT/conf/wfusion.toml"
+sed -i.bak2 's/over_cap = "30m"/over_cap = "1h"/' "$WORK_ROOT/models/schemas/windows.toml"
 RESP=$(curl -s -w "\n%{http_code}" -X POST "http://$ADMIN_ADDR/admin/v1/reloads/model" \
   -H "Authorization: $RELOAD_AUTH" \
   -H "Content-Type: application/json" \
-  -d '{"full": true}')
+  -d '{"reason":"remote_ctrl-blocked"}')
 HTTP_CODE=$(echo "$RESP" | tail -1)
 BODY=$(echo "$RESP" | sed '$d')
-if [[ "$HTTP_CODE" != "202" ]]; then
-  echo "错误: full 重启应返回 202,实际返回 $HTTP_CODE"
+if [[ "$HTTP_CODE" != "409" ]]; then
+  echo "错误: 阻断变更应返回 409,实际返回 $HTTP_CODE"
   echo "$BODY"
-  kill "$DAEMON_PID" 2>/dev/null || true
   exit 1
 fi
-if ! echo "$BODY" | grep -q '"result".*"restarting"'; then
-  echo "错误: full 重启结果不是 'restarting'"
+if ! echo "$BODY" | grep -q '"result".*"reload_failed"'; then
+  echo "错误: 阻断变更结果不是 'reload_failed'"
   echo "$BODY"
-  kill "$DAEMON_PID" 2>/dev/null || true
   exit 1
 fi
-echo "   ✓ L4 full 重启已接受 (daemon 将退出)"
+echo "   ✓ 阻断变更被正确拒绝 (daemon 继续运行)"
 
-# 等待 daemon 优雅退出
-if ! wait "$DAEMON_PID" 2>/dev/null; then
-  EXIT_CODE=$?
-  echo "   daemon 退出码: $EXIT_CODE (预期 0 或 75)"
-else
-  echo "   daemon 已退出"
-fi
 echo "=============================================="
-echo "  通过: 全链路验证成功 (L1+L2+L4)"
+echo "  通过: 全链路验证成功 (L1+L2+blocked)"
 echo "=============================================="

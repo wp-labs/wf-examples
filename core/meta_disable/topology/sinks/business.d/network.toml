@@ -1,0 +1,10 @@
+[sink_group]
+name = "network_out"
+windows = ["network_alerts"]
+wf_meta_disable = ["__wfu_id","__wfu_entity_id"]
+[[sink_group.sinks]]
+connect = "file_json_sink"
+name = "network_file"
+[sink_group.sinks.params]
+base = "data/alerts"
+file = "network.ndjson"

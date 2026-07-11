@@ -7,3 +7,4 @@ tmp-work
 data
 *.log
 *.log.*
+core/meta_disable/data

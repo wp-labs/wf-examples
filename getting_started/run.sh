@@ -15,6 +15,27 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
+assert_stream_tag_config() {
+  local root="$1"
+  local legacy
+
+  legacy=$(
+    find "$root/conf" "$root/models" "$root/topology" "$root/test" \
+      -type f \( -name '*.toml' -o -name '*.wfs' \) -print0 |
+      xargs -0 grep -nE '^[[:space:]]*stream[[:space:]]*=' 2>/dev/null || true
+  )
+  if [[ -n "$legacy" ]]; then
+    echo "错误: 生成的 case 仍包含旧配置字段 stream =,请更新为 stream_tag ="
+    echo "$legacy"
+    exit 1
+  fi
+
+  if ! grep -R "stream_tag" "$root/conf" "$root/models" "$root/topology" "$root/test" >/dev/null 2>&1; then
+    echo "错误: 生成的 case 未包含 stream_tag 配置"
+    exit 1
+  fi
+}
+
 # 检查前置命令
 for cmd in wfadm wfusion wfgen; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -32,7 +53,9 @@ echo ""
 echo "步骤 1> wfadm init 初始化项目"
 rm -rf tmp-work
 wfadm init --dir tmp-work --mode normal
+assert_stream_tag_config "tmp-work"
 echo "   ✓ 项目已创建: tmp-work"
+echo "   ✓ stream_tag 配置契约已验证"
 echo "   (可用 ls tmp-work 查看生成的文件)"
 
 # 步骤 2: smoke 测试 (batch replay + 验证)
