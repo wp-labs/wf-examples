@@ -1,4 +1,4 @@
-// 网络流事件 — 用于内存稳定性验证
+// 网络流事件 — 吞吐压测（多事件类型 + 结构化字段）
 window conn_events {
     stream_tag = "conn_events"
     time = event_time
@@ -17,7 +17,21 @@ window conn_events {
     }
 }
 
-// 告警输出（本 case 规则阈值极高不会触发，仅保证管道完整）
+// 登录认证事件 — 第二类事件源
+window auth_events {
+    stream_tag = "auth_events"
+    time = event_time
+    over = 2m
+    fields {
+        source_ip: ip
+        user: chars
+        result: chars
+        dest_ip: ip
+        event_time: time
+    }
+}
+
+// 告警输出
 window network_alerts {
     over = 0
     fields {
@@ -26,5 +40,6 @@ window network_alerts {
         alert_type: chars
         detail: chars
         request_count: digit
+        uid: chars
     }
 }

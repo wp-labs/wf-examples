@@ -17,3 +17,8 @@ over_cap = "5m"
 mode = "local"
 max_window_bytes = "16MB"
 over_cap = "0s"
+
+[window.auth_events]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "5m"
