@@ -2,14 +2,17 @@
 
 测量 wfusion 引擎的**输入处理吞吐**（events/sec），验证单机单实例能持续处理 **1W 事件/秒**以上。
 
-## 实测结果（macOS, executor_parallelism=4）
+## 实测结果（macOS, executor_parallelism=4, **release** 二进制）
 
 | 模式 | 事件数 | 实测 EPS | 目标 |
 |---|---|---|---|
-| `burst`   | 100000 | **~40000** | ≥ 10000 ✓ |
-| `sustain` | 60000  | **~34000** | ≥ 10000 ✓ |
+| `burst`   | 200000 | **~150,000** | ≥ 10000 ✓ |
+| `sustain` | 200000 | **~92,000** | ≥ 10000 ✓ |
+| `burst distinct` | 200000 | **~153,000** | ≥ 10000 ✓ |
 
-（不同机器/CPU 会有差异；`row/s` 峰值实测约 5 万/s。）
+> **release vs debug**：压测默认用 `target/release`（`PROFILE=release`，run.sh 自动解析）。
+> debug 构建显著偏慢（实测 ~40k EPS）—— 报告 EPS 请始终用 release。
+> 不同机器/CPU 会有差异；daemon 关闭时 res 汇总表的 `row/s max` 是引擎真实接收峰值。
 
 ## 三种规则压力面（`--mode` 参数）
 
@@ -22,12 +25,14 @@
 ## 运行
 
 ```bash
-./run.sh burst 100000 pool    # 峰值吞吐（默认）
-./run.sh sustain 60000 pool   # 持续吞吐
-./run.sh burst 100000 distinct # 实例 churn 压力
+./run.sh burst 200000 pool      # 峰值吞吐（默认，release）
+./run.sh sustain 200000 pool    # 持续吞吐
+./run.sh burst 200000 distinct  # 实例 churn 压力
+PROFILE=debug ./run.sh burst 50000 pool   # 显式 debug（对比用）
 ```
 
-依赖：`wfusion` / `wfgen` 在 PATH（或用 `WFUSION=/path WFGEN=/path` 覆盖）、`nc`。
+依赖：默认用 `REPO_ROOT/target/{release,debug}`（REPO_ROOT=../warp-fusion），找不到回退 PATH
+（或用 `WFUSION=/path WFGEN=/path` 显式覆盖）、`nc`。
 
 ## 指标说明
 

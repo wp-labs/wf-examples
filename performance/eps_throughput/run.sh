@@ -9,8 +9,16 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-WFUSION=${WFUSION:-wfusion}
-WFGEN=${WFGEN:-wfgen}
+PROFILE="${PROFILE:-release}"   # release | debug — 压测默认 release（debug 显著偏慢）
+REPO_ROOT="${REPO_ROOT:-$(cd ../../../warp-fusion && pwd)}"  # 默认 warp-fusion 根
+if [ -x "$REPO_ROOT/target/$PROFILE/wfusion" ] && [ -x "$REPO_ROOT/target/$PROFILE/wfgen" ]; then
+  WFUSION="${WFUSION:-$REPO_ROOT/target/$PROFILE/wfusion}"
+  WFGEN="${WFGEN:-$REPO_ROOT/target/$PROFILE/wfgen}"
+else
+  WFUSION="${WFUSION:-wfusion}"
+  WFGEN="${WFGEN:-wfgen}"
+  echo "   （未找到 $PROFILE 二进制，回退 PATH：$WFUSION / $WFGEN）" >&2
+fi
 PY=${PYTHON:-python3}
 PORT=9800
 METRICS=data/metrics.ndjson
@@ -21,7 +29,7 @@ MODE_GEN="${3:-pool}"   # global | distinct | pool
 mkdir -p data
 rm -f "$METRICS" data/*.ndjson data/wfusion.log data/daemon.log data/*.jsonl
 
-echo "==> 0. 启动 daemon（TCP 源 + 指标，report_interval=1s）"
+echo "==> 0. 启动 daemon（TCP 源 + 指标，report_interval=1s） profile=$PROFILE"
 "$WFUSION" daemon --config conf/wfusion.toml --work-dir . > data/daemon.log 2>&1 &
 DAEMON_PID=$!
 trap 'kill $DAEMON_PID 2>/dev/null || true' EXIT
