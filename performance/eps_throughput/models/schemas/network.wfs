@@ -1,0 +1,30 @@
+// 网络流事件 — 用于内存稳定性验证
+window conn_events {
+    stream_tag = "conn_events"
+    time = event_time
+    over = 2m
+    fields {
+        sip: ip
+        dip: ip
+        dport: digit
+        bytes: digit
+        bytes_in: digit
+        bytes_out: digit
+        protocol: chars
+        action: chars
+        duration: digit
+        event_time: time
+    }
+}
+
+// 告警输出（本 case 规则阈值极高不会触发，仅保证管道完整）
+window network_alerts {
+    over = 0
+    fields {
+        sip: ip
+        dip: ip
+        alert_type: chars
+        detail: chars
+        request_count: digit
+    }
+}

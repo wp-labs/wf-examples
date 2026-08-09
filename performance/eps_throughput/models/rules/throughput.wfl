@@ -1,0 +1,48 @@
+use "network.wfs"
+
+// 全局实例：所有事件进同一个实例做 count 累加 —— 最纯的引擎吞吐路径。
+// 阈值 1 亿几乎不触发 → 不产生告警，只测输入处理速率。
+rule global_throughput {
+    events {
+        c : conn_events
+    }
+    match<:1m> {
+        on event { c | count >= 100000000; }
+    } -> score(10.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "global_throughput",
+        detail = "per-event processing, no fire",
+        request_count = 1
+    )
+
+    limits {
+        max_memory = "512MB";
+        max_instances = 1;
+        on_exceed = throttle;
+    }
+}
+
+// 每 sip 一个实例：事件触发实例 map 的 get/insert/update —— 更贴近真实规则的压力。
+rule per_sip_instances {
+    events {
+        c : conn_events
+    }
+    match<sip:1m> {
+        on event { c | count >= 100000000; }
+    } -> score(10.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "per_sip_instances",
+        detail = "per-sip instance churn",
+        request_count = 1
+    )
+
+    limits {
+        max_memory = "512MB";
+        max_instances = 1000000;
+        on_exceed = throttle;
+    }
+}
