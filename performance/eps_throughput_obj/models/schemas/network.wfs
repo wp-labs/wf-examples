@@ -1,4 +1,4 @@
-// 网络流事件 — 吞吐压测（多事件类型 + 结构化字段 + #18 object 字段回归）
+// 网络流事件 — 20 规则综合压测（多事件类型 + 富数据类型 + #18 object 字段回归）
 window conn_events {
     stream_tag = "conn_events"
     time = event_time
@@ -18,6 +18,11 @@ window conn_events {
         // Arrow IPC 往返会膨胀 get_array_memory_size，超过 max_window_bytes
         // 被窗口内存驱逐静默丢弃——验证按内容记账后不再误触发。
         conn_info: object
+        // 富数据类型
+        blocked: bool
+        packet_rate: float
+        app_id: chars
+        tags: array/chars
     }
 }
 
@@ -31,6 +36,23 @@ window auth_events {
         user: chars
         result: chars
         dest_ip: ip
+        attempts: digit
+        agent: chars
+        risk: float
+        event_time: time
+    }
+}
+
+// DNS 查询事件 — 第三类事件源（avg/min/max 聚合路径）
+window dns_events {
+    stream_tag = "dns_events"
+    time = event_time
+    over = 2m
+    fields {
+        sip: ip
+        domain: chars
+        query_type: chars
+        resp_size: digit
         event_time: time
     }
 }

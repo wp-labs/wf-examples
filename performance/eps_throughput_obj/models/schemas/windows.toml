@@ -22,3 +22,8 @@ over_cap = "0s"
 mode = "local"
 max_window_bytes = "256MB"
 over_cap = "5m"
+
+[window.dns_events]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "5m"

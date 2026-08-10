@@ -1,5 +1,17 @@
 use "network.wfs"
 
+// =====================================================================
+// 20 规则综合压测 — 覆盖主要引擎路径
+//   1-6  : 纯路径/实例/guard+distinct/多事件+close/sum/accu（核心 #18 门禁）
+//   7-9  : avg / max / min 聚合
+//   10   : 多步序列（seq）
+//   11   : distinct 端口计数
+//   12-16: float / bool / object 嵌套(#64) / array / hex 数据类型路径
+//   17-18: 字符串 / 数学函数 guard
+//   19   : and-close 阈值（close 路径）
+//   20   : 两阶段 pipeline（fixed 桶）
+// =====================================================================
+
 // ===== 1. 全局实例：最纯的引擎处理路径（不触发） =====
 rule global_throughput {
     events {
@@ -36,7 +48,7 @@ rule per_sip_instances {
     limits { max_memory = "512MB"; max_instances = 1000000; on_exceed = throttle; }
 }
 
-// ===== 3. 拒绝探测：guard + distinct 聚合 + 触发告警 + 嵌套路径(#64) =====
+// ===== 3. 拒绝探测：guard + distinct 聚合 + 触发告警（#18 门禁） =====
 rule denied_probe {
     events {
         c : conn_events && c.action == "denied"
@@ -55,7 +67,7 @@ rule denied_probe {
     limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
 }
 
-// ===== 4. 登录爆破：auth 失败 >= 15，and close 触发（close 路径） =====
+// ===== 4. 登录爆破：auth 失败 >= 15，and close 触发（#18 门禁） =====
 rule login_brute {
     events {
         a : auth_events && a.result == "failed"
@@ -74,7 +86,7 @@ rule login_brute {
     limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
 }
 
-// ===== 5. 流量聚合：sum(bytes) 阈值 =====
+// ===== 5. 流量聚合：sum(bytes) 阈值（#18 门禁） =====
 rule traffic_sum {
     events {
         c : conn_events
@@ -92,7 +104,7 @@ rule traffic_sum {
     limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
 }
 
-// ===== 6. 窗口内累积：on event<accu>（达到阈值后每条事件触发，#65） =====
+// ===== 6. 窗口内累积：on event<accu>（#18 门禁，#65） =====
 rule accu_tracker {
     events {
         c : conn_events
@@ -106,6 +118,298 @@ rule accu_tracker {
         alert_type = "accu_tracker",
         detail = "accumulating after 100 conns",
         request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+// ===== 7. DNS 隧道：avg(resp_size) 聚合 =====
+rule dns_avg_tunnel {
+    events {
+        d : dns_events
+    }
+    match<sip:5m> {
+        on event { d.resp_size | avg >= 300; }
+    } -> score(55.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_avg_tunnel",
+        detail = "high avg dns resp size",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+// ===== 8. 字节峰值：max(bytes) 聚合 =====
+rule max_bytes_spike {
+    events {
+        c : conn_events
+    }
+    match<sip:1m> {
+        on event { c.bytes | max >= 8000; }
+    } -> score(35.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "max_bytes_spike",
+        detail = "single conn bytes >= 8000",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+// ===== 9. 极短会话：min(duration) 聚合 =====
+rule min_duration_probe {
+    events {
+        c : conn_events
+    }
+    match<sip:1m> {
+        on event { c.duration | min <= 2; }
+    } -> score(35.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "min_duration_probe",
+        detail = "conn with duration <= 2s",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+// ===== 10. 多步序列：扫描(>=5 syn) 后爆破(>=3 login_fail) =====
+rule chain_attack {
+    events {
+        scan : conn_events && action == "syn"
+        login : conn_events && action == "login_fail"
+    }
+    match<sip:30m> {
+        on event {
+            scan | count >= 5;
+            login | count >= 3;
+        }
+    } -> score(90.0)
+    entity(ip, scan.sip)
+    yield network_alerts (
+        sip = scan.sip,
+        alert_type = "chain_attack",
+        detail = "port scan then brute force",
+        request_count = 8
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+// ===== 11. 端口扫描：distinct dport 计数 =====
+rule port_scan_distinct {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c.dport | distinct | count >= 6; }
+    } -> score(45.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        dip = c.dip,
+        alert_type = "port_scan_distinct",
+        detail = ">=6 distinct dports scanned",
+        request_count = 6
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+// ===== 12. 高包速率：float 字段 guard + count =====
+rule high_packet_rate {
+    events {
+        c : conn_events
+    }
+    match<sip:1m> {
+        on event {
+            c
+            && c.packet_rate >= 8000.0
+            | count >= 3;
+        }
+    } -> score(40.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "high_packet_rate",
+        detail = ">=3 conns with packet_rate >= 8000",
+        request_count = 3
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+// ===== 13. 拦截标记：bool 字段 guard + count =====
+rule blocked_flag {
+    events {
+        c : conn_events
+    }
+    match<sip:1m> {
+        on event {
+            c
+            && c.blocked == true
+            | count >= 20;
+        }
+    } -> score(40.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "blocked_flag",
+        detail = ">=20 blocked conns",
+        request_count = 20
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+// ===== 14. object 嵌套路径（#64）：conn_info.geo.country == "CN" =====
+rule object_nested_path {
+    events {
+        c : conn_events
+    }
+    match<sip:1m> {
+        on event {
+            c
+            && c.conn_info.geo.country == "CN"
+            | count >= 50;
+        }
+    } -> score(45.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "object_nested_path",
+        detail = ">=50 conns with geo.country=CN (#64 nested path)",
+        request_count = 50
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+// ===== 15. array 字段索引：tags[0] == "prod" =====
+rule array_tag_member {
+    events {
+        c : conn_events
+    }
+    match<sip:1m> {
+        on event {
+            c
+            && c.tags[0] == "prod"
+            | count >= 50;
+        }
+    } -> score(45.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "array_tag_member",
+        detail = ">=50 conns tagged prod",
+        request_count = 50
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+// ===== 16. hex 应用 ID：app_id 等值匹配 =====
+rule hex_app_id {
+    events {
+        c : conn_events
+    }
+    match<sip:1m> {
+        on event {
+            c
+            && c.app_id == "0a0001"
+            | count >= 5;
+        }
+    } -> score(35.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "hex_app_id",
+        detail = ">=5 conns with app_id prefix 0a",
+        request_count = 5
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+// ===== 17. 字符串函数 guard：action 含 "e" 且以 allowed/denied 前缀 =====
+rule string_func_guard {
+    events {
+        c : conn_events
+    }
+    match<sip:1m> {
+        on event {
+            c
+            && indexof(c.action, "e") > 0
+            && startswith_any(c.action, "all", "den")
+            | count >= 5;
+        }
+    } -> score(35.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "string_func_guard",
+        detail = ">=5 conns matching string funcs",
+        request_count = 5
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+// ===== 18. 数学函数 guard：|bytes - 4096| < 500 =====
+rule math_func_guard {
+    events {
+        c : conn_events
+    }
+    match<sip:1m> {
+        on event {
+            c
+            && abs(c.bytes - 4096) < 500
+            | count >= 5;
+        }
+    } -> score(35.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "math_func_guard",
+        detail = ">=5 conns with bytes near 4096",
+        request_count = 5
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+// ===== 19. close 阈值：and-close 累计 >= 3（close 路径） =====
+rule close_threshold {
+    events {
+        c : conn_events && c.action == "allowed"
+    }
+    match<sip:5m> {
+        on event { c | count >= 1; }
+        and close { total: c | count >= 3; }
+    } -> score(60.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "close_threshold",
+        detail = ">=3 allowed conns then close",
+        request_count = 3
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+// ===== 20. 两阶段 pipeline：denied 突发 >=2 聚合（fixed 桶） =====
+rule pipeline_aggregate {
+    events {
+        c : conn_events && c.action == "denied"
+    }
+    match<sip:1m:fixed> {
+        on event { c | count >= 1; }
+        and close { burst: c | count >= 10; }
+    }
+    |> match<sip:5m:fixed> {
+        on event { _in | count >= 1; }
+        and close { bursts: _in | count >= 2; }
+    } -> score(70.0)
+    entity(ip, _in.sip)
+    yield network_alerts (
+        sip = _in.sip,
+        alert_type = "pipeline_aggregate",
+        detail = ">=2 denied bursts of >=10",
+        request_count = 2
     )
     limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
 }

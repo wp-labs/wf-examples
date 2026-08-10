@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""生成 EPS 压测输入事件（jsonl，供 wfgen send 发送）。
+"""生成 20 规则综合压测输入事件（jsonl，供 wfgen send 发送）。
 
 用法: gen_events.py <count> <mode>
   mode:
@@ -8,10 +8,12 @@
     pool     — 固定 sip 池循环复用（实例复用，贴近真实）[默认]
 
 数据多样性：
-  - 两种事件类型：~75% conn_events（网络流）+ ~25% auth_events（登录）
-  - 端口/协议/动作/字节数/时长随机分布；login 结果带 30% failed
-  - 两类事件：conn_events + auth_events
-  - 注：structured object 字段在高压 Arrow 下使规则不触发（引擎问题，待查）
+  - 三类事件：~75% conn_events（网络流）+ ~15% auth_events（登录）+ ~10% dns_events（DNS）
+  - conn 富类型：object(conn_info, 嵌套 geo/vlan) / bool(blocked) / float(packet_rate) /
+    hex(app_id) / array/chars(tags)
+  - 规则触发：denied_probe/traffic_sum/accu_tracker（#18 门禁）+ 新增 14 条各覆盖一类引擎路径
+  - #18 回归：conn_info object 每行 ~400B JSON，150k conn 单批内容 ~60MB；
+    IPC 往返膨胀 ~7x 后修复前 >256MB 会被 conn_events 窗口（max_window_bytes=256MB）静默丢批
 """
 import json, random, sys
 
@@ -23,6 +25,7 @@ POOL = 1000
 DPORTS = [80, 443, 22, 3389, 53, 8080, 8443, 137]
 PROTOS = ["tcp", "udp", "icmp", "sctp"]
 USERS = 200
+QTYPES = ["A", "AAAA", "TXT", "CNAME"]
 
 
 def sip(i):
@@ -39,7 +42,20 @@ def dip(i):
 
 for i in range(count):
     t = BASE_NS + i * 1000 + rnd.randint(0, 400)  # 1µs 基准 + 抖动
-    if i % 4 == 3:  # 25% auth_events
+    r = i % 20
+    if r >= 18:  # 10% dns_events
+        ev = {
+            "_stream": "dns_events",
+            "_timestamp": "2026-01-01T00:00:00.000Z",
+            "_window": "dns_events",
+            "sip": sip(i),
+            "domain": f"dom{i % 200}.example.com",
+            "query_type": rnd.choice(QTYPES),
+            # 30% 大响应（触发 dns_avg_tunnel avg>=300）
+            "resp_size": rnd.randint(1000, 5000) if rnd.random() < 0.30 else rnd.randint(50, 500),
+            "event_time": t,
+        }
+    elif r >= 15:  # 15% auth_events
         ev = {
             "_stream": "auth_events",
             "_timestamp": "2026-01-01T00:00:00.000Z",
@@ -48,13 +64,14 @@ for i in range(count):
             "user": f"user_{i % USERS}",
             "result": "failed" if rnd.random() < 0.30 else "success",
             "dest_ip": dip(i),
+            "attempts": rnd.randint(1, 20),
+            "agent": rnd.choice(["curl", "chrome", "python", "unknown"]),
+            "risk": round(rnd.uniform(0.0, 1.0), 3),
             "event_time": t,
         }
-    else:
+    else:  # 75% conn_events
         denied = rnd.random() < 0.30
-        # #18 回归：object 字段，每行 ~300B JSON 负载。
-        # 150k conn × ~300B ≈ 45-60MB 内容；IPC 往返膨胀 ~7x 后修复前 >256MB
-        # 会被 conn_events 窗口（max_window_bytes=256MB）静默丢批。
+        # #18 回归：object 字段（含嵌套 geo），每行 ~400B JSON 负载。
         conn_info = {
             "iface": f"eth{i % 16}",
             "tenant": f"acme-{i % 50:03d}",
@@ -63,7 +80,7 @@ for i in range(count):
             "tags": ["prod", "edge", "dmz"],
             "desc": "NAT traversal session established via edge gateway with 30s keepalive",
             "geo": {
-                "country": "CN",
+                "country": "CN",  # 全部 CN → object_nested_path 触发
                 "city": "Shanghai",
                 "asn": 4134,
                 "lat": 31.23,
@@ -85,5 +102,10 @@ for i in range(count):
             "protocol": rnd.choice(PROTOS),
             "sip": sip(i),
             "conn_info": conn_info,
+            # 富数据类型
+            "blocked": rnd.random() < 0.25,
+            "packet_rate": round(rnd.uniform(100.0, 20000.0), 1),
+            "app_id": "0a0001" if rnd.random() < 0.40 else rnd.choice(["0b0002", "0c0003"]),
+            "tags": ["prod", "edge", "dmz"],
         }
     print(json.dumps(ev))

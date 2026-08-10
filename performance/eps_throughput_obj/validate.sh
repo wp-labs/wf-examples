@@ -94,8 +94,12 @@ try:
         c[o.get("__wfu_rule_name", "?")] += 1
 except FileNotFoundError:
     pass
-conn = c["accu_tracker"] + c["denied_probe"] + c["traffic_sum"] \
-     + c["global_throughput"] + c["per_sip_instances"]
+conn_rules_set = {"global_throughput","per_sip_instances","denied_probe","traffic_sum",
+                  "accu_tracker","max_bytes_spike","min_duration_probe","chain_attack",
+                  "port_scan_distinct","high_packet_rate","blocked_flag","object_nested_path",
+                  "array_tag_member","hex_app_id","string_func_guard","math_func_guard",
+                  "close_threshold","pipeline_aggregate"}
+conn = sum(v for k, v in c.items() if k in conn_rules_set)
 print(f"conn_rules={conn} total={sum(c.values())}")
 EOF
 )

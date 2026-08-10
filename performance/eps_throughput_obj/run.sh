@@ -131,8 +131,14 @@ try:
         except Exception: pass
 except FileNotFoundError:
     pass
-conn = c["accu_tracker"] + c["denied_probe"] + c["traffic_sum"] \
-     + c["global_throughput"] + c["per_sip_instances"]
+# conn 规则 = conn_events 窗口的规则告警（不含 auth 的 login_brute / dns 的 dns_avg_tunnel）。
+# 若 conn 大批次被内存驱逐丢弃，所有 conn 规则归零，仅 login_brute / dns_avg_tunnel 存活 → 门禁 FAIL。
+conn_rules_set = {"global_throughput","per_sip_instances","denied_probe","traffic_sum",
+                  "accu_tracker","max_bytes_spike","min_duration_probe","chain_attack",
+                  "port_scan_distinct","high_packet_rate","blocked_flag","object_nested_path",
+                  "array_tag_member","hex_app_id","string_func_guard","math_func_guard",
+                  "close_threshold","pipeline_aggregate"}
+conn = sum(v for k, v in c.items() if k in conn_rules_set)
 print(f"conn_rules={conn} total={sum(c.values())}")
 print("    per_rule: " + ", ".join(f"{k}={v}" for k, v in sorted(c.items())) or "    (none)")
 EOF
