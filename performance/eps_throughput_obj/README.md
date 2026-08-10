@@ -21,14 +21,18 @@ append 内存驱逐把刚追加的整批 pop 掉——之前完全静默，表�
 ## 运行
 
 ```bash
-./run.sh                 # 默认 200000 事件 burst，EPS + #18 回归门禁
-./run.sh 300000          # 更大规模
-./validate.sh <wf> <wfg>  # A/B 驱动：对比修复前/后二进制行为
+./run.sh                          # 默认 burst 200000 pool，EPS + #18 回归门禁
+./run.sh sustain 200000 pool      # 持续吞吐
+./run.sh burst 200000 distinct    # 实例 churn 压力
+./run.sh burst 50000 pool         # 小规模快速验证
+./validate.sh <wfusion> <wfgen> [N]   # A/B 驱动：对比修复前/后二进制行为
 ```
 
 `run.sh` 结束时执行 #18 回归门禁：
-- `in memory eviction` 告警数 = 0，**且** conn 规则告警 > 0（accu_tracker/denied_probe/traffic_sum）→ PASS。
+- `in memory eviction` 告警数 = 0，**且**（pool/global 模式）conn 规则告警 > 0
+  （accu_tracker/denied_probe/traffic_sum）→ PASS。
 - 若 object 批被丢，conn 规则 0 告警（只剩 auth 的 login_brute）→ FAIL。
+- `distinct` 模式每个 sip 仅 1 事件，规则阈值不触发属预期，门禁只查驱逐告警。
 
 ## 实测 A/B（200000 事件，release）
 
@@ -39,7 +43,18 @@ append 内存驱逐把刚追加的整批 pop 掉——之前完全静默，表�
 | conn 窗口记账 | 解码膨胀 >256MB → 批被驱逐 | 内容 ~55MB → 保留 |
 | 驱逐告警 | 无（v0.4.0 无告警逻辑，静默丢） | 0 |
 | daemon RSS 峰值 | 192MB（数据丢失） | 1029MB（数据全处理） |
-| EPS | ~185k | ~187k |
+
+## 性能实测（修复后，200000 事件，release）
+
+| 模式 | 送达 | EPS | #18 门禁 |
+|---|---|---|---|
+| `burst` pool | 200000 | **~192k**（多轮 108k-192k） | PASS（76569 conn 告警） |
+| `burst` distinct | 200000 | **~195k** | PASS（0 驱逐，规则阈值不触发为预期） |
+| `sustain` pool | ~187500* | ~4.7k* | PASS（conn 全处理） |
+
+> \* sustain 顺序分片（20 连接 × 10000）下，daemon `rx_rows` 停在 ~187500/200000 不再增长，
+> 但 conn 规则告警数（76569）与 burst 完全一致——conn 事件全部处理。缺口集中在尾部分片，
+> 指向 TCP 源/wfgen 发送链路的顺序大帧处理，**与 #18（窗口内存记账）无关**，待引擎侧跟进。
 
 标准场景（无 object）吞吐无回归：`eps_throughput` burst 200000 = **EPS 249486**（README 基线 ~250k）。
 

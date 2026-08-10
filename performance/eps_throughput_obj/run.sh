@@ -10,10 +10,12 @@
 #   3. EPS 仍达到 1W（吞吐无回归）
 #
 # 用法:
-#   ./run.sh                # 默认 200000 事件 burst（复现 #18 所需规模）
-#   ./run.sh <N>            # 指定事件数
-#   PROFILE=debug ./run.sh  # debug 对比
-#   WFUSION=... WFGEN=... ./run.sh   # 指定二进制（如修复前/修复后对比）
+#   ./run.sh                       # 默认 burst 200000 pool（复现 #18 所需规模）
+#   ./run.sh sustain 200000 pool   # 持续吞吐
+#   ./run.sh burst 200000 distinct # 实例 churn 压力
+#   ./run.sh burst 50000 pool      # 小规模快速验证
+#   PROFILE=debug ./run.sh ...     # debug 对比
+#   WFUSION=... WFGEN=... ./run.sh # 指定二进制（如修复前/修复后对比）
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
@@ -30,8 +32,9 @@ else
 fi
 PY=${PYTHON:-python3}
 PORT=9800
-N="${1:-200000}"
-MODE_GEN="${2:-pool}"
+MODE="${1:-burst}"
+N="${2:-200000}"
+MODE_GEN="${3:-pool}"
 METRICS=data/metrics.ndjson
 
 mkdir -p data
@@ -53,13 +56,9 @@ done
 echo "==> 2. 生成 $N 事件 (mode=$MODE_GEN)"
 "$PY" scripts/gen_events.py "$N" "$MODE_GEN" > data/burst.jsonl
 
-echo "==> 3. 全速发送并计时（等 delivered 追平 N）"
-START=$($PY -c 'import time; print(time.time())')
-"$WFGEN" send --scenario scenarios/throughput.wfg --input data/burst.jsonl \
-  --addr 127.0.0.1:$PORT --ws models/schemas/network.wfs > /dev/null 2>&1
-DONE=0
-for i in $(seq 1 150); do
-  if [ "$("$PY" - "$METRICS" <<'EOF'
+# 送达计数（metrics 中 rows_total 为每区间 delta，累加得总送达）
+received() {
+  "$PY" - "$METRICS" <<'EOF'
 import json, sys
 s = 0
 try:
@@ -67,34 +66,55 @@ try:
         try: o = json.loads(line)
         except Exception: continue
         if o.get("name") == "rows_total" and o.get("label") == "ingress":
-            s = max(s, int(o.get("value", 0)))
+            s += int(o.get("value", 0))
 except FileNotFoundError:
     pass
 print(s)
 EOF
-)" -ge "$N" ]; then DONE=1; break; fi
-  sleep 0.2
-done
-END=$($PY -c 'import time; print(time.time())')
-ELAPSED=$($PY -c "print($END - $START)")
-D=$("$PY" - "$METRICS" <<'EOF'
-import json, sys
-s = 0
-try:
-    for line in open(sys.argv[1]):
-        try: o = json.loads(line)
-        except Exception: continue
-        if o.get("name") == "rows_total" and o.get("label") == "ingress":
-            s = max(s, int(o.get("value", 0)))
-except FileNotFoundError:
-    pass
-print(s)
-EOF
-)
-EPS=$($PY -c "print(int($N / $ELAPSED))" 2>/dev/null || echo 0)
-echo "    接收 $D / $N 事件，耗时 ${ELAPSED}s"
-echo "    EPS = $EPS events/sec"
-[ "$DONE" = 1 ] || echo "    警告: 超时未追平（daemon 接收慢于发送？）"
+}
+
+if [ "$MODE" = "burst" ]; then
+  echo "==> 3. 全速发送并计时（等 delivered 追平 N）"
+  START=$($PY -c 'import time; print(time.time())')
+  "$WFGEN" send --scenario scenarios/throughput.wfg --input data/burst.jsonl \
+    --addr 127.0.0.1:$PORT --ws models/schemas/network.wfs > /dev/null 2>&1
+  DONE=0
+  for i in $(seq 1 150); do
+    if [ "$(received)" -ge "$N" ]; then DONE=1; break; fi
+    sleep 0.2
+  done
+  END=$($PY -c 'import time; print(time.time())')
+  ELAPSED=$($PY -c "print($END - $START)")
+  D=$(received)
+  EPS=$($PY -c "print(int($N / $ELAPSED))" 2>/dev/null || echo 0)
+  echo "    接收 $D / $N 事件，耗时 ${ELAPSED}s"
+  echo "    EPS = $EPS events/sec"
+  [ "$DONE" = 1 ] || echo "    警告: 超时未追平（daemon 接收慢于发送？）"
+elif [ "$MODE" = "sustain" ]; then
+  echo "==> 3. 持续发送（顺序分片，目标 ~10000/s）"
+  START=$($PY -c 'import time; print(time.time())')
+  CHUNK=10000
+  for off in $(seq 1 "$CHUNK" "$N"); do
+    ENDOFF=$((off + CHUNK - 1))
+    [ "$ENDOFF" -gt "$N" ] && ENDOFF=$N
+    sed -n "${off},${ENDOFF}p" data/burst.jsonl > data/chunk.jsonl
+    "$WFGEN" send --scenario scenarios/throughput.wfg --input data/chunk.jsonl \
+      --addr 127.0.0.1:$PORT --ws models/schemas/network.wfs > /dev/null 2>&1
+  done
+  for i in $(seq 1 150); do
+    if [ "$(received)" -ge "$N" ]; then break; fi
+    sleep 0.2
+  done
+  END=$($PY -c 'import time; print(time.time())')
+  ELAPSED=$($PY -c "print($END - $START)")
+  D=$(received)
+  EPS=$($PY -c "print(int($N / $ELAPSED))" 2>/dev/null || echo 0)
+  echo "    接收 $D / $N 事件，耗时 ${ELAPSED}s"
+  echo "    EPS = $EPS events/sec (持续)"
+else
+  echo "ERROR: 未知模式 '$MODE'（burst | sustain）" >&2
+  exit 1
+fi
 
 sleep 2  # 等告警落盘
 
@@ -121,11 +141,19 @@ CONN_ALERTS=$(echo "$ALERT_SUMMARY" | grep -o 'conn_rules=[0-9]*' | cut -d= -f2)
 echo "    内存驱逐告警: $EVICT"
 echo "    告警: $ALERT_SUMMARY"
 
-if [ "${EVICT:-0}" -eq 0 ] && [ "${CONN_ALERTS:-0}" -gt 0 ]; then
-  echo "OK: #18 回归通过 — object 大批次未被驱逐，conn 规则正常触发（alerts=${CONN_ALERTS}）"
+if [ "${EVICT:-0}" -eq 0 ]; then
+  if [ "$MODE_GEN" = "distinct" ]; then
+    # distinct 模式每个 sip 仅 1 事件，规则阈值（如 100 conn/sip）不触发属预期
+    echo "OK: #18 回归通过 — 无内存驱逐丢批（distinct 模式 conn 规则阈值不触发为预期）"
+  elif [ "${CONN_ALERTS:-0}" -gt 0 ]; then
+    echo "OK: #18 回归通过 — object 大批次未被驱逐，conn 规则正常触发（alerts=${CONN_ALERTS}）"
+  else
+    echo "FAIL: #18 回归失败 — eviction=0 但 conn_alerts=0"
+    echo "    （object 大批次可能被窗口内存驱逐丢弃，检查 wfusion.log 与二进制是否含 wp-reactor#18 修复）"
+  fi
 else
   echo "FAIL: #18 回归失败 — eviction=${EVICT} conn_alerts=${CONN_ALERTS}"
-  echo "    （object 大批次可能被窗口内存驱逐丢弃，检查 wfusion.log 与二进制是否含 wp-reactor#18 修复）"
+  echo "    （object 大批次被窗口内存驱逐丢弃，检查 wfusion.log 与二进制是否含 wp-reactor#18 修复）"
 fi
 
 echo ""

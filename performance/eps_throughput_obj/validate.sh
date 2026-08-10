@@ -52,7 +52,7 @@ try:
         try: o = json.loads(line)
         except Exception: continue
         if o.get("name") == "rows_total" and o.get("label") == "ingress":
-            s = max(s, int(o.get("value", 0)))
+            s += int(o.get("value", 0))
 except FileNotFoundError:
     pass
 print(s)
