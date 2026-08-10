@@ -1,0 +1,8 @@
+use "../models/schemas/network.wfs"
+
+#[duration=1m]
+scenario memory_burst<seed=1> {
+  traffic {
+    stream conn_events gen 1/s
+  }
+}

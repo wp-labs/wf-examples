@@ -1,0 +1,21 @@
+# memory_stability — 长时间运行内存稳定性 case
+# daemon 模式：TCP 实时输入 + 指标监控，验证实例/内存随输入增减
+
+sources_dir = "topology/sources"
+sinks = "topology/sinks"
+windows = "models/schemas/windows.toml"
+
+[runtime]
+executor_parallelism = 4
+rule_exec_timeout = "30s"
+schemas = "models/schemas/*.wfs"
+rules = "models/rules/*.wfl"
+
+[metrics]
+enabled = true
+report_interval = "2s"
+
+[logging]
+level = "info"
+format = "plain"
+file = "data/wfusion.log"

@@ -1,0 +1,30 @@
+use "network.wfs"
+
+// 高阈值聚合规则：每个 distinct sip 需要一个实例，阈值 1M 几乎不会触发
+// → 实例持续存活为部分匹配，用于观察实例数/内存随输入的变化
+//
+// match<sip:60s>：实例 TTL = 60s（距最后事件）。
+// 输入停止后 watermark 冻结在最后事件时间，实例不会过期释放；
+// 输入恢复（trickle）推进 watermark 后，旧实例被驱逐。
+
+rule instance_growth {
+    events {
+        c : conn_events
+    }
+    match<sip:60s> {
+        on event { c | count >= 1000000; }
+    } -> score(10.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "instance_growth",
+        detail = "high threshold keeps instances alive",
+        request_count = 1
+    )
+
+    limits {
+        max_memory = "512MB";
+        max_instances = 1000000;
+        on_exceed = throttle;
+    }
+}
