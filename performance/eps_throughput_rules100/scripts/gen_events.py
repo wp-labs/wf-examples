@@ -32,7 +32,11 @@ def sip(i):
     if mode == "global":
         return "10.0.0.1"
     if mode == "distinct":
-        return f"10.{(i >> 16) & 255}.{(i >> 8) & 255}.{i & 255}"
+        # 100000 唯一 sip，循环复用（对齐规则 max_instances=100000/规则封顶）。
+        # 200000 事件 → 每个 sip 出现 ~2 次，实例数正好 100k/规则、无 throttle 截断，
+        # 压测的是完整的高基数实例集，而非被封顶截断的子集。
+        j = i % 100000
+        return f"10.{(j >> 16) & 255}.{(j >> 8) & 255}.{j & 255}"
     return f"10.0.{i % (POOL >> 8)}.{i % 250 + 1}"
 
 
@@ -40,6 +44,11 @@ def dip(i):
     return f"192.168.{i % 40}.{(i // 40) % 250 + 1}"
 
 
+def distinct_sip(j):
+    return f"10.{(j >> 16) & 255}.{(j >> 8) & 255}.{j & 255}"
+
+
+nc = 0  # conn 事件计数（distinct 模式给 conn 独立 ~100k 唯一 sip）
 for i in range(count):
     t = BASE_NS + i * 1000 + rnd.randint(0, 400)  # 1µs 基准 + 抖动
     r = i % 20
@@ -70,6 +79,8 @@ for i in range(count):
             "event_time": t,
         }
     else:  # 75% conn_events
+        conn_sip = distinct_sip(nc % 100000) if mode == "distinct" else sip(i)
+        nc += 1
         denied = rnd.random() < 0.30
         # #18 回归：object 字段（含嵌套 geo），每行 ~400B JSON 负载。
         conn_info = {
@@ -100,7 +111,7 @@ for i in range(count):
             "duration": rnd.randint(1, 600),
             "event_time": t,
             "protocol": rnd.choice(PROTOS),
-            "sip": sip(i),
+            "sip": conn_sip,
             "conn_info": conn_info,
             # 富数据类型
             "blocked": rnd.random() < 0.25,
