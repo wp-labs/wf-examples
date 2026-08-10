@@ -1,0 +1,111 @@
+use "network.wfs"
+
+// ===== 1. 全局实例：最纯的引擎处理路径（不触发） =====
+rule global_throughput {
+    events {
+        c : conn_events
+    }
+    match<:1m> {
+        on event { c | count >= 100000000; }
+    } -> score(10.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "global_throughput",
+        detail = "per-event processing, no fire",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 1; on_exceed = throttle; }
+}
+
+// ===== 2. 每 sip 实例：实例 map churn =====
+rule per_sip_instances {
+    events {
+        c : conn_events
+    }
+    match<sip:1m> {
+        on event { c | count >= 100000000; }
+    } -> score(10.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "per_sip_instances",
+        detail = "per-sip instance churn",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 1000000; on_exceed = throttle; }
+}
+
+// ===== 3. 拒绝探测：guard + distinct 聚合 + 触发告警 + 嵌套路径(#64) =====
+rule denied_probe {
+    events {
+        c : conn_events && c.action == "denied"
+    }
+    match<sip:1m> {
+        on event { c.dip | distinct | count >= 30; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        dip = c.dip,
+        alert_type = "denied_probe",
+        detail = ">=30 denied conns to distinct dip",
+        request_count = 30
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+// ===== 4. 登录爆破：auth 失败 >= 15，and close 触发（close 路径） =====
+rule login_brute {
+    events {
+        a : auth_events && a.result == "failed"
+    }
+    match<user:1m> {
+        on event { a | count >= 15; }
+        and close { a | count >= 15; }
+    } -> score(60.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "login_brute",
+        detail = ">=15 failed logins in 1m",
+        request_count = 15
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+// ===== 5. 流量聚合：sum(bytes) 阈值 =====
+rule traffic_sum {
+    events {
+        c : conn_events
+    }
+    match<sip:1m> {
+        on event { c.bytes | sum >= 800000; }
+    } -> score(40.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "traffic_sum",
+        detail = "sum(bytes) >= 800000 in 1m",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+// ===== 6. 窗口内累积：on event<accu>（达到阈值后每条事件触发，#65） =====
+rule accu_tracker {
+    events {
+        c : conn_events
+    }
+    match<sip:1m> {
+        on event<accu> { c | count >= 100; }
+    } -> score(30.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "accu_tracker",
+        detail = "accumulating after 100 conns",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
