@@ -78,17 +78,25 @@ append 内存驱逐把刚追加的整批 pop 掉——之前完全静默，表�
 
 | 模式 | 送达 | EPS | #18 门禁 |
 |---|---|---|---|
-| `burst` pool | 200000 | **~62k-86k**（20 规则，vs 6 规则 ~192k） | PASS |
-| `burst` distinct | 200000 | ~195k | PASS（0 驱逐，阈值不触发为预期） |
-| `sustain` pool | ~187500* | ~4.7k* | PASS（conn 全处理） |
+| `burst` pool | 200000 | **~70k-78k**（20 规则，vs 6 规则 ~192k） | PASS |
+| `burst` distinct | 200000 | ~70k | PASS（0 驱逐，阈值不触发为预期） |
+| `sustain` pool | ~187000* | ~4.4k* | PASS（conn 全处理） |
 
-> \* sustain 顺序分片下 daemon `rx_rows` 停在 ~187500/200000，但 conn 规则告警数与 burst
+> \* sustain 顺序分片下 daemon `rx_rows` 停在 ~187000/200000，但 conn 规则告警数与 burst
 > 一致——conn 事件全部处理。缺口指向 TCP 源/wfgen 顺序大帧路径，**与 #18 无关**，待引擎侧跟进。
 
-20 条规则 vs 6 条规则：EPS 62k-86k vs 192k（约 3x 规则评估开销），仍远超 1W 目标。
+20 条规则 vs 6 条规则：EPS 70k-78k vs 192k（约 3x 规则评估开销），仍远超 1W 目标。
+
+## 内存观察（200000 事件，20 规则）
+
+- daemon RSS 随规则数线性增长：~1GB 基线（解码批次）+ **~0.7GB/规则** → 20 规则 ≈ **15GB**。
+- `window_bytes`（窗口内容记账，修复后）仅 ~67MB——RSS 大头在**各规则的保留状态**，
+  不在窗口缓冲。告警量不驱动 RSS（855 告警仍有 3.5GB）。
+- 建议 ≥16GB 内存运行 200000/20 规则；小规模用 `run.sh burst 50000 pool`。
+- 每规则 ~0.7GB 的保留是引擎行为观察，是否应改为 Arc 共享而非逐规则拷贝待引擎侧评估。
 
 ## 前提
 
 - `wfusion` / `wfgen` 在 PATH（或用 `WFUSION=/path WFGEN=/path`）。
 - 二进制需含 wp-reactor#18 修复；修复前二进制可用 `validate.sh` 复现丢批。
-- `nc`、`python3`。端口 9800 空闲。
+- 200000 事件/20 规则建议 ≥16GB 内存；`nc`、`python3`；端口 9800 空闲。
