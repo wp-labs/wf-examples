@@ -1,6 +1,7 @@
 [sink_group]
 name = "management_out"
 windows = ["management_alerts"]
+wf_meta_disable = ["__wfu_*"]
 [[sink_group.sinks]]
 connect = "file_json_sink"
 name = "management_file"

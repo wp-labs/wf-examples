@@ -36,10 +36,15 @@ if [[ "$ACTUAL_COUNT" != "$EXPECTED_COUNT" ]]; then
     exit 1
 fi
 
-if awk 'index($0, "\"__wfu_rule_name\":\"port_scan\"") == 0 { bad++ } END { exit bad ? 1 : 0 }' "$ACTUAL_ALERTS"; then
+if awk 'index($0, "\"alert_type\":\"port_scan\"") == 0 { bad++ } END { exit bad ? 1 : 0 }' "$ACTUAL_ALERTS"; then
     :
 else
     echo "ERROR: found non-port_scan alerts in $ACTUAL_ALERTS" >&2
+    exit 1
+fi
+
+if grep -q '"__wfu_' "$ACTUAL_ALERTS"; then
+    echo "ERROR: found wfusion meta fields in $ACTUAL_ALERTS" >&2
     exit 1
 fi
 
