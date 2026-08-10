@@ -46,8 +46,11 @@ PROFILE=debug ./run.sh burst 50000 pool   # debug 对比
 - **EPS** = 事件数 / 发送开始到引擎接收全部的时间；接收计数取 `receiver.rows_total` 累加。
 - 告警分布看 `data/default.ndjson`（各规则 `__wfu_rule_name`）。
 
-## 已知问题 / 待查
+## 已知问题（已定位，见 wp-reactor#18）
 
-- **结构化 `object` 字段（#64 嵌套路径）在高压 Arrow 输入下，会使 conn_events 规则不触发**
-  （window 收到事件但规则不处理/不告警）。单独的嵌套路径规则测试（wp-reactor）是正常的；
-  疑似 Arrow IPC 批量解码 object 字段与规则调度的交互问题，需另行排查。当前示例去掉 object 字段。
+- **结构化 `object` 字段（#64）在高压下批次被窗口内存驱逐丢弃**：
+  Arrow IPC encode→decode 往返把批次 `get_array_memory_size` 膨胀 ~7 倍（12.4MB → 解码后 273MB），
+  超过 conn_events 窗口 `max_window_bytes=256MB` → append 内存驱逐静默丢弃整批 → 规则不处理。
+- wp-reactor 已加准确告警（`window \`conn_events\` dropped ... in memory eviction`）。
+- 当前示例去掉 object 字段保持高吞吐；object 字段建议在中小规模使用（≤~9 万行/批）。
+- 深层修复（窗口按实际内容记账 vs IPC 膨胀）见 wp-reactor#18。
