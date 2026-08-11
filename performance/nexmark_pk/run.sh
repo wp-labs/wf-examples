@@ -8,6 +8,7 @@
 # 用法:
 #   ./run.sh                          # 默认 stream 200000 normal（单连接流式持续）
 #   ./run.sh peak 200000 normal       # 峰值突发
+#   ./run.sh replay 200000 normal     # P0: 预编码 Arrow 帧字节回放（测引擎真实上限）
 #   CHUNK=1000 RATE_MS=50 ./run.sh stream ...  # 受控持续入流速率
 #   PROFILE=debug ./run.sh ...        # debug 对比
 #   WFUSION=... WFGEN=... ./run.sh    # 指定二进制
@@ -94,6 +95,30 @@ if [ "$MODE" = "peak" ]; then
   echo "    接收 $D / $N 事件，耗时 ${ELAPSED}s"
   echo "    EPS = $EPS events/sec"
   [ "$DONE" = 1 ] || echo "    警告: 超时未追平（daemon 接收慢于发送？）"
+elif [ "$MODE" = "replay" ]; then
+  # P0 方案 A：预编码 Arrow 帧回放，测引擎真实摄取上限。
+  # dump-frames 一次性把 JSONL 编成 Arrow IPC + RFC6587 帧（字节与 send 完全一致），
+  # send-arrow 直接回放字节，省掉每次 send 的 JSON 解析 + Arrow 编码。
+  # EPS 按 send-arrow 墙钟计时（dump 是一次性 setup，不计入）。
+  CHUNK="${CHUNK:-1000000}"
+  FRAMES=data/burst.frames
+  echo "==> 3. 预编码 Arrow 帧（dump-frames --chunk ${CHUNK}）"
+  "$WFGEN" dump-frames --scenario scenarios/nexmark.wfg --input data/burst.jsonl \
+    --ws models/schemas/nexmark.wfs --addr 127.0.0.1:$PORT --output "$FRAMES" \
+    --chunk "$CHUNK" > /dev/null 2>&1
+  echo "==> 4. 字节回放 send-arrow（计时）"
+  START=$($PY -c 'import time; print(time.time())')
+  "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT > /dev/null 2>&1
+  END=$($PY -c 'import time; print(time.time())')
+  for i in $(seq 1 150); do
+    if [ "$(received)" -ge "$N" ]; then break; fi
+    sleep 0.2
+  done
+  D=$(received)
+  ELAPSED=$($PY -c "print($END - $START)")
+  EPS=$($PY -c "print(int($N / $ELAPSED))" 2>/dev/null || echo 0)
+  echo "    接收 $D / $N 事件，send-arrow 墙钟 ${ELAPSED}s"
+  echo "    EPS = $EPS events/sec (字节回放，无 JSON 解析/Arrow 编码)"
 elif [ "$MODE" = "stream" ]; then
   # 单连接流式：一个 wfgen 进程（wfgen send --chunk 分批 --rate-ms 节拍），
   # EPS 按 send 墙钟计时（避免 metrics 1s 上报拖慢 elapsed）。
