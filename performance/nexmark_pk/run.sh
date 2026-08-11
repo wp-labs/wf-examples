@@ -124,9 +124,23 @@ sleep 2  # 等告警落盘
 
 # ---- 基本健康检查（PK case 关注吞吐，不做 #18 门禁） ----
 echo ""
-echo "==> 健康检查（驱逐告警 = 0 且总告警 > 0）"
+SINK_TYPE=$(grep -o '^connect = "[a-z_]*"' topology/sinks/infra.d/default.toml 2>/dev/null | head -1 | cut -d'"' -f2)
+if [ "$SINK_TYPE" = "blackhole_sink" ]; then
+  echo "==> 健康检查（blackhole sink：输出已丢弃，只看驱逐）"
+else
+  echo "==> 健康检查（驱逐告警 = 0 且总告警 > 0）"
+fi
 EVICT=$(grep -c "in memory eviction" data/wfusion.log 2>/dev/null || true)
-ALERT_SUMMARY=$("$PY" <<'EOF'
+echo "    内存驱逐告警: $EVICT"
+
+if [ "$SINK_TYPE" = "blackhole_sink" ]; then
+  if [ "${EVICT:-0}" -eq 0 ]; then
+    echo "OK: 健康 — 无驱逐（blackhole 输出已丢弃，告警不落盘）"
+  else
+    echo "FAIL: 驱逐=${EVICT}"
+  fi
+else
+  ALERT_SUMMARY=$("$PY" <<'EOF'
 import json, collections
 c = collections.Counter()
 try:
@@ -139,16 +153,15 @@ print(f"total={sum(c.values())}")
 print("    per_rule: " + ", ".join(f"{k}={v}" for k, v in sorted(c.items())) or "    (none)")
 EOF
 )
-TOTAL_ALERTS=$(echo "$ALERT_SUMMARY" | grep -o 'total=[0-9]*' | cut -d= -f2)
-echo "    内存驱逐告警: $EVICT"
-echo "    告警: $ALERT_SUMMARY"
-
-if [ "${EVICT:-0}" -eq 0 ] && [ "${TOTAL_ALERTS:-0}" -gt 0 ]; then
-  echo "OK: 健康 — 无驱逐，规则正常触发（alerts=${TOTAL_ALERTS}）"
-elif [ "${EVICT:-0}" -eq 0 ] && [ "$MODE_GEN" = "flood" ]; then
-  echo "OK: 健康 — 无驱逐（flood 模式每个 sip 仅 1-2 事件，阈值不触发为预期）"
-else
-  echo "FAIL: 驱逐=${EVICT} alerts=${TOTAL_ALERTS}"
+  TOTAL_ALERTS=$(echo "$ALERT_SUMMARY" | grep -o 'total=[0-9]*' | cut -d= -f2)
+  echo "    告警: $ALERT_SUMMARY"
+  if [ "${EVICT:-0}" -eq 0 ] && [ "${TOTAL_ALERTS:-0}" -gt 0 ]; then
+    echo "OK: 健康 — 无驱逐，规则正常触发（alerts=${TOTAL_ALERTS}）"
+  elif [ "${EVICT:-0}" -eq 0 ] && [ "$MODE_GEN" = "flood" ]; then
+    echo "OK: 健康 — 无驱逐（flood 模式每个 sip 仅 1-2 事件，阈值不触发为预期）"
+  else
+    echo "FAIL: 驱逐=${EVICT} alerts=${TOTAL_ALERTS}"
+  fi
 fi
 
 echo ""
