@@ -48,11 +48,11 @@ file 用 chars 实体 `user`。match key 独立变化。
 ## 运行
 
 ```bash
-./run.sh                          # 默认 peak 200000 normal（峰值 + 正常流量）
-./run.sh peak 200000 flood        # 洪水压力（100k 唯一 sip，实例 churn）
-./run.sh stream 200000 normal     # 单连接流式持续吞吐（一个 wfgen 进程）
+./run.sh                          # 默认 stream 200000 normal（单连接流式持续）
+./run.sh peak 200000 flood        # 峰值突发 + 洪水压力（100k 唯一 sip）
 ./run.sh stream 1000000 normal    # 长跑（100 万事件）
-CHUNK=1000 RATE_MS=5 ./run.sh stream 200000 normal  # 更细批次/真实入流速率
+CHUNK=1000 RATE_MS=50 ./run.sh stream 200000 normal  # 受控持续入流速率（~20k/s）
+./run.sh peak 50000 normal        # 小规模快速验证
 ./validate.sh <wfusion> <wfgen> [N]  # RSS/告警汇总
 ```
 
@@ -65,23 +65,34 @@ flood 模式 conn 阈值不触发为预期）。
 
 ## 实测结果（200000 事件，release，2026-08-11）
 
-EPS 用 **send 墙钟**计时（避免 metrics 1s 上报拖延 elapsed）。`stream` 为单连接
-流式（`wfgen send --chunk 10000 --rate-ms 0`，一个 wfgen 进程 / 一条 TCP 连接）。
+`stream`（单连接流式，`wfgen send --chunk 10000 --rate-ms 0`）**为主**——贴近真实持续入流；
+`peak`（一次性突发）作对比。EPS 用 **send 墙钟**计时（避免 metrics 1s 上报拖延 elapsed）。
+各次运行驱逐告警全为 0，#18 门禁通过。
+
+### stream（单连接流式 · 主）
+
+| 模式 | 送达 | EPS | RSS（送达后平台期峰值） |
+|---|---|---|---|
+| `stream` normal | 200000 | **~114k** | **~4.3GB** |
+| `stream` flood | 200000 | **~83k** | **~11.5GB** |
+
+**受控持续入流**（模拟真实速率）：`CHUNK=1000 RATE_MS=50 ./run.sh stream 200000 normal`
+→ 200000 事件 ~11s 喂完、EPS **~17.6k**、驱逐告警 0、全部规则族正常触发——引擎在受控速率下
+稳定无积压，chunk/rate 决定投递节奏而非引擎上限。
+
+### peak（一次性突发 · 对比）
 
 | 模式 | 送达 | EPS | RSS（送达后平台期峰值） |
 |---|---|---|---|
 | `peak` normal | 200000 | **~204k** | **~3.5GB** |
 | `peak` flood | 200000 | **~194k** | **~16GB** |
-| `stream` normal | 200000 | **~114k** | **~4.3GB** |
-| `stream` flood | 200000 | **~83k** | **~11.5GB** |
 
 - RSS 为送达后继续采样 8s 的平台期峰值：实例存活至 2m 窗口关闭，送达即杀进程会
   严重低估（早期测得 0.7GB / 14GB，实际 3.5GB / 12-19GB）。flood RSS 运行间有波动。
-- `stream` 单连接流式 EPS 约为 `peak` 的 4-6 成，来自每 chunk 一个批次的 pipeline
-  批边界开销：chunk 越小越低（chunk=1000 → ~71k，chunk=10000 → ~114k，
-  chunk=50000 → ~132k，全量 → 接近 peak）。早期「20 进程分片」测得的 ~61k/~47k
-  是发送侧假象，已改为单连接。
-- EPS 同机多跑有波动（机器负载相关），本表为代表值；各次运行驱逐告警全为 0，#18 门禁通过。
+- stream EPS 约为 peak 的 4-6 成，来自每 chunk 一个批次的 pipeline 批边界开销：
+  chunk 越小越低（chunk=1000 → ~71k，chunk=10000 → ~114k，chunk=50000 → ~132k，
+  全量 → 接近 peak）。早期「20 进程分片」测得的 ~61k/~47k 是发送侧假象，已改为单连接。
+- EPS 同机多跑有波动（机器负载相关），本表为代表值。
 - 300 规则 vs 20 规则（`eps_throughput_obj`）：peak EPS 量级相当（~190-200k vs ~117k，
   后者为旧计时口径）——规则数翻 15 倍吞吐不降，因事件解析共享（#19）。
 - flood 模式成本在**实例内存**：100000 独立 sip × per-sip 规则 = 千万级实例，RSS ~12-19GB；

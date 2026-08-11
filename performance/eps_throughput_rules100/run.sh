@@ -11,11 +11,11 @@
 #   3. #18 门禁（object 大批次不被窗口内存驱逐）
 #
 # 用法:
-#   ./run.sh                          # 默认 peak 200000 normal（复现 #18 所需规模）
-#   ./run.sh stream 200000 normal     # 持续吞吐
-#   ./run.sh peak 200000 flood        # 洪水压力（100k 独立 sip，实例 churn）
+#   ./run.sh                          # 默认 stream 200000 normal（单连接流式持续）
+#   ./run.sh peak 200000 flood        # 峰值突发 + 洪水压力（100k 唯一 sip）
+#   ./run.sh stream 1000000 normal    # 长跑（100 万事件）
+#   CHUNK=1000 RATE_MS=50 ./run.sh stream 200000 normal  # 受控持续入流速率
 #   ./run.sh peak 50000 normal        # 小规模快速验证
-#   CHUNK=5000 RATE_MS=10 ./run.sh stream ...   # 单连接流式分批/节拍可调
 #   PROFILE=debug ./run.sh ...        # debug 对比
 #   WFUSION=... WFGEN=... ./run.sh    # 指定二进制（如修复前/修复后对比）
 #   兼容旧名：burst/peak, sustain/stream, pool/normal, distinct/flood, global/single
@@ -38,7 +38,7 @@ PORT=9800
 # 模式命名：发送方式 peak（峰值一次性灌入）/ stream（流式分片持续）；
 # 数据形态 normal（sip 复用，正常流量）/ flood（唯一 sip，洪水压力）/ single（单键）。
 # 旧名 alias：burst→peak, sustain→stream, pool→normal, distinct→flood, global→single。
-MODE="${1:-peak}"
+MODE="${1:-stream}"
 case "$MODE" in burst) MODE=peak;; sustain) MODE=stream;; esac
 N="${2:-200000}"
 MODE_GEN="${3:-normal}"
