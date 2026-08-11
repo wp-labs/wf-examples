@@ -15,6 +15,7 @@
 #   ./run.sh stream 200000 normal     # 持续吞吐
 #   ./run.sh peak 200000 flood        # 洪水压力（100k 独立 sip，实例 churn）
 #   ./run.sh peak 50000 normal        # 小规模快速验证
+#   CHUNK=5000 RATE_MS=10 ./run.sh stream ...   # 单连接流式分批/节拍可调
 #   PROFILE=debug ./run.sh ...        # debug 对比
 #   WFUSION=... WFGEN=... ./run.sh    # 指定二进制（如修复前/修复后对比）
 #   兼容旧名：burst/peak, sustain/stream, pool/normal, distinct/flood, global/single
@@ -102,26 +103,26 @@ if [ "$MODE" = "peak" ]; then
   echo "    EPS = $EPS events/sec"
   [ "$DONE" = 1 ] || echo "    警告: 超时未追平（daemon 接收慢于发送？）"
 elif [ "$MODE" = "stream" ]; then
-  echo "==> 3. 持续发送（顺序分片，目标 ~10000/s）"
+  # 单连接流式：一个 wfgen 进程（wfgen send --chunk 分批 --rate-ms 节拍），
+  # EPS 按 send 墙钟计时（避免 metrics 1s 上报拖慢 elapsed）。
+  # CHUNK 越大越接近 peak；RATE_MS>0 模拟真实持续入流速率。
+  CHUNK="${CHUNK:-10000}"
+  RATE_MS="${RATE_MS:-0}"
+  echo "==> 3. 单连接流式发送（--chunk ${CHUNK} --rate-ms ${RATE_MS}）"
   START=$($PY -c 'import time; print(time.time())')
-  CHUNK=10000
-  for off in $(seq -f "%1.f" 1 "$CHUNK" "$N"); do
-    ENDOFF=$((off + CHUNK - 1))
-    [ "$ENDOFF" -gt "$N" ] && ENDOFF=$N
-    sed -n "${off},${ENDOFF}p" data/burst.jsonl > data/chunk.jsonl
-    "$WFGEN" send --scenario scenarios/throughput.wfg --input data/chunk.jsonl \
-      --addr 127.0.0.1:$PORT --ws models/schemas/network.wfs > /dev/null 2>&1
-  done
+  "$WFGEN" send --scenario scenarios/throughput.wfg --input data/burst.jsonl \
+    --addr 127.0.0.1:$PORT --ws models/schemas/network.wfs \
+    --chunk "$CHUNK" --rate-ms "$RATE_MS" > /dev/null 2>&1
+  END=$($PY -c 'import time; print(time.time())')
+  ELAPSED=$($PY -c "print($END - $START)")
   for i in $(seq 1 150); do
     if [ "$(received)" -ge "$N" ]; then break; fi
     sleep 0.2
   done
-  END=$($PY -c 'import time; print(time.time())')
-  ELAPSED=$($PY -c "print($END - $START)")
   D=$(received)
   EPS=$($PY -c "print(int($N / $ELAPSED))" 2>/dev/null || echo 0)
-  echo "    接收 $D / $N 事件，耗时 ${ELAPSED}s"
-  echo "    EPS = $EPS events/sec (持续)"
+  echo "    接收 $D / $N 事件，send 墙钟 ${ELAPSED}s"
+  echo "    EPS = $EPS events/sec (单连接流式)"
 else
   echo "ERROR: 未知模式 '$MODE'（peak | stream）" >&2
   exit 1

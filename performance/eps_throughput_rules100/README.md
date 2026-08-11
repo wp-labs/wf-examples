@@ -50,8 +50,9 @@ file 用 chars 实体 `user`。match key 独立变化。
 ```bash
 ./run.sh                          # 默认 peak 200000 normal（峰值 + 正常流量）
 ./run.sh peak 200000 flood        # 洪水压力（100k 唯一 sip，实例 churn）
-./run.sh stream 200000 normal     # 持续吞吐（流式分片）
+./run.sh stream 200000 normal     # 单连接流式持续吞吐（一个 wfgen 进程）
 ./run.sh stream 1000000 normal    # 长跑（100 万事件）
+CHUNK=1000 RATE_MS=5 ./run.sh stream 200000 normal  # 更细批次/真实入流速率
 ./validate.sh <wfusion> <wfgen> [N]  # RSS/告警汇总
 ```
 
@@ -64,22 +65,25 @@ flood 模式 conn 阈值不触发为预期）。
 
 ## 实测结果（200000 事件，release，2026-08-11）
 
+EPS 用 **send 墙钟**计时（避免 metrics 1s 上报拖延 elapsed）。`stream` 为单连接
+流式（`wfgen send --chunk 10000 --rate-ms 0`，一个 wfgen 进程 / 一条 TCP 连接）。
+
 | 模式 | 送达 | EPS | RSS（送达后平台期峰值） |
 |---|---|---|---|
-| `peak` normal | 200000 | **~148k**（123-187k 波动） | **~3.4GB** |
-| `peak` flood | 200000 | **~123k**（80-183k 波动） | **~19GB** |
-| `stream` normal | 200000 | **~61k** | **~4.2GB** |
-| `stream` flood | 200000 | **~47k** | **~12GB** |
+| `peak` normal | 200000 | **~204k** | **~3.5GB** |
+| `peak` flood | 200000 | **~194k** | **~16GB** |
+| `stream` normal | 200000 | **~114k** | **~4.3GB** |
+| `stream` flood | 200000 | **~83k** | **~11.5GB** |
 
 - RSS 为送达后继续采样 8s 的平台期峰值：实例存活至 2m 窗口关闭，送达即杀进程会
-  严重低估（早期测得 0.7GB / 14GB，实际 3.4GB / 12-19GB）。flood RSS 运行间有波动。
-- `stream`（分片发送：20 个 `wfgen send` 进程，每 10k 一片，非单条连续连接）EPS
-  比 `peak` 低约一半：send 墙钟 ~2.3s vs peak 单次 1.06s。单次进程启动仅 ~15ms，
-  慢的主要是每片一个批次在增长中的实例集上跑完整 300 规则 pipeline（负载下每片
-  ~0.11s vs 空闲 0.07s），非引擎固有吞吐——送达/驱逐告警与 peak 一致。
+  严重低估（早期测得 0.7GB / 14GB，实际 3.5GB / 12-19GB）。flood RSS 运行间有波动。
+- `stream` 单连接流式 EPS 约为 `peak` 的 4-6 成，来自每 chunk 一个批次的 pipeline
+  批边界开销：chunk 越小越低（chunk=1000 → ~71k，chunk=10000 → ~114k，
+  chunk=50000 → ~132k，全量 → 接近 peak）。早期「20 进程分片」测得的 ~61k/~47k
+  是发送侧假象，已改为单连接。
 - EPS 同机多跑有波动（机器负载相关），本表为代表值；各次运行驱逐告警全为 0，#18 门禁通过。
-- 300 规则 vs 20 规则（`eps_throughput_obj`）：peak EPS 量级相当（~120-190k vs ~117k）——
-  规则数翻 15 倍吞吐不降，因事件解析共享（#19）。
+- 300 规则 vs 20 规则（`eps_throughput_obj`）：peak EPS 量级相当（~190-200k vs ~117k，
+  后者为旧计时口径）——规则数翻 15 倍吞吐不降，因事件解析共享（#19）。
 - flood 模式成本在**实例内存**：100000 独立 sip × per-sip 规则 = 千万级实例，RSS ~12-19GB；
   normal 模式（1000 sip 复用）实例少，RSS ~3-4GB。
 
