@@ -1,0 +1,29 @@
+[window_defaults]
+evict_interval = "30s"
+max_window_bytes = "256MB"
+max_total_bytes = "2GB"
+evict_policy = "time_first"
+watermark = "1s"
+allowed_lateness = "30m"
+late_policy = "drop"
+
+[window.person_events]
+mode = "local"
+max_window_bytes = "64MB"
+over_cap = "15m"
+
+[window.auction_events]
+mode = "local"
+max_window_bytes = "64MB"
+over_cap = "15m"
+
+[window.bid_events]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "15m"
+
+# 输出窗口（over=0）
+[window.nexmark_alerts]
+mode = "local"
+max_window_bytes = "16MB"
+over_cap = "0s"

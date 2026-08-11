@@ -1,0 +1,32 @@
+use "nexmark.wfs"
+rule q7_maxbid_200 {
+    events { b : bid_events }
+    match<auction:10m> {
+        on event { b.price | max >= 200; }
+    } -> score(30.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q7_max200", detail = "max bid >= 200", request_count = 1)
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+
+rule q7_maxbid_500 {
+    events { b : bid_events }
+    match<auction:10m> {
+        on event { b.price | max >= 500; }
+    } -> score(30.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q7_max500", detail = "max bid >= 500", request_count = 1)
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+
+rule q7_maxbid_1000 {
+    events { b : bid_events }
+    match<auction:10m> {
+        on event { b.price | max >= 1000; }
+    } -> score(30.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q7_max1000", detail = "max bid >= 1000", request_count = 1)
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}

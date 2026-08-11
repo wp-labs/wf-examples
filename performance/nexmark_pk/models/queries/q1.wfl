@@ -1,0 +1,12 @@
+use "nexmark.wfs"
+rule q1_bid_passthrough {
+    events { b : bid_events }
+    match<auction:10m> {
+        on event { b | count >= 1; }
+    } -> score(1.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q1_passthrough", detail = "bid count", request_count = 1)
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+// ---- Q2 按 auction id 过滤（stateless filter 族） ----

@@ -1,0 +1,130 @@
+// NEXMark 查询子集 → WFL（Q1/Q2/Q4/Q5/Q7，10m 窗口）
+// 数据由 scripts/gen_nexmark.py 生成（Person 2% / Auction 6% / Bid 92%）。
+// Q3（person+auction 按 seller=id join）需跨字段 join key，当前 match-key 模型
+// 不支持，列为后续项。
+use "nexmark.wfs"
+
+// ---- Q1 pass-through 基线：bid 计数 ----
+rule q1_bid_passthrough {
+    events { b : bid_events }
+    match<auction:10m> {
+        on event { b | count >= 1; }
+    } -> score(1.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q1_passthrough", detail = "bid count", request_count = 1)
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+// ---- Q2 按 auction id 过滤（stateless filter 族） ----
+rule q2_filter_auction_7 {
+    events { b : bid_events && b.auction == 7 }
+    match<auction:10m> {
+        on event { b | count >= 1; }
+    } -> score(5.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q2_auction7", detail = "auction 7 bids", request_count = 1)
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule q2_filter_auction_1007 {
+    events { b : bid_events && b.auction == 1007 }
+    match<auction:10m> {
+        on event { b | count >= 1; }
+    } -> score(5.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q2_auction1007", detail = "auction 1007 bids", request_count = 1)
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+// ---- Q4 每 category 10m 窗口均价（窗口聚合族） ----
+rule q4_avg_initial_100 {
+    events { a : auction_events }
+    match<category:10m> {
+        on event { a.initialBid | avg >= 100; }
+    } -> score(10.0)
+    entity(digit, a.category)
+    yield nexmark_alerts (id = a.category, alert_type = "q4_avg100", detail = "avg initialBid >= 100", request_count = 1)
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule q4_avg_initial_500 {
+    events { a : auction_events }
+    match<category:10m> {
+        on event { a.initialBid | avg >= 500; }
+    } -> score(10.0)
+    entity(digit, a.category)
+    yield nexmark_alerts (id = a.category, alert_type = "q4_avg500", detail = "avg initialBid >= 500", request_count = 1)
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule q4_avg_initial_1000 {
+    events { a : auction_events }
+    match<category:10m> {
+        on event { a.initialBid | avg >= 1000; }
+    } -> score(10.0)
+    entity(digit, a.category)
+    yield nexmark_alerts (id = a.category, alert_type = "q4_avg1000", detail = "avg initialBid >= 1000", request_count = 1)
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+// ---- Q5 每 auction 10m 窗口 bid 计数（Top-N 的计数面） ----
+rule q5_bidcount_10 {
+    events { b : bid_events }
+    match<auction:10m> {
+        on event { b | count >= 10; }
+    } -> score(20.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q5_count10", detail = ">=10 bids", request_count = 1)
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule q5_bidcount_50 {
+    events { b : bid_events }
+    match<auction:10m> {
+        on event { b | count >= 50; }
+    } -> score(20.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q5_count50", detail = ">=50 bids", request_count = 1)
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule q5_bidcount_100 {
+    events { b : bid_events }
+    match<auction:10m> {
+        on event { b | count >= 100; }
+    } -> score(20.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q5_count100", detail = ">=100 bids", request_count = 1)
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+// ---- Q7 每 auction 10m 窗口最高出价（滑动窗口 MAX） ----
+rule q7_maxbid_200 {
+    events { b : bid_events }
+    match<auction:10m> {
+        on event { b.price | max >= 200; }
+    } -> score(30.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q7_max200", detail = "max bid >= 200", request_count = 1)
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule q7_maxbid_500 {
+    events { b : bid_events }
+    match<auction:10m> {
+        on event { b.price | max >= 500; }
+    } -> score(30.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q7_max500", detail = "max bid >= 500", request_count = 1)
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule q7_maxbid_1000 {
+    events { b : bid_events }
+    match<auction:10m> {
+        on event { b.price | max >= 1000; }
+    } -> score(30.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q7_max1000", detail = "max bid >= 1000", request_count = 1)
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}

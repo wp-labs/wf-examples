@@ -1,0 +1,34 @@
+use "nexmark.wfs"
+rule q4_avg_initial_100 {
+    events { a : auction_events }
+    match<category:10m> {
+        on event { a.initialBid | avg >= 100; }
+    } -> score(10.0)
+    entity(digit, a.category)
+    yield nexmark_alerts (id = a.category, alert_type = "q4_avg100", detail = "avg initialBid >= 100", request_count = 1)
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+
+rule q4_avg_initial_500 {
+    events { a : auction_events }
+    match<category:10m> {
+        on event { a.initialBid | avg >= 500; }
+    } -> score(10.0)
+    entity(digit, a.category)
+    yield nexmark_alerts (id = a.category, alert_type = "q4_avg500", detail = "avg initialBid >= 500", request_count = 1)
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+
+rule q4_avg_initial_1000 {
+    events { a : auction_events }
+    match<category:10m> {
+        on event { a.initialBid | avg >= 1000; }
+    } -> score(10.0)
+    entity(digit, a.category)
+    yield nexmark_alerts (id = a.category, alert_type = "q4_avg1000", detail = "avg initialBid >= 1000", request_count = 1)
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+// ---- Q5 每 auction 10m 窗口 bid 计数（Top-N 的计数面） ----

@@ -1,0 +1,34 @@
+use "nexmark.wfs"
+rule q5_bidcount_10 {
+    events { b : bid_events }
+    match<auction:10m> {
+        on event { b | count >= 10; }
+    } -> score(20.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q5_count10", detail = ">=10 bids", request_count = 1)
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+
+rule q5_bidcount_50 {
+    events { b : bid_events }
+    match<auction:10m> {
+        on event { b | count >= 50; }
+    } -> score(20.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q5_count50", detail = ">=50 bids", request_count = 1)
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+
+rule q5_bidcount_100 {
+    events { b : bid_events }
+    match<auction:10m> {
+        on event { b | count >= 100; }
+    } -> score(20.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q5_count100", detail = ">=100 bids", request_count = 1)
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+// ---- Q7 每 auction 10m 窗口最高出价（滑动窗口 MAX） ----
