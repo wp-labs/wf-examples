@@ -57,8 +57,8 @@ for i in $(seq 1 50); do
 done
 [ "$READY" = 1 ] || { echo "ERROR: TCP 源未就绪"; tail -20 data/daemon.log; exit 1; }
 
-echo "==> 2. 生成 $N Nexmark 事件（Person 2%/Auction 6%/Bid 92%）"
-"$PY" scripts/gen_nexmark.py "$N" > data/burst.jsonl
+echo "==> 2. 生成 $N Nexmark 事件（wfgen gen-nexmark，Person 2%/Auction 6%/Bid 92%）"
+"$WFGEN" gen-nexmark "$N" > data/burst.jsonl
 
 # 送达计数（metrics 中 rows_total 为每区间 delta，累加得总送达）
 received() {

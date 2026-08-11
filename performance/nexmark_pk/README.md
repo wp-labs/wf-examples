@@ -6,7 +6,8 @@
 
 ## 数据（NEXMark 事件模型）
 
-`scripts/gen_nexmark.py` 确定性生成（seed 可调），对齐标准 NEXMark schema：
+**原生 Rust 生成**：`wfgen gen-nexmark <count> [--seed N]`（warp-fusion 的 wfgen 子命令，
+不依赖 Python）。`scripts/gen_nexmark.py` 保留为参考实现（算法一致）。对齐标准 NEXMark schema：
 
 | 流 | 占比 | 字段 |
 |---|---|---|
@@ -15,7 +16,7 @@
 | bid_events | 92% | auction/bidder/price/channel/url/dateTime/extra |
 
 事件时间覆盖 ~30 分钟（3 个 10m 窗口）；hot 分布（50% hot auction / 25% hot bidder /
-25% hot seller）。重新生成：`python3 scripts/gen_nexmark.py 200000 > data/burst.jsonl`。
+25% hot seller）。重新生成：`wfgen gen-nexmark 200000 > data/burst.jsonl`。
 
 ## 查询（12 条 WFL 规则，10m 窗口）
 

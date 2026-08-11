@@ -33,7 +33,7 @@ for i in $(seq 1 50); do
 done
 [ "$READY" = 1 ] || { echo "ERROR: TCP 源未就绪"; tail -20 data/daemon.log; exit 1; }
 
-"$PY" scripts/gen_events.py "$N" pool > data/burst.jsonl
+"$WFGEN_BIN" gen-nexmark "$N" > data/burst.jsonl
 
 START=$("$PY" -c 'import time; print(time.time())')
 "$WFGEN_BIN" send --scenario scenarios/nexmark.wfg --input data/burst.jsonl \
