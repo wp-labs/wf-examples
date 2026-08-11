@@ -1,0 +1,120 @@
+// 网络流事件 — 20 规则综合压测（多事件类型 + 富数据类型 + #18 object 字段回归）
+window conn_events {
+    stream_tag = "conn_events"
+    time = event_time
+    over = 2m
+    fields {
+        sip: ip
+        dip: ip
+        dport: digit
+        bytes: digit
+        bytes_in: digit
+        bytes_out: digit
+        protocol: chars
+        action: chars
+        duration: digit
+        event_time: time
+        // #18：object 字段（运行时为 JSON 编码的 Utf8 列）。高压大批次时，
+        // Arrow IPC 往返会膨胀 get_array_memory_size，超过 max_window_bytes
+        // 被窗口内存驱逐静默丢弃——验证按内容记账后不再误触发。
+        conn_info: object
+        // 富数据类型
+        blocked: bool
+        packet_rate: float
+        app_id: chars
+        tags: array/chars
+    }
+}
+
+// 登录认证事件 — 第二类事件源
+window auth_events {
+    stream_tag = "auth_events"
+    time = event_time
+    over = 2m
+    fields {
+        source_ip: ip
+        user: chars
+        result: chars
+        dest_ip: ip
+        attempts: digit
+        agent: chars
+        risk: float
+        event_time: time
+    }
+}
+
+// DNS 查询事件 — 第三类事件源（avg/min/max 聚合路径）
+window dns_events {
+    stream_tag = "dns_events"
+    time = event_time
+    over = 2m
+    fields {
+        sip: ip
+        domain: chars
+        query_type: chars
+        resp_size: digit
+        event_time: time
+    }
+}
+
+// HTTP 代理事件 — 第四类事件源（hex 类型 + 更多富类型）
+window proxy_events {
+    stream_tag = "proxy_events"
+    time = event_time
+    over = 2m
+    fields {
+        sip: ip
+        method: chars
+        url: chars
+        status: digit
+        bytes: digit
+        user_agent: chars
+        risk: float
+        trace_id: hex
+        event_time: time
+    }
+}
+
+// 防火墙事件 — 第五类事件源
+window firewall_events {
+    stream_tag = "firewall_events"
+    time = event_time
+    over = 2m
+    fields {
+        sip: ip
+        dip: ip
+        action: chars
+        rule_id: chars
+        bytes: digit
+        protocol: chars
+        event_time: time
+    }
+}
+
+// 文件访问事件 — 第六类事件源（chars 实体）
+window file_events {
+    stream_tag = "file_events"
+    time = event_time
+    over = 2m
+    fields {
+        user: chars
+        file: chars
+        action: chars
+        size: digit
+        sensitive: bool
+        event_time: time
+    }
+}
+
+// 告警输出
+window network_alerts {
+    over = 0
+    fields {
+        sip: ip
+        dip: ip
+        alert_type: chars
+        detail: chars
+        request_count: digit
+        uid: chars
+    }
+}

@@ -1,0 +1,12 @@
+use "../models/schemas/network.wfs"
+
+scenario pk<seed=1> {
+  traffic {
+    stream conn_events gen 100000/s
+    stream auth_events gen 100000/s
+    stream dns_events gen 100000/s
+    stream proxy_events gen 100000/s
+    stream firewall_events gen 100000/s
+    stream file_events gen 100000/s
+  }
+}
