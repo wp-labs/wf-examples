@@ -57,6 +57,55 @@ window dns_events {
     }
 }
 
+// HTTP 代理事件 — 第四类事件源（hex 类型 + 更多富类型）
+window proxy_events {
+    stream_tag = "proxy_events"
+    time = event_time
+    over = 2m
+    fields {
+        sip: ip
+        method: chars
+        url: chars
+        status: digit
+        bytes: digit
+        user_agent: chars
+        risk: float
+        trace_id: hex
+        event_time: time
+    }
+}
+
+// 防火墙事件 — 第五类事件源
+window firewall_events {
+    stream_tag = "firewall_events"
+    time = event_time
+    over = 2m
+    fields {
+        sip: ip
+        dip: ip
+        action: chars
+        rule_id: chars
+        bytes: digit
+        protocol: chars
+        event_time: time
+    }
+}
+
+// 文件访问事件 — 第六类事件源（chars 实体）
+window file_events {
+    stream_tag = "file_events"
+    time = event_time
+    over = 2m
+    fields {
+        user: chars
+        file: chars
+        action: chars
+        size: digit
+        sensitive: bool
+        event_time: time
+    }
+}
+
 // 告警输出
 window network_alerts {
     over = 0

@@ -8,12 +8,12 @@
     normal   — sip 复用，正常流量长尾（旧名 pool）[默认]
 
 数据多样性：
-  - 三类事件：~75% conn_events（网络流）+ ~15% auth_events（登录）+ ~10% dns_events（DNS）
+  - 六类事件：conn 50% / firewall 15% / proxy 10% / auth 10% / dns 10% / file 5%
   - conn 富类型：object(conn_info, 嵌套 geo/vlan) / bool(blocked) / float(packet_rate) /
-    hex(app_id) / array/chars(tags)
-  - 规则触发：denied_probe/traffic_sum/accu_tracker（#18 门禁）+ 新增 14 条各覆盖一类引擎路径
-  - #18 回归：conn_info object 每行 ~400B JSON，150k conn 单批内容 ~60MB；
-    IPC 往返膨胀 ~7x 后修复前 >256MB 会被 conn_events 窗口（max_window_bytes=256MB）静默丢批
+    chars(app_id) / array/chars(tags)
+  - proxy 新增 hex(trace_id) 类型；file 用 chars 实体（user）
+  - #18 回归：conn_info object 每行 ~400B JSON，100k conn 单批内容 ~40MB；
+    IPC 往返膨胀 ~7x 后修复前 >256MB 会被 conn_events 窗口静默丢批
 """
 import json, random, sys
 
@@ -50,22 +50,54 @@ def distinct_sip(j):
 
 
 nc = 0  # conn 事件计数（flood 模式给 conn 独立 ~100k 唯一 sip）
+METHODS = ["GET", "POST", "PUT", "DELETE"]
+UAS = ["curl", "chrome", "python-requests", "safari"]
+STATUSES = [200, 301, 404, 500]
+FILES = ["/etc/app/config.yaml", "/var/log/auth.log", "/data/db.sqlite", "/home/user/secret.txt"]
 for i in range(count):
     t = BASE_NS + i * 1000 + rnd.randint(0, 400)  # 1µs 基准 + 抖动
     r = i % 20
-    if r >= 18:  # 10% dns_events
+    if r >= 19:  # 5% file_events
         ev = {
-            "_stream": "dns_events",
+            "_stream": "file_events",
             "_timestamp": "2026-01-01T00:00:00.000Z",
-            "_window": "dns_events",
-            "sip": sip(i),
-            "domain": f"dom{i % 200}.example.com",
-            "query_type": rnd.choice(QTYPES),
-            # 30% 大响应（触发 dns_avg_tunnel avg>=300）
-            "resp_size": rnd.randint(1000, 5000) if rnd.random() < 0.30 else rnd.randint(50, 500),
+            "_window": "file_events",
+            "user": f"user_{i % USERS}",
+            "file": FILES[i % len(FILES)],
+            "action": rnd.choice(["read", "write", "delete"]),
+            "size": rnd.randint(1, 100000),
+            "sensitive": rnd.random() < 0.30,
             "event_time": t,
         }
-    elif r >= 15:  # 15% auth_events
+    elif r >= 17:  # 10% proxy_events
+        ev = {
+            "_stream": "proxy_events",
+            "_timestamp": "2026-01-01T00:00:00.000Z",
+            "_window": "proxy_events",
+            "sip": sip(i),
+            "method": rnd.choice(METHODS),
+            "url": f"/api/v1/resource/{i % 100}",
+            "status": rnd.choice(STATUSES),
+            "bytes": rnd.randint(100, 50000),
+            "user_agent": rnd.choice(UAS),
+            "risk": round(rnd.uniform(0.0, 1.0), 3),
+            "trace_id": "0a" + f"{i % 0x100:02x}",
+            "event_time": t,
+        }
+    elif r >= 14:  # 15% firewall_events
+        ev = {
+            "_stream": "firewall_events",
+            "_timestamp": "2026-01-01T00:00:00.000Z",
+            "_window": "firewall_events",
+            "sip": sip(i),
+            "dip": dip(i),
+            "action": "deny" if rnd.random() < 0.40 else "allow",
+            "rule_id": f"fw-{i % 50}",
+            "bytes": rnd.randint(64, 8192),
+            "protocol": rnd.choice(PROTOS),
+            "event_time": t,
+        }
+    elif r >= 12:  # 10% auth_events
         ev = {
             "_stream": "auth_events",
             "_timestamp": "2026-01-01T00:00:00.000Z",
@@ -79,7 +111,19 @@ for i in range(count):
             "risk": round(rnd.uniform(0.0, 1.0), 3),
             "event_time": t,
         }
-    else:  # 75% conn_events
+    elif r >= 10:  # 10% dns_events
+        ev = {
+            "_stream": "dns_events",
+            "_timestamp": "2026-01-01T00:00:00.000Z",
+            "_window": "dns_events",
+            "sip": sip(i),
+            "domain": f"dom{i % 200}.example.com",
+            "query_type": rnd.choice(QTYPES),
+            # 30% 大响应（触发 dns_avg avg>=300）
+            "resp_size": rnd.randint(1000, 5000) if rnd.random() < 0.30 else rnd.randint(50, 500),
+            "event_time": t,
+        }
+    else:  # 50% conn_events
         conn_sip = distinct_sip(nc % 100000) if mode == "flood" else sip(i)
         nc += 1
         denied = rnd.random() < 0.30

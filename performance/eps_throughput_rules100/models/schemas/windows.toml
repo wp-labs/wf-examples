@@ -27,3 +27,18 @@ over_cap = "5m"
 mode = "local"
 max_window_bytes = "256MB"
 over_cap = "5m"
+
+[window.proxy_events]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "5m"
+
+[window.firewall_events]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "5m"
+
+[window.file_events]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "5m"

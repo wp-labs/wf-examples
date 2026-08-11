@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# eps_throughput_rules100 — 100 规则高压吞吐 + 内存扩展性（目标 EPS >= 10000）
+# eps_throughput_rules100 — 300 规则高压吞吐 + 内存扩展性（目标 EPS >= 10000）
 #
-# 100 条规则（scripts/gen_rules.py 生成）覆盖主要引擎路径：count/sum/avg/
+# 300 条规则（scripts/gen_rules.py 生成）覆盖主要引擎路径：count/sum/avg/
 # min/max/distinct/accu/guard（bool/float/object 嵌套/array/字符串/数学函数）/
-# close/多事件/序列/pipeline，多 key × 阈值网格。
+# close/多事件/序列/pipeline，多 key × 阈值网格，6 类事件源。
 #
 # 验证（wp-reactor#19 共享解析后）：
-#   1. 高规则量下吞吐（100 规则 EPS 应与 20 规则相当，因事件解析已共享）
-#   2. 内存亚线性扩展（100 规则 RSS 应 ~3GB，非修复前 ~70GB）
+#   1. 高规则量下吞吐（300 规则 EPS 应与 20 规则相当，因事件解析已共享）
+#   2. 内存亚线性扩展（normal 模式 RSS ~0.7GB；flood 模式 ~14GB 实例内存）
 #   3. #18 门禁（object 大批次不被窗口内存驱逐）
 #
 # 用法:
@@ -142,9 +142,11 @@ try:
         except Exception: pass
 except FileNotFoundError:
     pass
-# conn 规则 = 全部告警 - auth_* - dns_*（生成器按前缀命名：conn 规则无前缀，
-# auth 规则 auth_、dns 规则 dns_）。若 conn 大批次被内存驱逐丢弃，conn 规则归零 → 门禁 FAIL。
-conn = sum(v for k, v in c.items() if not k.startswith("auth_") and not k.startswith("dns_"))
+# conn 规则 = 全部告警 - auth_* - dns_* - pr_* - fw_* - fl_*（生成器按前缀命名：
+# conn 规则无前缀，auth/dns/proxy/firewall/file 各带前缀）。若 conn 大批次被内存
+# 驱逐丢弃，conn 规则归零 → 门禁 FAIL。
+conn = sum(v for k, v in c.items()
+           if not k.startswith(("auth_", "dns_", "pr_", "fw_", "fl_")))
 print(f"conn_rules={conn} total={sum(c.values())}")
 print("    per_rule: " + ", ".join(f"{k}={v}" for k, v in sorted(c.items())) or "    (none)")
 EOF

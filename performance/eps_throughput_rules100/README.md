@@ -1,29 +1,48 @@
-# eps_throughput_rules100 — 100 规则高压吞吐 + 内存扩展性
+# eps_throughput_rules100 — 300 规则高压吞吐 + 内存扩展性
 
-生产环境的 CEP/SIEM 部署通常跑 50-500+ 条规则。本场景用 **100 条规则**验证高规则量下的
+生产环境的 CEP/SIEM 部署通常跑 50-500+ 条规则。本场景用 **300 条规则**验证高规则量下的
 引擎吞吐与内存扩展性，并作为 **wp-reactor#18**（object 字段内存驱逐）的回归门禁。
+目录名保留历史 `rules100`，实际由生成器产出 300 条（引擎加载 303 条规则条目）。
 
-## 规则（100 条）
+## 事件源（6 类）
+
+`scripts/gen_events.py` 按 50/15/10/10/10/5 生成 6 类事件，覆盖 ip/digit/float/bool/
+chars/array/object/hex 富类型，并含 chars 实体（user）：
+
+| 事件源 | 占比 | 类型覆盖 |
+|---|---|---|
+| conn_events | 50% | object(conn_info 嵌套 geo/vlan) / bool(blocked) / float(packet_rate) / chars(app_id) / array(tags) |
+| firewall_events | 15% | 第五类源（action/rule_id/protocol） |
+| proxy_events | 10% | 第四类源，新增 hex(trace_id) |
+| auth_events | 10% | 登录（source_ip 实体） |
+| dns_events | 10% | DNS 查询（domain 实体） |
+| file_events | 5% | 第六类源，chars 实体（user） |
+
+## 规则（300 条）
 
 `scripts/gen_rules.py` 从模板 + 参数网格生成 `models/rules/throughput.wfl`
-（100 条，引擎加载为 102 条规则条目，pipeline 两阶段拆 2 个内部规则）：
+（300 条，引擎加载为 303 条规则条目，3 条 pipeline 各拆 2 阶段）：
 
 | 类别 | 数量 | 覆盖 |
 |---|---|---|
-| count | 18+ | sip/dip/dport/protocol × 多阈值 |
-| sum / avg / min / max | 21 | bytes/bytes_in/bytes_out/duration/packet_rate × key |
-| distinct | 5 | dip / dport |
-| accu（on event<accu>） | 4 | 窗口内累积 |
-| guard | 16 | bool(blocked)/float(packet_rate)/object 嵌套(#64)/array(tags)/chars(app_id)/字符串/数学函数 |
-| auth（第二事件源） | 5 | result/risk/attempts |
-| dns（第三事件源） | 5 | avg/count/query_type |
-| close（and-close） | 3 | close 路径 |
-| 多事件（conn+dns） | 2 | 多源关联 |
-| 序列（seq） | 2 | 多步有序 |
-| pipeline（`|>`） | 2 | 两阶段 fixed 桶 |
-| count 补齐 | ~17 | 凑足 100 |
+| conn count | 33 | sip/dip/dport/protocol/duration/bytes × 阈值网格 |
+| conn sum / avg / min / max | 34 | bytes/bytes_in/bytes_out/duration/packet_rate × key |
+| conn distinct | 9 | dip / dport / protocol / action |
+| conn accu（on event<accu>） | 7 | 窗口内累积 |
+| conn guard | 29 | bool(blocked)/float(packet_rate)/object 嵌套(#64)/array(tags)/chars(app_id)/字符串/数学函数 |
+| conn close（and-close） | 7 | close 路径 |
+| auth（第二事件源） | 11 | result/risk/attempts/agent/dest_ip |
+| dns（第三事件源） | 13 | avg/max/min/sum/count/query_type |
+| proxy（第四事件源，hex） | 26 | count/agg/guard/distinct/hex yield |
+| firewall（第五事件源） | 20 | count/agg/guard/distinct |
+| file（第六事件源，chars 实体） | 19 | count/agg/guard |
+| 多事件（conn+dns/proxy/firewall） | 6 | 多源关联 |
+| 序列（seq） | 3 | 多步有序 |
+| pipeline（`|>`） | 3 | 两阶段 fixed 桶 |
+| count 补齐 | 80 | 凑足 300 |
 
-实体统一用 ip 字段（conn=c.sip、auth=a.source_ip、dns=d.sip），match key 独立变化。
+实体：conn/proxy/firewall 用 `sip`（ip）、auth 用 `source_ip`、dns 用 `sip`/`domain`，
+file 用 chars 实体 `user`。match key 独立变化。
 重新生成：`python3 scripts/gen_rules.py > models/rules/throughput.wfl`。
 
 ## 运行
@@ -40,18 +59,20 @@
 > `flood`（唯一 sip，洪水压力）/ `single`（单键）。兼容旧名：burst/peak、sustain/stream、
 > pool/normal、distinct/flood、global/single。
 
-门禁：#18 驱逐告警 = 0，且 conn 规则告警 > 0（按规则名前缀统计，排除 auth_/dns_）。
+门禁：#18 驱逐告警 = 0，且 conn 规则告警 > 0（conn = 全部告警 - auth_/dns_/pr_/fw_/fl_ 前缀，
+flood 模式 conn 阈值不触发为预期）。
 
-## 实测结果（200000 事件，release）
+## 实测结果（200000 事件，release，2026-08-11）
 
 | 模式 | 送达 | EPS | RSS |
 |---|---|---|---|
-| `peak` normal | 200000 | **~110k** | **~2.5GB** |
-| `peak` flood | 200000 | **~95k** | **~11.3GB**（~900 万实例） |
+| `peak` normal | 200000 | **~187k** | **~0.7GB** |
+| `peak` flood | 200000 | **~183k** | **~14GB** |
 
-- 100 规则 vs 20 规则（`eps_throughput_obj`）：EPS ~110k vs ~117k，规则数对吞吐影响很小。
-- flood 模式成本在**实例内存**：100000 独立 sip × ~90 条 conn 规则 = ~900 万实例。
-  normal 模式（1000 sip）只有 ~10 万实例，RSS 2.5GB。
+- 300 规则 vs 20 规则（`eps_throughput_obj`）：EPS ~187k vs ~117k —— 规则数翻 15 倍，
+  因事件解析共享（#19）吞吐不降反升。
+- flood 模式成本在**实例内存**：100000 独立 sip × per-sip 规则 = 千万级实例，RSS ~14GB，
+  驱逐告警 0（#18 门禁通过）。normal 模式（1000 sip 复用）实例少，RSS ~0.7GB。
 
 ### 100000 独立 sip 是什么水准
 
@@ -72,4 +93,4 @@ flood 模式在一个 2 分钟窗口内出现 **100000 个独立源 IP**。现�
 
 - `wfusion` / `wfgen` 在 PATH（或用 `WFUSION=/path WFGEN=/path`）。
 - 二进制需含 wp-reactor#18 内容记账修复（228f441）。
-- 200000 事件建议 ≥8GB 内存（flood 模式 ~11GB）；`nc`、`python3`；端口 9800 空闲。
+- 200000 事件建议 ≥16GB 内存（flood 模式 ~14GB）；`nc`、`python3`；端口 9800 空闲。

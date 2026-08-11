@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# eps_throughput_rules100 — 100 规则高压场景指标汇总（RSS/告警/驱逐/EPS）
+# eps_throughput_rules100 — 300 规则高压场景指标汇总（RSS/告警/驱逐/EPS）
 #
 # 跑同一 object 大批次场景，汇总送达/告警/驱逐/RSS/EPS。conn 规则按前缀
-# 统计（排除 auth_/dns_），用于 #18 门禁与内存扩展性观察。
+# 统计（排除 auth_/dns_/pr_/fw_/fl_），用于 #18 门禁与内存扩展性观察。
 #
 # 用法:
 #   ./validate.sh <wfusion-bin> <wfgen-bin> [N]
@@ -91,7 +91,8 @@ try:
         c[o.get("__wfu_rule_name", "?")] += 1
 except FileNotFoundError:
     pass
-conn = sum(v for k, v in c.items() if not k.startswith("auth_") and not k.startswith("dns_"))
+conn = sum(v for k, v in c.items()
+           if not k.startswith(("auth_", "dns_", "pr_", "fw_", "fl_")))
 print(f"conn_rules={conn} total={sum(c.values())}")
 EOF
 )
