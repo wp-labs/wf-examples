@@ -51,18 +51,21 @@ append 内存驱逐把刚追加的整批 pop 掉——之前完全静默，表�
 ## 运行
 
 ```bash
-./run.sh                          # 默认 burst 200000 pool，EPS + #18 回归门禁
-./run.sh sustain 200000 pool      # 持续吞吐
-./run.sh burst 200000 distinct    # 实例 churn 压力
-./run.sh burst 50000 pool         # 小规模快速验证
+./run.sh                          # 默认 peak 200000 normal，EPS + #18 回归门禁
+./run.sh stream 200000 normal     # 持续吞吐
+./run.sh peak 200000 flood        # 洪水压力（实例 churn）
+./run.sh peak 50000 normal        # 小规模快速验证
 ./validate.sh <wfusion> <wfgen> [N]   # A/B 驱动：对比修复前/后二进制行为
 ```
+
+> 模式命名：`peak`/`stream`（发送）+ `normal`/`flood`/`single`（数据）。兼容旧名：
+> burst/peak、sustain/stream、pool/normal、distinct/flood、global/single。
 
 `run.sh` 结束时执行 #18 回归门禁：
 - `in memory eviction` 告警数 = 0，**且**（pool/global 模式）conn_events 窗口规则告警 > 0
   （排除 auth 的 login_brute / dns 的 dns_avg_tunnel）→ PASS。
 - 若 conn 大批次被内存驱逐丢弃，所有 conn 规则归零 → FAIL。
-- `distinct` 模式每个 sip 仅 1 事件，规则阈值不触发属预期，门禁只查驱逐告警。
+- `flood` 模式每个 sip 仅 1 事件，规则阈值不触发属预期，门禁只查驱逐告警。
 
 ## 实测 A/B（200000 事件，release）
 
@@ -78,12 +81,9 @@ append 内存驱逐把刚追加的整批 pop 掉——之前完全静默，表�
 
 | 模式 | 送达 | EPS | #18 门禁 |
 |---|---|---|---|
-| `burst` pool | 200000 | **~102-110k** | PASS |
-| `burst` distinct | 200000 | **~95k** | PASS（0 驱逐，阈值不触发为预期） |
-| `sustain` pool | ~187000* | ~4.4k* | PASS（conn 全处理） |
-
-> \* sustain 顺序分片下 daemon `rx_rows` 停在 ~187000/200000，但 conn 规则告警数与 burst
-> 一致——conn 事件全部处理。缺口指向 TCP 源/wfgen 顺序大帧路径，**与 #18 无关**。
+| `peak` normal | 200000 | **~102-110k** | PASS |
+| `peak` flood | 200000 | **~95k** | PASS（0 驱逐，阈值不触发为预期） |
+| `stream` normal | 200000 | **~56k** | PASS（conn 全处理） |
 
 ## 前提
 

@@ -11,12 +11,13 @@
 #   3. #18 门禁（object 大批次不被窗口内存驱逐）
 #
 # 用法:
-#   ./run.sh                       # 默认 burst 200000 pool（复现 #18 所需规模）
-#   ./run.sh sustain 200000 pool   # 持续吞吐
-#   ./run.sh burst 200000 distinct # 实例 churn 压力
-#   ./run.sh burst 50000 pool      # 小规模快速验证
-#   PROFILE=debug ./run.sh ...     # debug 对比
-#   WFUSION=... WFGEN=... ./run.sh # 指定二进制（如修复前/修复后对比）
+#   ./run.sh                          # 默认 peak 200000 normal（复现 #18 所需规模）
+#   ./run.sh stream 200000 normal     # 持续吞吐
+#   ./run.sh peak 200000 flood        # 洪水压力（100k 独立 sip，实例 churn）
+#   ./run.sh peak 50000 normal        # 小规模快速验证
+#   PROFILE=debug ./run.sh ...        # debug 对比
+#   WFUSION=... WFGEN=... ./run.sh    # 指定二进制（如修复前/修复后对比）
+#   兼容旧名：burst/peak, sustain/stream, pool/normal, distinct/flood, global/single
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
@@ -33,9 +34,18 @@ else
 fi
 PY=${PYTHON:-python3}
 PORT=9800
-MODE="${1:-burst}"
+# 模式命名：发送方式 peak（峰值一次性灌入）/ stream（流式分片持续）；
+# 数据形态 normal（sip 复用，正常流量）/ flood（唯一 sip，洪水压力）/ single（单键）。
+# 旧名 alias：burst→peak, sustain→stream, pool→normal, distinct→flood, global→single。
+MODE="${1:-peak}"
+case "$MODE" in burst) MODE=peak;; sustain) MODE=stream;; esac
 N="${2:-200000}"
-MODE_GEN="${3:-pool}"
+MODE_GEN="${3:-normal}"
+case "$MODE_GEN" in
+  pool) MODE_GEN=normal;;
+  distinct) MODE_GEN=flood;;
+  global) MODE_GEN=single;;
+esac
 METRICS=data/metrics.ndjson
 
 mkdir -p data
@@ -74,7 +84,7 @@ print(s)
 EOF
 }
 
-if [ "$MODE" = "burst" ]; then
+if [ "$MODE" = "peak" ]; then
   echo "==> 3. 全速发送并计时（等 delivered 追平 N）"
   START=$($PY -c 'import time; print(time.time())')
   "$WFGEN" send --scenario scenarios/throughput.wfg --input data/burst.jsonl \
@@ -91,7 +101,7 @@ if [ "$MODE" = "burst" ]; then
   echo "    接收 $D / $N 事件，耗时 ${ELAPSED}s"
   echo "    EPS = $EPS events/sec"
   [ "$DONE" = 1 ] || echo "    警告: 超时未追平（daemon 接收慢于发送？）"
-elif [ "$MODE" = "sustain" ]; then
+elif [ "$MODE" = "stream" ]; then
   echo "==> 3. 持续发送（顺序分片，目标 ~10000/s）"
   START=$($PY -c 'import time; print(time.time())')
   CHUNK=10000
@@ -113,7 +123,7 @@ elif [ "$MODE" = "sustain" ]; then
   echo "    接收 $D / $N 事件，耗时 ${ELAPSED}s"
   echo "    EPS = $EPS events/sec (持续)"
 else
-  echo "ERROR: 未知模式 '$MODE'（burst | sustain）" >&2
+  echo "ERROR: 未知模式 '$MODE'（peak | stream）" >&2
   exit 1
 fi
 
@@ -144,9 +154,9 @@ echo "    内存驱逐告警: $EVICT"
 echo "    告警: $ALERT_SUMMARY"
 
 if [ "${EVICT:-0}" -eq 0 ]; then
-  if [ "$MODE_GEN" = "distinct" ]; then
-    # distinct 模式每个 sip 仅 1 事件，规则阈值（如 100 conn/sip）不触发属预期
-    echo "OK: #18 回归通过 — 无内存驱逐丢批（distinct 模式 conn 规则阈值不触发为预期）"
+  if [ "$MODE_GEN" = "flood" ]; then
+    # flood 模式每个 sip 仅 1-2 事件，规则阈值（如 100 conn/sip）不触发属预期
+    echo "OK: #18 回归通过 — 无内存驱逐丢批（flood 模式 conn 规则阈值不触发为预期）"
   elif [ "${CONN_ALERTS:-0}" -gt 0 ]; then
     echo "OK: #18 回归通过 — object 大批次未被驱逐，conn 规则正常触发（alerts=${CONN_ALERTS}）"
   else

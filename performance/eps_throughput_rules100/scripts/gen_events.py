@@ -3,9 +3,9 @@
 
 用法: gen_events.py <count> <mode>
   mode:
-    global   — 所有事件一个 sip（全局实例，最纯吞吐路径）
-    distinct — 每个事件 distinct sip（实例 map churn，最大压力）
-    pool     — 固定 sip 池循环复用（实例复用，贴近真实）[默认]
+    single   — 单 sip，最纯引擎路径（旧名 global）
+    flood    — 唯一 sip，洪水/攻击压力（旧名 distinct）
+    normal   — sip 复用，正常流量长尾（旧名 pool）[默认]
 
 数据多样性：
   - 三类事件：~75% conn_events（网络流）+ ~15% auth_events（登录）+ ~10% dns_events（DNS）
@@ -18,7 +18,8 @@
 import json, random, sys
 
 count = int(sys.argv[1])
-mode = sys.argv[2] if len(sys.argv) > 2 else "pool"
+mode = sys.argv[2] if len(sys.argv) > 2 else "normal"
+mode = {"global": "single", "distinct": "flood", "pool": "normal"}.get(mode, mode)
 rnd = random.Random(42)
 BASE_NS = 1767225600000000000  # 2026-01-01T00:00:00Z
 POOL = 1000
@@ -29,9 +30,9 @@ QTYPES = ["A", "AAAA", "TXT", "CNAME"]
 
 
 def sip(i):
-    if mode == "global":
+    if mode == "single":
         return "10.0.0.1"
-    if mode == "distinct":
+    if mode == "flood":
         # 100000 唯一 sip，循环复用（对齐规则 max_instances=100000/规则封顶）。
         # 200000 事件 → 每个 sip 出现 ~2 次，实例数正好 100k/规则、无 throttle 截断，
         # 压测的是完整的高基数实例集，而非被封顶截断的子集。
@@ -48,7 +49,7 @@ def distinct_sip(j):
     return f"10.{(j >> 16) & 255}.{(j >> 8) & 255}.{j & 255}"
 
 
-nc = 0  # conn 事件计数（distinct 模式给 conn 独立 ~100k 唯一 sip）
+nc = 0  # conn 事件计数（flood 模式给 conn 独立 ~100k 唯一 sip）
 for i in range(count):
     t = BASE_NS + i * 1000 + rnd.randint(0, 400)  # 1µs 基准 + 抖动
     r = i % 20
@@ -79,7 +80,7 @@ for i in range(count):
             "event_time": t,
         }
     else:  # 75% conn_events
-        conn_sip = distinct_sip(nc % 100000) if mode == "distinct" else sip(i)
+        conn_sip = distinct_sip(nc % 100000) if mode == "flood" else sip(i)
         nc += 1
         denied = rnd.random() < 0.30
         # #18 回归：object 字段（含嵌套 geo），每行 ~400B JSON 负载。

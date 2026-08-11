@@ -3,9 +3,9 @@
 
 用法: gen_events.py <count> <mode>
   mode:
-    global   — 所有事件一个 sip（全局实例，最纯吞吐路径）
-    distinct — 每个事件 distinct sip（实例 map churn，最大压力）
-    pool     — 固定 sip 池循环复用（实例复用，贴近真实）[默认]
+    single   — 单 sip，最纯引擎路径（旧名 global）
+    flood    — 唯一 sip，洪水/攻击压力（旧名 distinct）
+    normal   — sip 复用，正常流量长尾（旧名 pool）[默认]
 
 数据多样性：
   - 三类事件：~75% conn_events（网络流）+ ~15% auth_events（登录）+ ~10% dns_events（DNS）
@@ -18,7 +18,8 @@
 import json, random, sys
 
 count = int(sys.argv[1])
-mode = sys.argv[2] if len(sys.argv) > 2 else "pool"
+mode = sys.argv[2] if len(sys.argv) > 2 else "normal"
+mode = {"global": "single", "distinct": "flood", "pool": "normal"}.get(mode, mode)
 rnd = random.Random(42)
 BASE_NS = 1767225600000000000  # 2026-01-01T00:00:00Z
 POOL = 1000
@@ -29,9 +30,9 @@ QTYPES = ["A", "AAAA", "TXT", "CNAME"]
 
 
 def sip(i):
-    if mode == "global":
+    if mode == "single":
         return "10.0.0.1"
-    if mode == "distinct":
+    if mode == "flood":
         return f"10.{(i >> 16) & 255}.{(i >> 8) & 255}.{i & 255}"
     return f"10.0.{i % (POOL >> 8)}.{i % 250 + 1}"
 

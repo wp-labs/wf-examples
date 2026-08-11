@@ -29,11 +29,16 @@
 ## 运行
 
 ```bash
-./run.sh                         # 默认 burst 200000 pool
-./run.sh burst 200000 distinct   # 实例 churn 压力（100000 独立实例/规则 × 100 规则）
-./run.sh sustain 200000 pool     # 持续吞吐
+./run.sh                          # 默认 peak 200000 normal（峰值 + 正常流量）
+./run.sh peak 200000 flood        # 洪水压力（100k 唯一 sip，实例 churn）
+./run.sh stream 200000 normal     # 持续吞吐（流式分片）
+./run.sh stream 1000000 normal    # 长跑（100 万事件）
 ./validate.sh <wfusion> <wfgen> [N]  # RSS/告警汇总
 ```
+
+> 模式命名：发送 `peak`（一次性峰值）/ `stream`（流式持续）；数据 `normal`（sip 复用，正常流量）/
+> `flood`（唯一 sip，洪水压力）/ `single`（单键）。兼容旧名：burst/peak、sustain/stream、
+> pool/normal、distinct/flood、global/single。
 
 门禁：#18 驱逐告警 = 0，且 conn 规则告警 > 0（按规则名前缀统计，排除 auth_/dns_）。
 
@@ -41,16 +46,16 @@
 
 | 模式 | 送达 | EPS | RSS |
 |---|---|---|---|
-| `burst` pool | 200000 | **~110k** | **~2.5GB** |
-| `burst` distinct | 200000 | **~95k** | **~11.3GB**（~900 万实例） |
+| `peak` normal | 200000 | **~110k** | **~2.5GB** |
+| `peak` flood | 200000 | **~95k** | **~11.3GB**（~900 万实例） |
 
 - 100 规则 vs 20 规则（`eps_throughput_obj`）：EPS ~110k vs ~117k，规则数对吞吐影响很小。
-- distinct 模式成本在**实例内存**：100000 独立 sip × ~90 条 conn 规则 = ~900 万实例。
-  pool 模式（1000 sip）只有 ~10 万实例，RSS 2.5GB。
+- flood 模式成本在**实例内存**：100000 独立 sip × ~90 条 conn 规则 = ~900 万实例。
+  normal 模式（1000 sip）只有 ~10 万实例，RSS 2.5GB。
 
 ### 100000 独立 sip 是什么水准
 
-distinct 模式在一个 2 分钟窗口内出现 **100000 个独立源 IP**。现实对应：
+flood 模式在一个 2 分钟窗口内出现 **100000 个独立源 IP**。现实对应：
 
 | 部署规模 | 单窗口内独立 sip |
 |---|---|
@@ -59,12 +64,12 @@ distinct 模式在一个 2 分钟窗口内出现 **100000 个独立源 IP**。�
 | ISP / CDN 边缘 | 5-20 万 |
 | 攻击风暴（botnet 扫描） | 可到 20 万+ |
 
-- **pool 模式（1000 sip）贴近典型负载**（真实流量是长尾分布，多数 IP 出现一两次）。
-- **distinct 模式（100000 唯一 sip）代表"大型企业 / ISP 边缘"高负载**，与规则
+- **normal 模式（1000 sip）贴近典型负载**（真实流量是长尾分布，多数 IP 出现一两次）。
+- **flood 模式（100000 唯一 sip）代表"大型企业 / ISP 边缘"高负载**，与规则
   `max_instances=100000` 封顶对齐——每个 sip 都拿到实例，压测完整的高基数实例集。
 
 ## 前提
 
 - `wfusion` / `wfgen` 在 PATH（或用 `WFUSION=/path WFGEN=/path`）。
 - 二进制需含 wp-reactor#18 内容记账修复（228f441）。
-- 200000 事件建议 ≥8GB 内存（distinct 模式 ~11GB）；`nc`、`python3`；端口 9800 空闲。
+- 200000 事件建议 ≥8GB 内存（flood 模式 ~11GB）；`nc`、`python3`；端口 9800 空闲。
