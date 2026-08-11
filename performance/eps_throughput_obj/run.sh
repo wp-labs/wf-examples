@@ -94,7 +94,7 @@ elif [ "$MODE" = "sustain" ]; then
   echo "==> 3. 持续发送（顺序分片，目标 ~10000/s）"
   START=$($PY -c 'import time; print(time.time())')
   CHUNK=10000
-  for off in $(seq 1 "$CHUNK" "$N"); do
+  for off in $(seq -f "%1.f" 1 "$CHUNK" "$N"); do
     ENDOFF=$((off + CHUNK - 1))
     [ "$ENDOFF" -gt "$N" ] && ENDOFF=$N
     sed -n "${off},${ENDOFF}p" data/burst.jsonl > data/chunk.jsonl
