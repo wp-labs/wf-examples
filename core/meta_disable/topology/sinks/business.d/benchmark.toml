@@ -1,0 +1,24 @@
+version = "2.0"
+
+# 基准测试业务组：blackhole 丢弃输出，只测纯处理吞吐。
+# parallel = 每 sink 的并行消费者数（1..=10，默认 1）——用于把 emit→sink
+# 投递拆成 N 路并行，缓解高告警量规则被单消费者串行排空拖住的问题。
+[sink_group]
+name = "benchmark_all"
+parallel = ${WORK_CNT:6}
+windows = ["*"]
+#tags = ["group:benchmark", "type:business"]
+
+# Null sink 用于性能基准测试（对齐 Flink discarding sink 口径）
+[[sink_group.sinks]]
+name = "blackhole"
+connect = "blackhole_sink"
+#tags = ["sink:null", "purpose:benchmark"]
+
+# 可选：启用文件输出进行调试
+# [[sink_group.sinks]]
+# name = "debug_output"
+# connect = "file_json_sink"
+# [sink_group.sinks.params]
+# base = "data/alerts"
+# file = "benchmark_debug.ndjson"
