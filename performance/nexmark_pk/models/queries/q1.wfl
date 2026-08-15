@@ -1,12 +1,19 @@
 use "nexmark.wfs"
+
+// 无状态 Q1：bid 投影（对齐 Flink Q1 的 stateless projection 语义）。
+//
+// 用 on each 路径：无 match 实例表、无状态机——每 bid 独立评估输出一条
+// 告警（= Flink 每 bid 输出一行到 blackhole）。
+//
+// 背景：keyed 版本（match<auction:10m> + count>=1）在 100M 规模下为 6M 个
+// auction 各建一个状态机实例，实例表涨破 CPU 缓存后吞吐从 ~6.5M/s 崩到
+// ~0.9M/s 稳态（2026-08-15 实测曲线）；而 Flink Q1 零 key 状态。on each
+// 才是与 Flink Q1 对等的工作负载。
 rule q1_bid_passthrough {
     events { b : bid_events }
-    match<auction:10m> {
-        on event { b | count >= 1; }
-    } -> score(1.0)
+    on each b -> score(1.0)
     entity(digit, b.auction)
-    yield nexmark_alerts (id = b.auction, alert_type = "q1_passthrough", detail = "bid count", request_count = 1)
-    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+    yield nexmark_alerts (id = b.auction, alert_type = "q1_passthrough", detail = "bid", request_count = 1)
 }
 
 // ---- Q2 按 auction id 过滤（stateless filter 族） ----

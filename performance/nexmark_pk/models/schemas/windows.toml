@@ -1,7 +1,7 @@
 [window_defaults]
 evict_interval = "30s"
 max_window_bytes = "256MB"
-max_total_bytes = "2GB"
+max_total_bytes = "20GB"
 evict_policy = "time_first"
 watermark = "1s"
 allowed_lateness = "30m"
@@ -19,7 +19,7 @@ over_cap = "15m"
 
 [window.bid_events]
 mode = "local"
-max_window_bytes = "256MB"
+max_window_bytes = "15GB"
 over_cap = "15m"
 
 # 输出窗口（over=0）

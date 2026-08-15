@@ -1,0 +1,14 @@
+use "nexmark.wfs"
+
+// 对齐 Flink Q3：SELECT name, city, state, id FROM person, auction WHERE person.id = auction.seller
+// auction 驱动，hash join person 表（seller == person.id）拿卖家信息。
+rule q3_auction_seller {
+    events { a : auction_events }
+    match<id:10m> {
+        on event { a | count >= 1; }
+    } -> score(1.0)
+    join person_events snapshot on a.seller == person_events.id
+    entity(digit, a.id)
+    yield nexmark_alerts (id = a.id, alert_type = "q3", detail = a.seller, request_count = 1)
+    limits { max_memory = "512MB" }
+}

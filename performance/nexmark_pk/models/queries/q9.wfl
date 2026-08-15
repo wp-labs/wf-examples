@@ -1,0 +1,14 @@
+use "nexmark.wfs"
+
+// 对齐 Flink Q9：SELECT id, name, count(*) FROM person, auction WHERE person.id = auction.seller GROUP BY id, name
+// auction 驱动，hash join person 表，按 seller 计数。
+rule q9_seller_count {
+    events { a : auction_events }
+    match<seller:10m> {
+        on event { a | count >= 1; }
+    } -> score(1.0)
+    join person_events snapshot on a.seller == person_events.id
+    entity(digit, a.seller)
+    yield nexmark_alerts (id = a.seller, alert_type = "q9", detail = a.id, request_count = 1)
+    limits { max_memory = "512MB" }
+}

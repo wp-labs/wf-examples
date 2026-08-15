@@ -24,7 +24,7 @@ rule instance_growth {
 
     limits {
         max_memory = "512MB";
-        max_instances = 1000000;
+        max_instances = 1000000000;
         on_exceed = throttle;
     }
 }

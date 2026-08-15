@@ -1,23 +1,12 @@
 use "nexmark.wfs"
-rule q2_filter_auction_7 {
-    events { b : bid_events && b.auction == 7 }
+
+// 对齐 Flink Q2：SELECT auction FROM bid WHERE MOD(auction,123)=0（选中 ~0.81% bids）
+rule q2_mod_123 {
+    events { b : bid_events && b.auction % 123 == 0 }
     match<auction:10m> {
         on event { b | count >= 1; }
     } -> score(5.0)
     entity(digit, b.auction)
-    yield nexmark_alerts (id = b.auction, alert_type = "q2_auction7", detail = "auction 7 bids", request_count = 1)
-    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+    yield nexmark_alerts (id = b.auction, alert_type = "q2_mod123", detail = "auction % 123 == 0", request_count = 1)
+    limits { max_memory = "512MB" }
 }
-
-
-rule q2_filter_auction_1007 {
-    events { b : bid_events && b.auction == 1007 }
-    match<auction:10m> {
-        on event { b | count >= 1; }
-    } -> score(5.0)
-    entity(digit, b.auction)
-    yield nexmark_alerts (id = b.auction, alert_type = "q2_auction1007", detail = "auction 1007 bids", request_count = 1)
-    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
-}
-
-// ---- Q4 每 category 10m 窗口均价（窗口聚合族） ----
