@@ -1,8 +1,8 @@
-# eps_throughput_rules100 — 450 规则高压吞吐 + 内存扩展性
+# qradar_pk — 450 规则高压吞吐 + QRadar EP 对标
 
 生产环境的 CEP/SIEM 部署通常跑 50-500+ 条规则。本场景用 **450 条规则**验证高规则量下的
 引擎吞吐与内存扩展性，并作为 **wp-reactor#18**（object 字段内存驱逐）的回归门禁。
-目录名保留历史 `rules100`，实际由生成器产出 450 条（引擎加载 ~453 条规则条目，含 pipeline
+生成器产出 450 条（引擎加载 ~453 条规则条目，含 pipeline
 拆分），**对标 IBM QRadar Event Processor 官方认证负载（80k EPS @ 451 条规则）**——
 规则数与 QRadar 认证规格同量级（450 vs 451）。
 

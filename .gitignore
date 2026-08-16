@@ -9,6 +9,8 @@ data
 *.log.*
 core/meta_disable/data
 
-# eps_throughput_rules100 benchmark run artifacts
-performance/eps_throughput_rules100/ab_results/
-performance/eps_throughput_rules100/topology_1/
+# qradar_pk benchmark run artifacts
+performance/qradar_pk/ab_results/
+performance/qradar_pk/data/
+performance/qradar_pk/topology_1/
+performance/qradar_pk/gen.log

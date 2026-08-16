@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# eps_throughput_rules100 — 450 规则高压吞吐 + 内存扩展性（目标 EPS >= 10000）
+# qradar_pk — 450 规则高压吞吐 + QRadar EP 对标（目标 EPS >= 10000）
 #
 # 450 条规则（scripts/gen_rules.py 生成，对标 QRadar EP 451 规则规格）覆盖主要引擎路径：
 # count/sum/avg/min/max/distinct/accu/guard（bool/float/object 嵌套/array/字符串/数学函数）/
