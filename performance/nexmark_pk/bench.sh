@@ -258,7 +258,7 @@ run_cont_one() {
   done
   [ "$T2" = 0 ] && T2=$("$PY" -c 'import time; print(time.time())')
   sleep 3
-  kill $SP 2>/dev/null; kill_daemon $D; wait_port_free
+  kill $SP 2>/dev/null; wait $SP 2>/dev/null; kill_daemon $D; wait_port_free
 
   # EPS 按 append 计：追平时 == TOTAL；超时时 = 实际处理速率（不含预读水分）
   local EPS=$("$PY" -c "print(int($APP/($T2-$T0)))")
@@ -293,9 +293,9 @@ run_stream_one() {
     sleep 0.5
   done
   [ "$T2" = 0 ] && T2=$("$PY" -c 'import time; print(time.time())')
-  kill $S 2>/dev/null
+  kill $S 2>/dev/null; wait $S 2>/dev/null
   sleep 3
-  kill $SP 2>/dev/null; kill_daemon $D; wait_port_free
+  kill $SP 2>/dev/null; wait $SP 2>/dev/null; kill_daemon $D; wait_port_free
 
   local EPS=$("$PY" -c "print(int($APP/($T2-$T0)))")
   stat_samples

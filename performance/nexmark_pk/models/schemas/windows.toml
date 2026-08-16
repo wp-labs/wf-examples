@@ -1,5 +1,7 @@
 [window_defaults]
-evict_interval = "30s"
+# 1s：消费感知门控（WindowProgress floor）后时间驱逐只在
+# "事件时间过期 && 所有消费者已 ack" 时释放行，tick 变密不丢数据。
+evict_interval = "1s"
 max_window_bytes = "256MB"
 max_total_bytes = "20GB"
 evict_policy = "time_first"
