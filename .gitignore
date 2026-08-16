@@ -8,3 +8,7 @@ data
 *.log
 *.log.*
 core/meta_disable/data
+
+# eps_throughput_rules100 benchmark run artifacts
+performance/eps_throughput_rules100/ab_results/
+performance/eps_throughput_rules100/topology_1/

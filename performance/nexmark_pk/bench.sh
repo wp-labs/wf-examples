@@ -8,17 +8,20 @@
 #            （~760k，客户端实时编码受限）—— 测长时实时流稳定性/内存有界
 #
 # 用法:
-#   ./bench.sh [query=q1|q2|q4|q5|q7|all] [feed=cont|stream] [total=100m|30m|10m]
+#   ./bench.sh [query=q1|q2|q3|q4|q5|q7|q9|all] [feed=cont|stream] [total=100m|30m|10m]
 #   调优用环境变量（并行度默认取 conf/wfusion.toml）:
 #     PARSE_PARALLELISM / RULE_PARALLELISM / MAX_FRAME_BYTES / MAX_FRAME_ROWS
 #     MAX_INGEST_RATE（引擎端限速）/ RATE / SLICE_MS（stream）
+#     WARMUP=1（cont：先跑一轮预热不计结果——stash 重建后首跑系统性偏低，须剔除）
 # 示例:
 #   PARSE_PARALLELISM=6 RULE_PARALLELISM=6 MAX_FRAME_BYTES=204800 ./bench.sh q1 cont 100m
 #   PARSE_PARALLELISM=6 RULE_PARALLELISM=6 MAX_INGEST_RATE=5000000 ./bench.sh q1 cont 100m
+#   WARMUP=1 ./bench.sh all cont 30m
 #
 # 输出每查询: EPS（引擎 append 数/墙钟，端到端口径）+ RSS 峰值 + 驱逐数
+#   + 口径上下文（并行度/帧大小/时间戳）+ 正确性计数器摘要
 # 计时终点 = window append_total 三输入流追平 TOTAL（非 receiver 预读游标）
-# 结果写 data/bench_<query>_<feed>.txt
+# 结果写 data/bench_<query>_<feed>.txt（含完整 correctness 明细附录）
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
@@ -33,6 +36,7 @@ MAX_FRAME_ROWS="${MAX_FRAME_ROWS:-100000}"
 MAX_INGEST_RATE="${MAX_INGEST_RATE:-}"
 RATE="${RATE:-3000000}"
 SLICE_MS="${SLICE_MS:-1000}"
+WARMUP="${WARMUP:-0}"
 
 REPO="${REPO:-$(cd ../../../warp-fusion && pwd)}"
 WFUSION="${WFUSION:-$REPO/target/release/wfusion}"
@@ -177,11 +181,11 @@ stat_samples() {
 # 并行度默认取 conf/wfusion.toml；-p/-r flag 或环境变量覆盖。
 write_conf() {
   local Q="$1" M="$2"
-  local PARSE_V="${PARSE:-$(sed -n 's/^parse_parallelism = //p' conf/wfusion.toml | head -1)}"
-  local RULE_V="${RULE:-$(sed -n 's/^rule_parallelism = //p' conf/wfusion.toml | head -1)}"
+  PARSE_V_EFF="${PARSE:-$(sed -n 's/^parse_parallelism = //p' conf/wfusion.toml | head -1)}"
+  RULE_V_EFF="${RULE:-$(sed -n 's/^rule_parallelism = //p' conf/wfusion.toml | head -1)}"
   sed -e "s|^rules = .*|rules = \"models/queries/$Q.wfl\"|" \
-      -e "s|^parse_parallelism = .*|parse_parallelism = ${PARSE_V}|" \
-      -e "s|^rule_parallelism = .*|rule_parallelism = ${RULE_V}|" \
+      -e "s|^parse_parallelism = .*|parse_parallelism = ${PARSE_V_EFF}|" \
+      -e "s|^rule_parallelism = .*|rule_parallelism = ${RULE_V_EFF}|" \
       conf/wfusion.toml > /tmp/bench_conf.toml
   # 限速：MAX_INGEST_RATE 设置时在 [runtime] 注入 max_ingest_rate
   if [ -n "${MAX_INGEST_RATE:-}" ]; then
@@ -216,6 +220,48 @@ for line in open('data/metrics.ndjson'):
 print(s)"
 }
 
+# ---- 正确性摘要：emitted_total（按规则）+ 致命计数器 ----
+# 致命计数器（serialize_failed/dropped_late/cursor_gap/memory_evicted）非零
+# 即跑批作废——测量纪律：数字可信的前提。time_evicted 有值属正常窗口关闭。
+# 输出两行：SUMMARY 行（进结果行）+ 各规则 emitted（进结果文件）。
+correctness_summary() {
+  "$PY" - <<'EOF'
+import json
+from collections import defaultdict
+emitted = defaultdict(int); bad = defaultdict(int)
+for line in open('data/metrics.ndjson'):
+    try: o = json.loads(line)
+    except Exception: continue
+    n, l = o.get('name'), o.get('label', '')
+    try: v = int(float(o.get('value', 0) or 0))
+    except (TypeError, ValueError): continue
+    if n == 'emitted_total': emitted[l] += v
+    elif n in ('serialize_failed_total', 'dropped_late_total',
+               'memory_evicted_total') and v: bad[n] += v
+    elif n == 'cursor_gap_total' and v: bad['cursor_gap[%s]' % l] += v
+bad_str = ' '.join('%s=%d' % kv for kv in sorted(bad.items())) or 'clean'
+print('SUMMARY %s' % bad_str)
+for k in sorted(emitted): print('EMIT %s %d' % (k, emitted[k]))
+EOF
+}
+
+# 轮末报告：单行结果（stdout + 结果文件）+ correctness 附录（结果文件）。
+# 上下文字段（p/r/帧大小/时间戳）写进结果行——事后可追溯口径，防 1MiB/8MiB、
+# 并行度混淆（曾因口径混杂误判 ±8%）。
+report_result() {
+  local Q="$1" FEED="$2" OUT="$3" BODY="$4"
+  local CTX="p=${PARSE_V_EFF} r=${RULE_V_EFF} frame_mb=$((MAX_FRAME_BYTES/1048576)) $(date +%m-%d_%H:%M:%S)"
+  { echo "$BODY $CTX"; echo "-- correctness --"; correctness_summary; } >> "$OUT"
+  # SUMMARY 行回显到 stdout（EMIT 行只进文件）
+  local SUM
+  SUM=$(grep '^SUMMARY' "$OUT" | tail -1 | cut -d' ' -f2-)
+  echo "$BODY [$SUM] $CTX"
+  case "$SUM" in
+    clean) ;;
+    *) echo "    ⚠ 正确性计数器非零，本跑批作废: $SUM" >&2 ;;
+  esac
+}
+
 # ---- feed=cont：send-arrow 连续流（预编码帧，一条连接推完） ----
 # 默认帧大小（8MiB）复用 bench_${TOTAL}.frames；非默认大小用带后缀名（避免覆盖）。
 if [ "$MAX_FRAME_BYTES" = "8388608" ]; then
@@ -231,15 +277,16 @@ if [ "$FEED" = "cont" ] && [ ! -f "$FRAMES" ]; then
   "$WFGEN" dump-frames --scenario scenarios/nexmark.wfg --input data/burst_bench.jsonl \
     --ws models/schemas/nexmark.wfs --addr 127.0.0.1:$PORT --output "$FRAMES" --chunk 1000000 \
     --max-frame-bytes "$MAX_FRAME_BYTES" --max-frame-rows "$MAX_FRAME_ROWS" > /dev/null 2>&1
-  kill $local_dummy 2>/dev/null
-  wait_port_free
+  # kill_daemon（非裸 kill）：只等端口会漏掉"端口已释放但进程未退出"的孤儿，
+  # 孤儿继续烧 CPU 会污染本轮首跑测量
+  kill_daemon "$local_dummy"; wait_port_free
   rm -f data/burst_bench.jsonl
   echo "   frames: $FRAMES ($(du -h "$FRAMES" | cut -f1))"
 fi
 
 run_cont_one() {
-  local Q="$1"
-  local OUT="data/bench_${Q}_cont.txt"
+  local Q="$1" OUT_TAG="${2:-cont}"
+  local OUT="data/bench_${Q}_${OUT_TAG}.txt"
   write_conf "$Q" cont
   local D=$(start_daemon)
   start_rss "$D"; local SP=$!
@@ -250,21 +297,25 @@ run_cont_one() {
   # 超时自适应：按 100k/s 诚实下限 + 600s 余量（on-each 单线程 ~0.3M/s，
   # 100M 需 ~333s；旧的 300s 上限会在真实负载下提前超时）。
   local MAX_SEC=$(( TOTAL_N / 100000 + 600 ))
-  local T2=0 APP=0
+  local T2=0 APP=0 TIMEOUT=0
   for j in $(seq 1 $(( MAX_SEC * 2 ))); do
     APP=$(engine_appended)
     if [ "${APP:-0}" -ge "$TOTAL_N" ]; then T2=$("$PY" -c 'import time; print(time.time())'); break; fi
     sleep 0.5
   done
-  [ "$T2" = 0 ] && T2=$("$PY" -c 'import time; print(time.time())')
+  if [ "$T2" = 0 ]; then T2=$("$PY" -c 'import time; print(time.time())'); TIMEOUT=1; fi
   sleep 3
   kill $SP 2>/dev/null; wait $SP 2>/dev/null; kill_daemon $D; wait_port_free
 
   # EPS 按 append 计：追平时 == TOTAL；超时时 = 实际处理速率（不含预读水分）
   local EPS=$("$PY" -c "print(int($APP/($T2-$T0)))")
   stat_samples
-  local EV=$(grep -c 'memory eviction' data/wfusion.log 2>/dev/null || echo 0)
-  echo "$Q/cont: EPS=$EPS RSS_peak=${PEAK}MB cpu_avg=${CPU_AVG}% cpu_max=${CPU_MAX}% evict=$EV appended=$APP/$TOTAL_N" | tee "$OUT"
+  # grep -c 无匹配时退出码 1 但仍输出 0——`|| echo 0` 会叠出双 0，改为兜底默认
+  local EV=$(grep -c 'memory eviction' data/wfusion.log 2>/dev/null || true); EV=${EV:-0}
+  : > "$OUT"   # 预清空，防追加残留上一轮
+  local TO=""; [ "$TIMEOUT" = 1 ] && TO=" ⚠TIMEOUT(appended未追平,EPS=实际速率)"
+  report_result "$Q" cont "$OUT" \
+    "$Q/cont: EPS=$EPS RSS_peak=${PEAK}MB cpu_avg=${CPU_AVG}% cpu_max=${CPU_MAX}% evict=$EV appended=$APP/$TOTAL_N$TO"
 }
 
 # ---- feed=stream：wfgen stream 实时生成（事件时间推进） ----
@@ -285,23 +336,34 @@ run_stream_one() {
   # 一直堆积、append 永远追不上 → 超时退出，此时 EPS 按实际 append 数计算，
   # 即"撑不住目标速率"的诚实信号。
   local MAX_SEC=900
-  if [ "$RATE" -gt 0 ]; then MAX_SEC=$(( TOTAL_N / RATE * 3 + 60 )); fi
-  local T2=0 APP=0
+  if [ "$RATE" -gt 0 ] 2>/dev/null; then MAX_SEC=$(( TOTAL_N / RATE * 3 + 60 ))
+  else MAX_SEC=$(( TOTAL_N / 100000 + 600 )); fi   # 不限速：与 cont 同款自适应
+  local T2=0 APP=0 TIMEOUT=0
   for j in $(seq 1 $(( MAX_SEC * 2 ))); do
     APP=$(engine_appended)
     if [ "${APP:-0}" -ge "$TOTAL_N" ]; then T2=$("$PY" -c 'import time; print(time.time())'); break; fi
     sleep 0.5
   done
-  [ "$T2" = 0 ] && T2=$("$PY" -c 'import time; print(time.time())')
+  if [ "$T2" = 0 ]; then T2=$("$PY" -c 'import time; print(time.time())'); TIMEOUT=1; fi
   kill $S 2>/dev/null; wait $S 2>/dev/null
   sleep 3
   kill $SP 2>/dev/null; wait $SP 2>/dev/null; kill_daemon $D; wait_port_free
 
   local EPS=$("$PY" -c "print(int($APP/($T2-$T0)))")
   stat_samples
-  local EV=$(grep -c 'memory eviction' data/wfusion.log 2>/dev/null || echo 0)
-  echo "$Q/stream: EPS=$EPS RSS_peak=${PEAK}MB cpu_avg=${CPU_AVG}% cpu_max=${CPU_MAX}% evict=$EV appended=$APP/$TOTAL_N target_rate=$RATE" | tee "$OUT"
+  local EV=$(grep -c 'memory eviction' data/wfusion.log 2>/dev/null || true); EV=${EV:-0}
+  : > "$OUT"
+  local TO=""; [ "$TIMEOUT" = 1 ] && TO=" ⚠TIMEOUT(未追平,引擎撑不住目标速率或超时)"
+  report_result "$Q" stream "$OUT" \
+    "$Q/stream: EPS=$EPS RSS_peak=${PEAK}MB cpu_avg=${CPU_AVG}% cpu_max=${CPU_MAX}% evict=$EV appended=$APP/$TOTAL_N target_rate=$RATE$TO"
 }
+
+# ---- 预热轮（WARMUP=1）：stash 重建后首跑系统性偏低（曾三次复现），须剔除 ----
+if [ "$WARMUP" = "1" ] && [ "$FEED" = "cont" ]; then
+  echo "==> warmup 轮（结果丢弃, 写 /tmp/bench_warmup_q1.txt）"
+  run_cont_one q1 warmup_q1
+  mv -f data/bench_q1_warmup_q1.txt /tmp/bench_warmup_q1.txt 2>/dev/null || true
+fi
 
 for Q in "${QUERIES[@]}"; do
   if [ "$FEED" = "cont" ]; then

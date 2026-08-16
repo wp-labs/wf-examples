@@ -3719,6 +3719,2656 @@ rule fl_g_sens_big {
     limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
 }
 
+rule c_denied_5 {
+    events {
+        c : conn_events && c.action == "denied"
+    }
+    match<sip:2m> {
+        on event { c | count >= 5; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c_denied_5",
+        detail = "c_denied_5 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c_denied_20 {
+    events {
+        c : conn_events && c.action == "denied"
+    }
+    match<sip:2m> {
+        on event { c | count >= 20; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c_denied_20",
+        detail = "c_denied_20 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c_denied_50 {
+    events {
+        c : conn_events && c.action == "denied"
+    }
+    match<sip:2m> {
+        on event { c | count >= 50; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c_denied_50",
+        detail = "c_denied_50 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c_allowed_10 {
+    events {
+        c : conn_events && c.action == "allowed"
+    }
+    match<sip:2m> {
+        on event { c | count >= 10; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c_allowed_10",
+        detail = "c_allowed_10 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c_allowed_40 {
+    events {
+        c : conn_events && c.action == "allowed"
+    }
+    match<sip:2m> {
+        on event { c | count >= 40; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c_allowed_40",
+        detail = "c_allowed_40 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c_allowed_100 {
+    events {
+        c : conn_events && c.action == "allowed"
+    }
+    match<sip:2m> {
+        on event { c | count >= 100; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c_allowed_100",
+        detail = "c_allowed_100 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c_denied_dip_8 {
+    events {
+        c : conn_events && c.action == "denied"
+    }
+    match<dip:2m> {
+        on event { c | count >= 8; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c_denied_dip_8",
+        detail = "c_denied_dip_8 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c_denied_dip_30 {
+    events {
+        c : conn_events && c.action == "denied"
+    }
+    match<dip:2m> {
+        on event { c | count >= 30; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c_denied_dip_30",
+        detail = "c_denied_dip_30 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c_allowed_dip_15 {
+    events {
+        c : conn_events && c.action == "allowed"
+    }
+    match<dip:2m> {
+        on event { c | count >= 15; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c_allowed_dip_15",
+        detail = "c_allowed_dip_15 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c_allowed_dip_60 {
+    events {
+        c : conn_events && c.action == "allowed"
+    }
+    match<dip:2m> {
+        on event { c | count >= 60; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c_allowed_dip_60",
+        detail = "c_allowed_dip_60 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c_dport_400 {
+    events {
+        c : conn_events
+    }
+    match<dport:2m> {
+        on event { c | count >= 400; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c_dport_400",
+        detail = "c_dport_400 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c_dport_800 {
+    events {
+        c : conn_events
+    }
+    match<dport:2m> {
+        on event { c | count >= 800; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c_dport_800",
+        detail = "c_dport_800 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c_protocol_400 {
+    events {
+        c : conn_events
+    }
+    match<protocol:2m> {
+        on event { c | count >= 400; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c_protocol_400",
+        detail = "c_protocol_400 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c_protocol_800 {
+    events {
+        c : conn_events
+    }
+    match<protocol:2m> {
+        on event { c | count >= 800; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c_protocol_800",
+        detail = "c_protocol_800 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c_duration_400 {
+    events {
+        c : conn_events
+    }
+    match<duration:2m> {
+        on event { c | count >= 400; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c_duration_400",
+        detail = "c_duration_400 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c_duration_800 {
+    events {
+        c : conn_events
+    }
+    match<duration:2m> {
+        on event { c | count >= 800; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c_duration_800",
+        detail = "c_duration_800 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c_bytes_500 {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c | count >= 500; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c_bytes_500",
+        detail = "c_bytes_500 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c_bytes_1000 {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c | count >= 1000; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c_bytes_1000",
+        detail = "c_bytes_1000 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule s_pr_30000 {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c.packet_rate | sum >= 30000; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "s_pr_30000",
+        detail = "s_pr_30000 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule s_pr_60000 {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c.packet_rate | sum >= 60000; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "s_pr_60000",
+        detail = "s_pr_60000 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule s_bytes_dport_500k {
+    events {
+        c : conn_events
+    }
+    match<dport:2m> {
+        on event { c.bytes | sum >= 500000; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "s_bytes_dport_500k",
+        detail = "s_bytes_dport_500k triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule s_bytes_dport_1m {
+    events {
+        c : conn_events
+    }
+    match<dport:2m> {
+        on event { c.bytes | sum >= 1000000; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "s_bytes_dport_1m",
+        detail = "s_bytes_dport_1m triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule s_bytes_proto_800k {
+    events {
+        c : conn_events
+    }
+    match<protocol:2m> {
+        on event { c.bytes | sum >= 800000; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "s_bytes_proto_800k",
+        detail = "s_bytes_proto_800k triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule avg_pr_dip_8000 {
+    events {
+        c : conn_events
+    }
+    match<dip:2m> {
+        on event { c.packet_rate | avg >= 8000; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "avg_pr_dip_8000",
+        detail = "avg_pr_dip_8000 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule avg_pr_dip_12000 {
+    events {
+        c : conn_events
+    }
+    match<dip:2m> {
+        on event { c.packet_rate | avg >= 12000; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "avg_pr_dip_12000",
+        detail = "avg_pr_dip_12000 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule avg_b_dip_1500 {
+    events {
+        c : conn_events
+    }
+    match<dip:2m> {
+        on event { c.bytes | avg >= 1500; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "avg_b_dip_1500",
+        detail = "avg_b_dip_1500 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule avg_b_dport_2500 {
+    events {
+        c : conn_events
+    }
+    match<dport:2m> {
+        on event { c.bytes | avg >= 2500; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "avg_b_dport_2500",
+        detail = "avg_b_dport_2500 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule max_pr_dip_20000 {
+    events {
+        c : conn_events
+    }
+    match<dip:2m> {
+        on event { c.packet_rate | max >= 20000; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "max_pr_dip_20000",
+        detail = "max_pr_dip_20000 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule max_b_dport_9000 {
+    events {
+        c : conn_events
+    }
+    match<dport:2m> {
+        on event { c.bytes | max >= 9000; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "max_b_dport_9000",
+        detail = "max_b_dport_9000 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule max_in_5000 {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c.bytes_in | max >= 5000; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "max_in_5000",
+        detail = "max_in_5000 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule max_out_5000 {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c.bytes_out | max >= 5000; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "max_out_5000",
+        detail = "max_out_5000 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule min_pr_100 {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c.packet_rate | min >= 100; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "min_pr_100",
+        detail = "min_pr_100 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule min_b_dip_20 {
+    events {
+        c : conn_events
+    }
+    match<dip:2m> {
+        on event { c.bytes | min >= 20; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "min_b_dip_20",
+        detail = "min_b_dip_20 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dist_sip_10 {
+    events {
+        c : conn_events
+    }
+    match<dip:2m> {
+        on event { c.sip | distinct | count >= 10; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "dist_sip_10",
+        detail = "dist_sip_10 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dist_sip_25 {
+    events {
+        c : conn_events
+    }
+    match<dip:2m> {
+        on event { c.sip | distinct | count >= 25; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "dist_sip_25",
+        detail = "dist_sip_25 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dist_dport_10 {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c.dport | distinct | count >= 10; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "dist_dport_10",
+        detail = "dist_dport_10 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dist_dport_15 {
+    events {
+        c : conn_events
+    }
+    match<dip:2m> {
+        on event { c.dport | distinct | count >= 15; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "dist_dport_15",
+        detail = "dist_dport_15 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dist_app_2 {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c.app_id | distinct | count >= 2; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "dist_app_2",
+        detail = "dist_app_2 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dist_app_3 {
+    events {
+        c : conn_events
+    }
+    match<dip:2m> {
+        on event { c.app_id | distinct | count >= 3; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "dist_app_3",
+        detail = "dist_app_3 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dist_action_3 {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c.action | distinct | count >= 3; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "dist_action_3",
+        detail = "dist_action_3 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dist_action_5 {
+    events {
+        c : conn_events
+    }
+    match<dip:2m> {
+        on event { c.action | distinct | count >= 5; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "dist_action_5",
+        detail = "dist_action_5 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule g_denied_10 {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c && c.action == "denied" | count >= 10; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "g_denied_10",
+        detail = "g_denied_10 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule g_denied_40 {
+    events {
+        c : conn_events
+    }
+    match<dip:2m> {
+        on event { c && c.action == "denied" | count >= 40; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "g_denied_40",
+        detail = "g_denied_40 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule g_allowed_20 {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c && c.action == "allowed" | count >= 20; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "g_allowed_20",
+        detail = "g_allowed_20 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule g_pr_8000_12000 {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c && c.packet_rate >= 8000.0 && c.packet_rate < 12000.0 | count >= 3; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "g_pr_8000_12000",
+        detail = "g_pr_8000_12000 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule g_pr_under_1000 {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c && c.packet_rate < 1000.0 | count >= 5; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "g_pr_under_1000",
+        detail = "g_pr_under_1000 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule g_geo_city_30 {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c && c.conn_info.geo.city == "Shanghai" | count >= 30; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "g_geo_city_30",
+        detail = "g_geo_city_30 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule g_geo_city_60 {
+    events {
+        c : conn_events
+    }
+    match<dip:2m> {
+        on event { c && c.conn_info.geo.city == "Shanghai" | count >= 60; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "g_geo_city_60",
+        detail = "g_geo_city_60 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule g_geo_flow_60 {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c && indexof(c.conn_info.flow_id, "flow-") == 0 | count >= 60; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "g_geo_flow_60",
+        detail = "g_geo_flow_60 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule g_tag_edge_60 {
+    events {
+        c : conn_events
+    }
+    match<dip:2m> {
+        on event { c && c.tags[1] == "edge" | count >= 60; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "g_tag_edge_60",
+        detail = "g_tag_edge_60 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule g_tag_dmz_30 {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c && c.tags[2] == "dmz" | count >= 30; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "g_tag_dmz_30",
+        detail = "g_tag_dmz_30 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule g_app_0b_30 {
+    events {
+        c : conn_events
+    }
+    match<dip:2m> {
+        on event { c && c.app_id == "0b0002" | count >= 30; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "g_app_0b_30",
+        detail = "g_app_0b_30 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule g_app_0c_10 {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c && c.app_id == "0c0003" | count >= 10; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "g_app_0c_10",
+        detail = "g_app_0c_10 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule g_app_0c_20 {
+    events {
+        c : conn_events
+    }
+    match<dip:2m> {
+        on event { c && c.app_id == "0c0003" | count >= 20; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "g_app_0c_20",
+        detail = "g_app_0c_20 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule g_proto_tcp_10 {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c && c.protocol == "tcp" | count >= 10; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "g_proto_tcp_10",
+        detail = "g_proto_tcp_10 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule g_proto_udp_5 {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c && c.protocol == "udp" | count >= 5; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "g_proto_udp_5",
+        detail = "g_proto_udp_5 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule g_proto_icmp_3 {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c && c.protocol == "icmp" | count >= 3; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "g_proto_icmp_3",
+        detail = "g_proto_icmp_3 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_fail_dip_8 {
+    events {
+        a : auth_events
+    }
+    match<dest_ip:2m> {
+        on event { a && a.result == "failed" | count >= 8; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_fail_dip_8",
+        detail = "auth_fail_dip_8 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_fail_dip_25 {
+    events {
+        a : auth_events
+    }
+    match<dest_ip:2m> {
+        on event { a && a.result == "failed" | count >= 25; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_fail_dip_25",
+        detail = "auth_fail_dip_25 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_ok_risk_10 {
+    events {
+        a : auth_events
+    }
+    match<user:2m> {
+        on event { a && a.result == "ok" && a.risk >= 0.6 | count >= 10; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_ok_risk_10",
+        detail = "auth_ok_risk_10 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_risk_03_5 {
+    events {
+        a : auth_events
+    }
+    match<user:2m> {
+        on event { a && a.risk >= 0.3 | count >= 5; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_risk_03_5",
+        detail = "auth_risk_03_5 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_risk_07_3 {
+    events {
+        a : auth_events
+    }
+    match<user:2m> {
+        on event { a && a.risk >= 0.7 | count >= 3; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_risk_07_3",
+        detail = "auth_risk_07_3 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_risk_09_5 {
+    events {
+        a : auth_events
+    }
+    match<source_ip:2m> {
+        on event { a && a.risk >= 0.9 | count >= 5; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_risk_09_5",
+        detail = "auth_risk_09_5 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_attempt_5_3 {
+    events {
+        a : auth_events
+    }
+    match<user:2m> {
+        on event { a && a.attempts >= 5 | count >= 3; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_attempt_5_3",
+        detail = "auth_attempt_5_3 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_attempt_15_2 {
+    events {
+        a : auth_events
+    }
+    match<user:2m> {
+        on event { a && a.attempts >= 15 | count >= 2; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_attempt_15_2",
+        detail = "auth_attempt_15_2 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_attempt_30_1 {
+    events {
+        a : auth_events
+    }
+    match<user:2m> {
+        on event { a && a.attempts >= 30 | count >= 1; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_attempt_30_1",
+        detail = "auth_attempt_30_1 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_agent_python_5 {
+    events {
+        a : auth_events
+    }
+    match<user:2m> {
+        on event { a && a.agent == "python" | count >= 5; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_agent_python_5",
+        detail = "auth_agent_python_5 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_agent_unknown_8 {
+    events {
+        a : auth_events
+    }
+    match<source_ip:2m> {
+        on event { a && a.agent == "unknown" | count >= 8; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_agent_unknown_8",
+        detail = "auth_agent_unknown_8 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_agent_chrome_3 {
+    events {
+        a : auth_events
+    }
+    match<user:2m> {
+        on event { a && a.agent == "chrome" | count >= 3; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_agent_chrome_3",
+        detail = "auth_agent_chrome_3 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_fail_agent_3 {
+    events {
+        a : auth_events
+    }
+    match<user:2m> {
+        on event { a && a.result == "failed" && a.agent == "curl" | count >= 3; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_fail_agent_3",
+        detail = "auth_fail_agent_3 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_risk_agent_2 {
+    events {
+        a : auth_events
+    }
+    match<user:2m> {
+        on event { a && a.risk >= 0.8 && a.agent == "unknown" | count >= 2; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_risk_agent_2",
+        detail = "auth_risk_agent_2 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_src_fail_5 {
+    events {
+        a : auth_events
+    }
+    match<source_ip:2m> {
+        on event { a && a.result == "failed" | count >= 5; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_src_fail_5",
+        detail = "auth_src_fail_5 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_usr_risk_2 {
+    events {
+        a : auth_events
+    }
+    match<user:2m> {
+        on event { a && a.risk >= 0.9 && a.attempts >= 5 | count >= 2; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_usr_risk_2",
+        detail = "auth_usr_risk_2 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_dist_dest_5 {
+    events {
+        a : auth_events
+    }
+    match<user:2m> {
+        on event { a.dest_ip | distinct | count >= 5; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_dist_dest_5",
+        detail = "auth_dist_dest_5 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_dist_agent_3 {
+    events {
+        a : auth_events
+    }
+    match<user:2m> {
+        on event { a.agent | distinct | count >= 3; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_dist_agent_3",
+        detail = "auth_dist_agent_3 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_sum_attempts_30 {
+    events {
+        a : auth_events
+    }
+    match<user:2m> {
+        on event { a.attempts | sum >= 30; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_sum_attempts_30",
+        detail = "auth_sum_attempts_30 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_max_attempts_5 {
+    events {
+        a : auth_events
+    }
+    match<source_ip:2m> {
+        on event { a.attempts | max >= 5; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_max_attempts_5",
+        detail = "auth_max_attempts_5 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_count_domain_10 {
+    events {
+        d : dns_events
+    }
+    match<domain:2m> {
+        on event { d | count >= 10; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_count_domain_10",
+        detail = "dns_count_domain_10 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_count_domain_25 {
+    events {
+        d : dns_events
+    }
+    match<domain:2m> {
+        on event { d | count >= 25; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_count_domain_25",
+        detail = "dns_count_domain_25 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_count_domain_60 {
+    events {
+        d : dns_events
+    }
+    match<domain:2m> {
+        on event { d | count >= 60; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_count_domain_60",
+        detail = "dns_count_domain_60 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_any_3 {
+    events {
+        d : dns_events
+    }
+    match<sip:2m> {
+        on event { d && d.query_type == "ANY" | count >= 3; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_any_3",
+        detail = "dns_any_3 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_any_8 {
+    events {
+        d : dns_events
+    }
+    match<sip:2m> {
+        on event { d && d.query_type == "ANY" | count >= 8; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_any_8",
+        detail = "dns_any_8 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_cname_5 {
+    events {
+        d : dns_events
+    }
+    match<domain:2m> {
+        on event { d && d.query_type == "CNAME" | count >= 5; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_cname_5",
+        detail = "dns_cname_5 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_aaaa_domain_5 {
+    events {
+        d : dns_events
+    }
+    match<domain:2m> {
+        on event { d && d.query_type == "AAAA" | count >= 5; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_aaaa_domain_5",
+        detail = "dns_aaaa_domain_5 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_avg_domain_300 {
+    events {
+        d : dns_events
+    }
+    match<domain:2m> {
+        on event { d.resp_size | avg >= 300; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_avg_domain_300",
+        detail = "dns_avg_domain_300 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_avg_domain_600 {
+    events {
+        d : dns_events
+    }
+    match<domain:2m> {
+        on event { d.resp_size | avg >= 600; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_avg_domain_600",
+        detail = "dns_avg_domain_600 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_max_sip_2500 {
+    events {
+        d : dns_events
+    }
+    match<sip:2m> {
+        on event { d.resp_size | max >= 2500; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_max_sip_2500",
+        detail = "dns_max_sip_2500 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_min_domain_100 {
+    events {
+        d : dns_events
+    }
+    match<domain:2m> {
+        on event { d.resp_size | min <= 100; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_min_domain_100",
+        detail = "dns_min_domain_100 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_sum_domain_5000 {
+    events {
+        d : dns_events
+    }
+    match<domain:2m> {
+        on event { d.resp_size | sum >= 5000; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_sum_domain_5000",
+        detail = "dns_sum_domain_5000 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_dist_qt_3 {
+    events {
+        d : dns_events
+    }
+    match<sip:2m> {
+        on event { d.query_type | distinct | count >= 3; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_dist_qt_3",
+        detail = "dns_dist_qt_3 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_dist_qt_4 {
+    events {
+        d : dns_events
+    }
+    match<domain:2m> {
+        on event { d.query_type | distinct | count >= 4; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_dist_qt_4",
+        detail = "dns_dist_qt_4 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_high_2 {
+    events {
+        d : dns_events
+    }
+    match<sip:2m> {
+        on event { d && d.resp_size >= 2000 | count >= 2; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_high_2",
+        detail = "dns_high_2 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule pr_c_status_200_5 {
+    events {
+        p : proxy_events
+    }
+    match<sip:2m> {
+        on event { p && p.status == 200 | count >= 5; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "pr_c_status_200_5",
+        detail = "pr_c_status_200_5 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule pr_c_status_300_3 {
+    events {
+        p : proxy_events
+    }
+    match<sip:2m> {
+        on event { p && p.status == 300 | count >= 3; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "pr_c_status_300_3",
+        detail = "pr_c_status_300_3 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule pr_c_status_500_20 {
+    events {
+        p : proxy_events
+    }
+    match<sip:2m> {
+        on event { p && p.status == 500 | count >= 20; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "pr_c_status_500_20",
+        detail = "pr_c_status_500_20 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule pr_c_method_GET_8 {
+    events {
+        p : proxy_events
+    }
+    match<sip:2m> {
+        on event { p && p.method == "GET" | count >= 8; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "pr_c_method_GET_8",
+        detail = "pr_c_method_GET_8 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule pr_c_method_PUT_3 {
+    events {
+        p : proxy_events
+    }
+    match<sip:2m> {
+        on event { p && p.method == "PUT" | count >= 3; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "pr_c_method_PUT_3",
+        detail = "pr_c_method_PUT_3 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule pr_s_bytes_sip_2m {
+    events {
+        p : proxy_events
+    }
+    match<sip:2m> {
+        on event { p.bytes | sum >= 2000000; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "pr_s_bytes_sip_2m",
+        detail = "pr_s_bytes_sip_2m triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule pr_avg_risk_status_07 {
+    events {
+        p : proxy_events
+    }
+    match<status:2m> {
+        on event { p.risk | avg >= 0.7; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "pr_avg_risk_status_07",
+        detail = "pr_avg_risk_status_07 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule pr_max_bytes_80k {
+    events {
+        p : proxy_events
+    }
+    match<sip:2m> {
+        on event { p.bytes | max >= 80000; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "pr_max_bytes_80k",
+        detail = "pr_max_bytes_80k triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule pr_min_bytes_50 {
+    events {
+        p : proxy_events
+    }
+    match<sip:2m> {
+        on event { p.bytes | min >= 50; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "pr_min_bytes_50",
+        detail = "pr_min_bytes_50 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule pr_g_get_8 {
+    events {
+        p : proxy_events
+    }
+    match<sip:2m> {
+        on event { p && p.method == "GET" | count >= 8; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "pr_g_get_8",
+        detail = "pr_g_get_8 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule pr_g_put_3 {
+    events {
+        p : proxy_events
+    }
+    match<sip:2m> {
+        on event { p && p.method == "PUT" | count >= 3; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "pr_g_put_3",
+        detail = "pr_g_put_3 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule pr_g_url_resource_5 {
+    events {
+        p : proxy_events
+    }
+    match<sip:2m> {
+        on event { p && indexof(p.url, "resource") > 0 | count >= 5; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "pr_g_url_resource_5",
+        detail = "pr_g_url_resource_5 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule pr_g_url_query_10 {
+    events {
+        p : proxy_events
+    }
+    match<sip:2m> {
+        on event { p && indexof(p.url, "query") > 0 | count >= 10; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "pr_g_url_query_10",
+        detail = "pr_g_url_query_10 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule pr_g_ua_python_5 {
+    events {
+        p : proxy_events
+    }
+    match<sip:2m> {
+        on event { p && p.user_agent == "python-requests" | count >= 5; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "pr_g_ua_python_5",
+        detail = "pr_g_ua_python_5 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule pr_g_ua_safari_3 {
+    events {
+        p : proxy_events
+    }
+    match<sip:2m> {
+        on event { p && p.user_agent == "safari" | count >= 3; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "pr_g_ua_safari_3",
+        detail = "pr_g_ua_safari_3 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule pr_g_500_post_3 {
+    events {
+        p : proxy_events
+    }
+    match<sip:2m> {
+        on event { p && p.status == 500 && p.method == "POST" | count >= 3; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "pr_g_500_post_3",
+        detail = "pr_g_500_post_3 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule pr_g_404_get_2 {
+    events {
+        p : proxy_events
+    }
+    match<sip:2m> {
+        on event { p && p.status == 404 && p.method == "GET" | count >= 2; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "pr_g_404_get_2",
+        detail = "pr_g_404_get_2 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule pr_g_risk_ua_2 {
+    events {
+        p : proxy_events
+    }
+    match<sip:2m> {
+        on event { p && p.risk >= 0.7 && p.user_agent == "curl" | count >= 2; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "pr_g_risk_ua_2",
+        detail = "pr_g_risk_ua_2 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule pr_g_bytes_1k_5 {
+    events {
+        p : proxy_events
+    }
+    match<sip:2m> {
+        on event { p && p.bytes >= 1000 | count >= 5; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "pr_g_bytes_1k_5",
+        detail = "pr_g_bytes_1k_5 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule pr_dist_status_4 {
+    events {
+        p : proxy_events
+    }
+    match<sip:2m> {
+        on event { p.status | distinct | count >= 4; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "pr_dist_status_4",
+        detail = "pr_dist_status_4 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule pr_dist_method_3 {
+    events {
+        p : proxy_events
+    }
+    match<sip:2m> {
+        on event { p.method | distinct | count >= 3; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "pr_dist_method_3",
+        detail = "pr_dist_method_3 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fw_c_dip_8 {
+    events {
+        fw : firewall_events
+    }
+    match<dip:2m> {
+        on event { fw | count >= 8; }
+    } -> score(50.0)
+    entity(ip, fw.sip)
+    yield network_alerts (
+        sip = fw.sip,
+        alert_type = "fw_c_dip_8",
+        detail = "fw_c_dip_8 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fw_c_dip_20 {
+    events {
+        fw : firewall_events
+    }
+    match<dip:2m> {
+        on event { fw | count >= 20; }
+    } -> score(50.0)
+    entity(ip, fw.sip)
+    yield network_alerts (
+        sip = fw.sip,
+        alert_type = "fw_c_dip_20",
+        detail = "fw_c_dip_20 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fw_c_dip_40 {
+    events {
+        fw : firewall_events
+    }
+    match<dip:2m> {
+        on event { fw | count >= 40; }
+    } -> score(50.0)
+    entity(ip, fw.sip)
+    yield network_alerts (
+        sip = fw.sip,
+        alert_type = "fw_c_dip_40",
+        detail = "fw_c_dip_40 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fw_c_rule_8 {
+    events {
+        fw : firewall_events
+    }
+    match<rule_id:2m> {
+        on event { fw | count >= 8; }
+    } -> score(50.0)
+    entity(ip, fw.sip)
+    yield network_alerts (
+        sip = fw.sip,
+        alert_type = "fw_c_rule_8",
+        detail = "fw_c_rule_8 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fw_c_rule_30 {
+    events {
+        fw : firewall_events
+    }
+    match<rule_id:2m> {
+        on event { fw | count >= 30; }
+    } -> score(50.0)
+    entity(ip, fw.sip)
+    yield network_alerts (
+        sip = fw.sip,
+        alert_type = "fw_c_rule_30",
+        detail = "fw_c_rule_30 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fw_s_bytes_dip_800k {
+    events {
+        fw : firewall_events
+    }
+    match<dip:2m> {
+        on event { fw.bytes | sum >= 800000; }
+    } -> score(50.0)
+    entity(ip, fw.sip)
+    yield network_alerts (
+        sip = fw.sip,
+        alert_type = "fw_s_bytes_dip_800k",
+        detail = "fw_s_bytes_dip_800k triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fw_avg_bytes_dip_1500 {
+    events {
+        fw : firewall_events
+    }
+    match<dip:2m> {
+        on event { fw.bytes | avg >= 1500; }
+    } -> score(50.0)
+    entity(ip, fw.sip)
+    yield network_alerts (
+        sip = fw.sip,
+        alert_type = "fw_avg_bytes_dip_1500",
+        detail = "fw_avg_bytes_dip_1500 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fw_max_bytes_dip_9000 {
+    events {
+        fw : firewall_events
+    }
+    match<dip:2m> {
+        on event { fw.bytes | max >= 9000; }
+    } -> score(50.0)
+    entity(ip, fw.sip)
+    yield network_alerts (
+        sip = fw.sip,
+        alert_type = "fw_max_bytes_dip_9000",
+        detail = "fw_max_bytes_dip_9000 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fw_min_bytes_20 {
+    events {
+        fw : firewall_events
+    }
+    match<sip:2m> {
+        on event { fw.bytes | min >= 20; }
+    } -> score(50.0)
+    entity(ip, fw.sip)
+    yield network_alerts (
+        sip = fw.sip,
+        alert_type = "fw_min_bytes_20",
+        detail = "fw_min_bytes_20 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fw_g_deny_dip_15 {
+    events {
+        fw : firewall_events
+    }
+    match<dip:2m> {
+        on event { fw && fw.action == "deny" | count >= 15; }
+    } -> score(50.0)
+    entity(ip, fw.sip)
+    yield network_alerts (
+        sip = fw.sip,
+        alert_type = "fw_g_deny_dip_15",
+        detail = "fw_g_deny_dip_15 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fw_g_deny_dip_30 {
+    events {
+        fw : firewall_events
+    }
+    match<dip:2m> {
+        on event { fw && fw.action == "deny" | count >= 30; }
+    } -> score(50.0)
+    entity(ip, fw.sip)
+    yield network_alerts (
+        sip = fw.sip,
+        alert_type = "fw_g_deny_dip_30",
+        detail = "fw_g_deny_dip_30 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fw_g_allow_dip_10 {
+    events {
+        fw : firewall_events
+    }
+    match<dip:2m> {
+        on event { fw && fw.action == "allow" | count >= 10; }
+    } -> score(50.0)
+    entity(ip, fw.sip)
+    yield network_alerts (
+        sip = fw.sip,
+        alert_type = "fw_g_allow_dip_10",
+        detail = "fw_g_allow_dip_10 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fw_g_rule5_10 {
+    events {
+        fw : firewall_events
+    }
+    match<sip:2m> {
+        on event { fw && fw.rule_id == "fw-5" | count >= 10; }
+    } -> score(50.0)
+    entity(ip, fw.sip)
+    yield network_alerts (
+        sip = fw.sip,
+        alert_type = "fw_g_rule5_10",
+        detail = "fw_g_rule5_10 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fw_g_rule42_5 {
+    events {
+        fw : firewall_events
+    }
+    match<sip:2m> {
+        on event { fw && fw.rule_id == "fw-42" | count >= 5; }
+    } -> score(50.0)
+    entity(ip, fw.sip)
+    yield network_alerts (
+        sip = fw.sip,
+        alert_type = "fw_g_rule42_5",
+        detail = "fw_g_rule42_5 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fw_g_icmp_3 {
+    events {
+        fw : firewall_events
+    }
+    match<sip:2m> {
+        on event { fw && fw.protocol == "icmp" | count >= 3; }
+    } -> score(50.0)
+    entity(ip, fw.sip)
+    yield network_alerts (
+        sip = fw.sip,
+        alert_type = "fw_g_icmp_3",
+        detail = "fw_g_icmp_3 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fw_g_sctp_2 {
+    events {
+        fw : firewall_events
+    }
+    match<sip:2m> {
+        on event { fw && fw.protocol == "sctp" | count >= 2; }
+    } -> score(50.0)
+    entity(ip, fw.sip)
+    yield network_alerts (
+        sip = fw.sip,
+        alert_type = "fw_g_sctp_2",
+        detail = "fw_g_sctp_2 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fw_g_deny_icmp_2 {
+    events {
+        fw : firewall_events
+    }
+    match<sip:2m> {
+        on event { fw && fw.action == "deny" && fw.protocol == "icmp" | count >= 2; }
+    } -> score(50.0)
+    entity(ip, fw.sip)
+    yield network_alerts (
+        sip = fw.sip,
+        alert_type = "fw_g_deny_icmp_2",
+        detail = "fw_g_deny_icmp_2 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fw_g_allow_big_dip {
+    events {
+        fw : firewall_events
+    }
+    match<dip:2m> {
+        on event { fw && fw.action == "allow" && fw.bytes >= 4000 | count >= 5; }
+    } -> score(50.0)
+    entity(ip, fw.sip)
+    yield network_alerts (
+        sip = fw.sip,
+        alert_type = "fw_g_allow_big_dip",
+        detail = "fw_g_allow_big_dip triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fw_dist_action_2 {
+    events {
+        fw : firewall_events
+    }
+    match<sip:2m> {
+        on event { fw.action | distinct | count >= 2; }
+    } -> score(50.0)
+    entity(ip, fw.sip)
+    yield network_alerts (
+        sip = fw.sip,
+        alert_type = "fw_dist_action_2",
+        detail = "fw_dist_action_2 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fw_dist_rule_5 {
+    events {
+        fw : firewall_events
+    }
+    match<sip:2m> {
+        on event { fw.rule_id | distinct | count >= 5; }
+    } -> score(50.0)
+    entity(ip, fw.sip)
+    yield network_alerts (
+        sip = fw.sip,
+        alert_type = "fw_dist_rule_5",
+        detail = "fw_dist_rule_5 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fl_c_user_20 {
+    events {
+        f : file_events
+    }
+    match<user:2m> {
+        on event { f | count >= 20; }
+    } -> score(50.0)
+    entity(user, f.user)
+    yield network_alerts (
+        sip = "0.0.0.0",
+        alert_type = "fl_c_user_20",
+        detail = "fl_c_user_20 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fl_c_user_50 {
+    events {
+        f : file_events
+    }
+    match<user:2m> {
+        on event { f | count >= 50; }
+    } -> score(50.0)
+    entity(user, f.user)
+    yield network_alerts (
+        sip = "0.0.0.0",
+        alert_type = "fl_c_user_50",
+        detail = "fl_c_user_50 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fl_c_file_50 {
+    events {
+        f : file_events
+    }
+    match<file:2m> {
+        on event { f | count >= 50; }
+    } -> score(50.0)
+    entity(user, f.user)
+    yield network_alerts (
+        sip = "0.0.0.0",
+        alert_type = "fl_c_file_50",
+        detail = "fl_c_file_50 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fl_c_write_15 {
+    events {
+        f : file_events
+    }
+    match<user:2m> {
+        on event { f && f.action == "write" | count >= 15; }
+    } -> score(50.0)
+    entity(user, f.user)
+    yield network_alerts (
+        sip = "0.0.0.0",
+        alert_type = "fl_c_write_15",
+        detail = "fl_c_write_15 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fl_s_size_user_2m {
+    events {
+        f : file_events
+    }
+    match<user:2m> {
+        on event { f.size | sum >= 2000000; }
+    } -> score(50.0)
+    entity(user, f.user)
+    yield network_alerts (
+        sip = "0.0.0.0",
+        alert_type = "fl_s_size_user_2m",
+        detail = "fl_s_size_user_2m triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fl_avg_size_user_20k {
+    events {
+        f : file_events
+    }
+    match<user:2m> {
+        on event { f.size | avg >= 20000; }
+    } -> score(50.0)
+    entity(user, f.user)
+    yield network_alerts (
+        sip = "0.0.0.0",
+        alert_type = "fl_avg_size_user_20k",
+        detail = "fl_avg_size_user_20k triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fl_max_size_file_100k {
+    events {
+        f : file_events
+    }
+    match<file:2m> {
+        on event { f.size | max >= 100000; }
+    } -> score(50.0)
+    entity(user, f.user)
+    yield network_alerts (
+        sip = "0.0.0.0",
+        alert_type = "fl_max_size_file_100k",
+        detail = "fl_max_size_file_100k triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fl_min_size_user_5 {
+    events {
+        f : file_events
+    }
+    match<user:2m> {
+        on event { f.size | min >= 5; }
+    } -> score(50.0)
+    entity(user, f.user)
+    yield network_alerts (
+        sip = "0.0.0.0",
+        alert_type = "fl_min_size_user_5",
+        detail = "fl_min_size_user_5 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fl_g_write_sens_3 {
+    events {
+        f : file_events
+    }
+    match<user:2m> {
+        on event { f && f.sensitive == true && f.action == "write" | count >= 3; }
+    } -> score(50.0)
+    entity(user, f.user)
+    yield network_alerts (
+        sip = "0.0.0.0",
+        alert_type = "fl_g_write_sens_3",
+        detail = "fl_g_write_sens_3 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fl_g_read_5 {
+    events {
+        f : file_events
+    }
+    match<user:2m> {
+        on event { f && f.action == "read" | count >= 5; }
+    } -> score(50.0)
+    entity(user, f.user)
+    yield network_alerts (
+        sip = "0.0.0.0",
+        alert_type = "fl_g_read_5",
+        detail = "fl_g_read_5 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fl_g_home_10 {
+    events {
+        f : file_events
+    }
+    match<user:2m> {
+        on event { f && f.file == "/home/user/secret.txt" | count >= 10; }
+    } -> score(50.0)
+    entity(user, f.user)
+    yield network_alerts (
+        sip = "0.0.0.0",
+        alert_type = "fl_g_home_10",
+        detail = "fl_g_home_10 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fl_g_config_5 {
+    events {
+        f : file_events
+    }
+    match<user:2m> {
+        on event { f && f.file == "/etc/app/config.yaml" | count >= 5; }
+    } -> score(50.0)
+    entity(user, f.user)
+    yield network_alerts (
+        sip = "0.0.0.0",
+        alert_type = "fl_g_config_5",
+        detail = "fl_g_config_5 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fl_g_sens_etc_2 {
+    events {
+        f : file_events
+    }
+    match<user:2m> {
+        on event { f && f.sensitive == true && f.file == "/etc/app/config.yaml" | count >= 2; }
+    } -> score(50.0)
+    entity(user, f.user)
+    yield network_alerts (
+        sip = "0.0.0.0",
+        alert_type = "fl_g_sens_etc_2",
+        detail = "fl_g_sens_etc_2 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fl_dist_action_3 {
+    events {
+        f : file_events
+    }
+    match<user:2m> {
+        on event { f.action | distinct | count >= 3; }
+    } -> score(50.0)
+    entity(user, f.user)
+    yield network_alerts (
+        sip = "0.0.0.0",
+        alert_type = "fl_dist_action_3",
+        detail = "fl_dist_action_3 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fl_dist_file_5 {
+    events {
+        f : file_events
+    }
+    match<user:2m> {
+        on event { f.file | distinct | count >= 5; }
+    } -> score(50.0)
+    entity(user, f.user)
+    yield network_alerts (
+        sip = "0.0.0.0",
+        alert_type = "fl_dist_file_5",
+        detail = "fl_dist_file_5 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule multi_conn_proxy_dip {
+    events {
+        c : conn_events && c.action == "denied"
+        p : proxy_events && p.status == 500
+    }
+    match<sip:2m> {
+        on event { c | count >= 15; p | count >= 3; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "multi_conn_proxy_dip",
+        detail = "multi_conn_proxy_dip triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule multi_proxy_firewall {
+    events {
+        p : proxy_events && p.status == 500
+        fw : firewall_events && fw.action == "deny"
+    }
+    match<sip:2m> {
+        on event { p | count >= 5; fw | count >= 5; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "multi_proxy_firewall",
+        detail = "multi_proxy_firewall triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule multi_dns_firewall {
+    events {
+        d : dns_events
+        fw : firewall_events && fw.action == "deny"
+    }
+    match<sip:2m> {
+        on event { d | count >= 5; fw | count >= 3; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "multi_dns_firewall",
+        detail = "multi_dns_firewall triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule multi_conn_dns_txt {
+    events {
+        c : conn_events && c.action == "denied"
+        d : dns_events && d.query_type == "TXT"
+    }
+    match<sip:2m> {
+        on event { c | count >= 20; d | count >= 3; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "multi_conn_dns_txt",
+        detail = "multi_conn_dns_txt triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule multi_proxy_dns_txt {
+    events {
+        p : proxy_events && p.status == 404
+        d : dns_events && d.query_type == "TXT"
+    }
+    match<sip:2m> {
+        on event { p | count >= 5; d | count >= 2; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "multi_proxy_dns_txt",
+        detail = "multi_proxy_dns_txt triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule multi_conn_proxy_deny {
+    events {
+        c : conn_events && c.action == "denied"
+        p : proxy_events && p.status >= 500
+    }
+    match<sip:2m> {
+        on event { c | count >= 25; p | count >= 2; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "multi_conn_proxy_deny",
+        detail = "multi_conn_proxy_deny triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule chain_deny_proxy {
+    events {
+        deny : conn_events && action == "denied"
+        err : proxy_events && status == 500
+    }
+    match<sip:30m> {
+        on event { deny | count >= 5; err | count >= 2; }
+    } -> score(75.0)
+    entity(ip, deny.sip)
+    yield network_alerts (sip = deny.sip, alert_type = "chain_deny_proxy", detail = "deny then proxy-500", request_count = 1)
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule chain_deny_dns2 {
+    events {
+        deny : conn_events && action == "denied"
+        q : dns_events && query_type == "TXT"
+    }
+    match<sip:30m> {
+        on event { deny | count >= 8; q | count >= 2; }
+    } -> score(70.0)
+    entity(ip, deny.sip)
+    yield network_alerts (sip = deny.sip, alert_type = "chain_deny_dns2", detail = "deny then txt dns", request_count = 1)
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
 rule c_pad_1 {
     events {
         c : conn_events
@@ -3741,7 +6391,7 @@ rule c_pad_2 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 8; }
+        on event { c | count >= 7; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -3758,7 +6408,7 @@ rule c_pad_3 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 11; }
+        on event { c | count >= 9; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -3775,7 +6425,7 @@ rule c_pad_4 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 14; }
+        on event { c | count >= 11; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -3792,7 +6442,7 @@ rule c_pad_5 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 17; }
+        on event { c | count >= 13; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -3809,7 +6459,7 @@ rule c_pad_6 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 20; }
+        on event { c | count >= 15; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -3826,7 +6476,7 @@ rule c_pad_7 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 23; }
+        on event { c | count >= 17; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -3843,7 +6493,7 @@ rule c_pad_8 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 26; }
+        on event { c | count >= 19; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -3860,7 +6510,7 @@ rule c_pad_9 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 29; }
+        on event { c | count >= 21; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -3877,7 +6527,7 @@ rule c_pad_10 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 32; }
+        on event { c | count >= 23; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -3894,7 +6544,7 @@ rule c_pad_11 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 35; }
+        on event { c | count >= 25; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -3911,7 +6561,7 @@ rule c_pad_12 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 38; }
+        on event { c | count >= 27; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -3928,7 +6578,7 @@ rule c_pad_13 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 41; }
+        on event { c | count >= 29; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -3945,7 +6595,7 @@ rule c_pad_14 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 44; }
+        on event { c | count >= 31; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -3962,7 +6612,7 @@ rule c_pad_15 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 47; }
+        on event { c | count >= 33; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -3979,7 +6629,7 @@ rule c_pad_16 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 50; }
+        on event { c | count >= 35; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -3996,7 +6646,7 @@ rule c_pad_17 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 53; }
+        on event { c | count >= 37; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4013,7 +6663,7 @@ rule c_pad_18 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 56; }
+        on event { c | count >= 39; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4030,7 +6680,7 @@ rule c_pad_19 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 59; }
+        on event { c | count >= 41; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4047,7 +6697,7 @@ rule c_pad_20 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 62; }
+        on event { c | count >= 43; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4064,7 +6714,7 @@ rule c_pad_21 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 65; }
+        on event { c | count >= 45; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4081,7 +6731,7 @@ rule c_pad_22 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 68; }
+        on event { c | count >= 47; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4098,7 +6748,7 @@ rule c_pad_23 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 71; }
+        on event { c | count >= 49; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4115,7 +6765,7 @@ rule c_pad_24 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 74; }
+        on event { c | count >= 51; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4132,7 +6782,7 @@ rule c_pad_25 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 77; }
+        on event { c | count >= 53; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4149,7 +6799,7 @@ rule c_pad_26 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 80; }
+        on event { c | count >= 55; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4166,7 +6816,7 @@ rule c_pad_27 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 83; }
+        on event { c | count >= 57; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4183,7 +6833,7 @@ rule c_pad_28 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 86; }
+        on event { c | count >= 59; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4200,7 +6850,7 @@ rule c_pad_29 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 89; }
+        on event { c | count >= 61; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4217,7 +6867,7 @@ rule c_pad_30 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 92; }
+        on event { c | count >= 63; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4234,7 +6884,7 @@ rule c_pad_31 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 95; }
+        on event { c | count >= 65; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4251,7 +6901,7 @@ rule c_pad_32 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 98; }
+        on event { c | count >= 67; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4268,7 +6918,7 @@ rule c_pad_33 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 101; }
+        on event { c | count >= 69; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4285,7 +6935,7 @@ rule c_pad_34 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 104; }
+        on event { c | count >= 71; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4302,7 +6952,7 @@ rule c_pad_35 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 107; }
+        on event { c | count >= 73; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4319,7 +6969,7 @@ rule c_pad_36 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 110; }
+        on event { c | count >= 75; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4336,7 +6986,7 @@ rule c_pad_37 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 113; }
+        on event { c | count >= 77; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4353,7 +7003,7 @@ rule c_pad_38 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 116; }
+        on event { c | count >= 79; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4370,7 +7020,7 @@ rule c_pad_39 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 119; }
+        on event { c | count >= 81; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4387,7 +7037,7 @@ rule c_pad_40 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 122; }
+        on event { c | count >= 83; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4404,7 +7054,7 @@ rule c_pad_41 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 125; }
+        on event { c | count >= 85; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4421,7 +7071,7 @@ rule c_pad_42 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 128; }
+        on event { c | count >= 87; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4438,7 +7088,7 @@ rule c_pad_43 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 131; }
+        on event { c | count >= 89; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4455,7 +7105,7 @@ rule c_pad_44 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 134; }
+        on event { c | count >= 91; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4472,7 +7122,7 @@ rule c_pad_45 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 137; }
+        on event { c | count >= 93; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4489,7 +7139,7 @@ rule c_pad_46 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 140; }
+        on event { c | count >= 95; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4506,7 +7156,7 @@ rule c_pad_47 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 143; }
+        on event { c | count >= 97; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4523,7 +7173,7 @@ rule c_pad_48 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 146; }
+        on event { c | count >= 99; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4540,7 +7190,7 @@ rule c_pad_49 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 149; }
+        on event { c | count >= 101; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4557,7 +7207,7 @@ rule c_pad_50 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 152; }
+        on event { c | count >= 103; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4574,7 +7224,7 @@ rule c_pad_51 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 155; }
+        on event { c | count >= 105; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4591,7 +7241,7 @@ rule c_pad_52 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 158; }
+        on event { c | count >= 107; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4608,7 +7258,7 @@ rule c_pad_53 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 161; }
+        on event { c | count >= 109; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4625,7 +7275,7 @@ rule c_pad_54 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 164; }
+        on event { c | count >= 111; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4642,7 +7292,7 @@ rule c_pad_55 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 167; }
+        on event { c | count >= 113; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4659,7 +7309,7 @@ rule c_pad_56 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 170; }
+        on event { c | count >= 115; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4676,7 +7326,7 @@ rule c_pad_57 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 173; }
+        on event { c | count >= 117; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4693,7 +7343,7 @@ rule c_pad_58 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 176; }
+        on event { c | count >= 119; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4710,7 +7360,7 @@ rule c_pad_59 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 179; }
+        on event { c | count >= 121; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4727,7 +7377,7 @@ rule c_pad_60 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 182; }
+        on event { c | count >= 123; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4744,7 +7394,7 @@ rule c_pad_61 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 185; }
+        on event { c | count >= 125; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4761,7 +7411,7 @@ rule c_pad_62 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 188; }
+        on event { c | count >= 127; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4778,7 +7428,7 @@ rule c_pad_63 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 191; }
+        on event { c | count >= 129; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4795,7 +7445,7 @@ rule c_pad_64 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 194; }
+        on event { c | count >= 131; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4812,7 +7462,7 @@ rule c_pad_65 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 197; }
+        on event { c | count >= 133; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4829,7 +7479,7 @@ rule c_pad_66 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 200; }
+        on event { c | count >= 135; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4846,7 +7496,7 @@ rule c_pad_67 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 203; }
+        on event { c | count >= 137; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4863,7 +7513,7 @@ rule c_pad_68 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 206; }
+        on event { c | count >= 139; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4880,7 +7530,7 @@ rule c_pad_69 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 209; }
+        on event { c | count >= 141; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4897,7 +7547,7 @@ rule c_pad_70 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 212; }
+        on event { c | count >= 143; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4914,7 +7564,7 @@ rule c_pad_71 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 215; }
+        on event { c | count >= 145; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4931,7 +7581,7 @@ rule c_pad_72 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 218; }
+        on event { c | count >= 147; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4948,7 +7598,7 @@ rule c_pad_73 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 221; }
+        on event { c | count >= 149; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4965,115 +7615,13 @@ rule c_pad_74 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c | count >= 224; }
+        on event { c | count >= 151; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
         sip = c.sip,
         alert_type = "c_pad_74",
         detail = "c_pad_74 triggered",
-        request_count = 1
-    )
-    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
-}
-
-rule c_pad_75 {
-    events {
-        c : conn_events
-    }
-    match<sip:2m> {
-        on event { c | count >= 227; }
-    } -> score(50.0)
-    entity(ip, c.sip)
-    yield network_alerts (
-        sip = c.sip,
-        alert_type = "c_pad_75",
-        detail = "c_pad_75 triggered",
-        request_count = 1
-    )
-    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
-}
-
-rule c_pad_76 {
-    events {
-        c : conn_events
-    }
-    match<sip:2m> {
-        on event { c | count >= 230; }
-    } -> score(50.0)
-    entity(ip, c.sip)
-    yield network_alerts (
-        sip = c.sip,
-        alert_type = "c_pad_76",
-        detail = "c_pad_76 triggered",
-        request_count = 1
-    )
-    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
-}
-
-rule c_pad_77 {
-    events {
-        c : conn_events
-    }
-    match<sip:2m> {
-        on event { c | count >= 233; }
-    } -> score(50.0)
-    entity(ip, c.sip)
-    yield network_alerts (
-        sip = c.sip,
-        alert_type = "c_pad_77",
-        detail = "c_pad_77 triggered",
-        request_count = 1
-    )
-    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
-}
-
-rule c_pad_78 {
-    events {
-        c : conn_events
-    }
-    match<sip:2m> {
-        on event { c | count >= 236; }
-    } -> score(50.0)
-    entity(ip, c.sip)
-    yield network_alerts (
-        sip = c.sip,
-        alert_type = "c_pad_78",
-        detail = "c_pad_78 triggered",
-        request_count = 1
-    )
-    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
-}
-
-rule c_pad_79 {
-    events {
-        c : conn_events
-    }
-    match<sip:2m> {
-        on event { c | count >= 239; }
-    } -> score(50.0)
-    entity(ip, c.sip)
-    yield network_alerts (
-        sip = c.sip,
-        alert_type = "c_pad_79",
-        detail = "c_pad_79 triggered",
-        request_count = 1
-    )
-    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
-}
-
-rule c_pad_80 {
-    events {
-        c : conn_events
-    }
-    match<sip:2m> {
-        on event { c | count >= 242; }
-    } -> score(50.0)
-    entity(ip, c.sip)
-    yield network_alerts (
-        sip = c.sip,
-        alert_type = "c_pad_80",
-        detail = "c_pad_80 triggered",
         request_count = 1
     )
     limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }

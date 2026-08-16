@@ -9,7 +9,9 @@ late_policy = "drop"
 
 [window.conn_events]
 mode = "local"
-max_window_bytes = "256MB"
+# 200k normal 下 conn 窗口深内容(含 parsed-event 足迹, e14ed6d)约 490MB——
+# 256MB 会触发有损内存驱逐，close 路径规则全部归零(#18 门禁实测)。
+max_window_bytes = "1GB"
 over_cap = "5m"
 
 # 输出窗口（over=0）

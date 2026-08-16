@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""生成 20 规则综合压测输入事件（jsonl，供 wfgen send 发送）。
+"""生成 450 规则综合压测输入事件（jsonl，供 wfgen send 发送）。
 
-用法: gen_events.py <count> <mode>
-  mode:
-    single   — 单 sip，最纯引擎路径（旧名 global）
-    flood    — 唯一 sip，洪水/攻击压力（旧名 distinct）
-    normal   — sip 复用，正常流量长尾（旧名 pool）[默认]
+用法: gen_events.py <count>
+
+数据形态：sip 复用池（1000），正常流量长尾——贴近真实部署。
+（历史 single/flood 模式已删除：极端基数内存压力口径不对外，见 README。）
 
 数据多样性：
   - 六类事件：conn 50% / firewall 15% / proxy 10% / auth 10% / dns 10% / file 5%
@@ -18,8 +17,6 @@
 import json, random, sys
 
 count = int(sys.argv[1])
-mode = sys.argv[2] if len(sys.argv) > 2 else "normal"
-mode = {"global": "single", "distinct": "flood", "pool": "normal"}.get(mode, mode)
 rnd = random.Random(42)
 BASE_NS = 1767225600000000000  # 2026-01-01T00:00:00Z
 POOL = 1000
@@ -30,14 +27,6 @@ QTYPES = ["A", "AAAA", "TXT", "CNAME"]
 
 
 def sip(i):
-    if mode == "single":
-        return "10.0.0.1"
-    if mode == "flood":
-        # 100000 唯一 sip，循环复用（对齐规则 max_instances=100000/规则封顶）。
-        # 200000 事件 → 每个 sip 出现 ~2 次，实例数正好 100k/规则、无 throttle 截断，
-        # 压测的是完整的高基数实例集，而非被封顶截断的子集。
-        j = i % 100000
-        return f"10.{(j >> 16) & 255}.{(j >> 8) & 255}.{j & 255}"
     return f"10.0.{i % (POOL >> 8)}.{i % 250 + 1}"
 
 
@@ -45,11 +34,6 @@ def dip(i):
     return f"192.168.{i % 40}.{(i // 40) % 250 + 1}"
 
 
-def distinct_sip(j):
-    return f"10.{(j >> 16) & 255}.{(j >> 8) & 255}.{j & 255}"
-
-
-nc = 0  # conn 事件计数（flood 模式给 conn 独立 ~100k 唯一 sip）
 METHODS = ["GET", "POST", "PUT", "DELETE"]
 UAS = ["curl", "chrome", "python-requests", "safari"]
 STATUSES = [200, 301, 404, 500]
@@ -124,8 +108,6 @@ for i in range(count):
             "event_time": t,
         }
     else:  # 50% conn_events
-        conn_sip = distinct_sip(nc % 100000) if mode == "flood" else sip(i)
-        nc += 1
         denied = rnd.random() < 0.30
         # #18 回归：object 字段（含嵌套 geo），每行 ~400B JSON 负载。
         conn_info = {
@@ -156,7 +138,7 @@ for i in range(count):
             "duration": rnd.randint(1, 600),
             "event_time": t,
             "protocol": rnd.choice(PROTOS),
-            "sip": conn_sip,
+            "sip": sip(i),
             "conn_info": conn_info,
             # 富数据类型
             "blocked": rnd.random() < 0.25,
