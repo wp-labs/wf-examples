@@ -213,7 +213,7 @@ PEAK_RSS_BYTES=$(cat "$RSS_FILE" 2>/dev/null || echo 0)
 RSS_MB=$("$PY" -c "print(round($PEAK_RSS_BYTES / 1048576, 1))" 2>/dev/null || echo "?")
 echo "==> 结果：EPS=$EPS  target=10000  RSS_peak=${RSS_MB}MB（footprint 平台期口径）"
 if [ "${EPS:-0}" -ge 10000 ]; then
-  echo "OK: 吞吐达到 1W EPS"
+  echo "OK: 吞吐达标（EPS=${EPS} ≥ 目标 10000）"
 else
-  echo "未达 1W EPS（$EPS < 10000）—— 见 README 调优项"
+  echo "未达标（EPS=${EPS} < 目标 10000）—— 见 README 调优项"
 fi
