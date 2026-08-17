@@ -2,7 +2,9 @@
 # nexmark_pk bench — 参数化吞吐/内存测试（send-arrow 连续流 或 wfgen stream 实时生成）
 #
 # feed:
-#   cont   = send-arrow 连续流：100M 唯一事件预编码成帧文件，一条 TCP 连接连续推
+#   cont   = send-arrow 连续流：100M 唯一事件预编码成帧文件，CONNECTIONS 条 TCP
+#            连接并发推（默认 1；每条连接推完整帧文件 —— C-UCP 供给并发，配套
+#            引擎 source `instances` 消化，见 wp-reactor docs/design/concurrency-scaling.md）
 #            （3M+，事件时间固定为预生成数据的 ~30min span）—— 测引擎峰值持续能力
 #   stream = wfgen stream 实时生成：事件时间随 slice 推进、按 RATE 目标速率注入
 #            （~760k，客户端实时编码受限）—— 测长时实时流稳定性/内存有界
@@ -12,10 +14,11 @@
 #   调优用环境变量（并行度默认取 conf/wfusion.toml）:
 #     PARSE_PARALLELISM / RULE_PARALLELISM / MAX_FRAME_BYTES / MAX_FRAME_ROWS
 #     MAX_INGEST_RATE（引擎端限速）/ RATE / SLICE_MS（stream）
+#     CONNECTIONS（cont 并发连接数，>1 时每条连接推完整帧文件，C-UCP 档位）
 #     WARMUP=1（cont：先跑一轮预热不计结果——stash 重建后首跑系统性偏低，须剔除）
 # 示例:
 #   PARSE_PARALLELISM=6 RULE_PARALLELISM=6 MAX_FRAME_BYTES=204800 ./bench.sh q1 cont 100m
-#   PARSE_PARALLELISM=6 RULE_PARALLELISM=6 MAX_INGEST_RATE=5000000 ./bench.sh q1 cont 100m
+#   CONNECTIONS=16 ./bench.sh q1 cont 30m
 #   WARMUP=1 ./bench.sh all cont 30m
 #
 # 输出每查询: EPS（引擎 append 数/墙钟，端到端口径）+ RSS 峰值 + 驱逐数
@@ -37,6 +40,10 @@ MAX_INGEST_RATE="${MAX_INGEST_RATE:-}"
 RATE="${RATE:-3000000}"
 SLICE_MS="${SLICE_MS:-1000}"
 WARMUP="${WARMUP:-0}"
+CONNECTIONS="${CONNECTIONS:-1}"
+# 按流指定分区 key(键闭包):"bid_events:auction,auction_events:id,person_events:id"
+# 配合 CONNECTIONS>1,同 key 事件同连接,有状态规则也安全(实测 emitted 与单连接逐位一致)
+SHARD_KEYS="${SHARD_KEYS:-}"
 
 # 二进制来源：优先本地 warp-fusion 的 target/release 构建（仅当存在时）；否则回退 PATH。
 # 不把路径固化为 ../../../warp-fusion —— 脚本可复制到任意目录运行，只要 wfusion/wfgen 在 PATH。
@@ -267,7 +274,7 @@ EOF
 # 并行度混淆（曾因口径混杂误判 ±8%）。
 report_result() {
   local Q="$1" FEED="$2" OUT="$3" BODY="$4"
-  local CTX="p=${PARSE_V_EFF} r=${RULE_V_EFF} frame_mb=$((MAX_FRAME_BYTES/1048576)) $(date +%m-%d_%H:%M:%S)"
+  local CTX="p=${PARSE_V_EFF} r=${RULE_V_EFF} c=${CONNECTIONS}${SHARD_KEYS:+" s=${SHARD_KEYS%%:*}"} frame_mb=$((MAX_FRAME_BYTES/1048576)) $(date +%m-%d_%H:%M:%S)"
   { echo "$BODY $CTX"; echo "-- correctness --"; correctness_summary; } >> "$OUT"
   # SUMMARY 行回显到 stdout（EMIT 行只进文件）
   local SUM
@@ -279,7 +286,7 @@ report_result() {
   esac
 }
 
-# ---- feed=cont：send-arrow 连续流（预编码帧，一条连接推完） ----
+# ---- feed=cont：send-arrow 连续流（预编码帧，CONNECTIONS 条连接并发推） ----
 # 默认帧大小（8MiB）复用 bench_${TOTAL}.frames；非默认大小用带后缀名（避免覆盖）。
 if [ "$MAX_FRAME_BYTES" = "8388608" ]; then
   FRAMES=data/bench_${TOTAL}.frames
@@ -309,7 +316,36 @@ run_cont_one() {
   start_rss "$D"; local SP=$!
 
   local T0=$("$PY" -c 'import time; print(time.time())')
-  "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT > /dev/null 2>&1
+  if [ -n "$SHARD_KEYS" ] && [ "$CONNECTIONS" -gt 1 ]; then
+    # 生成时分片(shard-frames)→ 纯 copy 多连接发送(键闭包,零解码):
+    # 先检查分片文件缓存(同 TOTAL×CONNECTIONS 复用),缺则 shard-frames 一次生成。
+    local SHARD_PREFIX="data/shard_${TOTAL}_c${CONNECTIONS}"
+    local SHARD_FILES=""
+    local i
+    for i in $(seq 0 $(( CONNECTIONS - 1 ))); do
+      [ -f "${SHARD_PREFIX}.s${i}.frames" ] || { SHARD_FILES=""; break; }
+      SHARD_FILES="${SHARD_FILES:+$SHARD_FILES,}${SHARD_PREFIX}.s${i}.frames"
+    done
+    if [ -z "$SHARD_FILES" ]; then
+      echo "==> shard-frames(${CONNECTIONS} 分片, key=${SHARD_KEYS%%:*})"
+      "$WFGEN" shard-frames --input "$FRAMES" --shards "$CONNECTIONS" \
+        --shard-keys "$SHARD_KEYS" --output-prefix "$SHARD_PREFIX" > /dev/null 2>&1 || {
+        echo "    ⚠ shard-frames 失败(退出;EXIT trap 清理 daemon)" >&2
+        exit 1
+      }
+      SHARD_FILES=""
+      for i in $(seq 0 $(( CONNECTIONS - 1 ))); do
+        SHARD_FILES="${SHARD_FILES:+$SHARD_FILES,}${SHARD_PREFIX}.s${i}.frames"
+      done
+    fi
+    "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT --shard-files "$SHARD_FILES" > /dev/null 2>&1 &
+  elif [ -n "$SHARD_KEYS" ]; then
+    # 单连接 + shard-keys:无需分区,退化为普通发送
+    "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT > /dev/null 2>&1 &
+  else
+    "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT --connections "$CONNECTIONS" > /dev/null 2>&1 &
+  fi
+  local CLIENT=$!
   # 等引擎真正消化完（append 追平 TOTAL，而非 ingress 预读）。
   # 超时自适应：按 100k/s 诚实下限 + 600s 余量（on-each 单线程 ~0.3M/s，
   # 100M 需 ~333s；旧的 300s 上限会在真实负载下提前超时）。
@@ -320,6 +356,9 @@ run_cont_one() {
     if [ "${APP:-0}" -ge "$TOTAL_N" ]; then T2=$("$PY" -c 'import time; print(time.time())'); break; fi
     sleep 0.5
   done
+  # 追平后 kill 客户端：CONNECTIONS>1 时客户端会推 CONNECTIONS×TOTAL 事件，
+  # 引擎只需消化 TOTAL（口径统一）；单连接时客户端已推完，kill 无害。
+  kill "$CLIENT" 2>/dev/null; wait "$CLIENT" 2>/dev/null
   if [ "$T2" = 0 ]; then T2=$("$PY" -c 'import time; print(time.time())'); TIMEOUT=1; fi
   sleep 3
   kill $SP 2>/dev/null; wait $SP 2>/dev/null; kill_daemon $D; wait_port_free

@@ -1,3 +1,13 @@
+# TCP 入流 source（nexmark_pk 基准）
+#
+# W-RDP（引擎读取并行）:instances = 引擎侧并行 read+decode 循环数。
+#   - wp-core-connectors 已有参数（1..=16），acceptor 把连接 round-robin 分给 N 个
+#     独立 TcpSource（各自 read+decode 循环），零引擎代码改动。
+#   - 实测（window-shard-prototype-experiment.md）:1→2→4→8→12→16 实例 =
+#     4.2→4.98→5.40→6.78→8.27→9.91M EPS（近线性未饱和）。
+#   - 连接数（C-UCP，上游供给）与 instances 独立:建议连接数 ≥ instances，
+#     实例循环在连接间 async 切换，instances=8 配 16 连接 ≈ instances=16 配 16 连接。
+#   - 生产建议:instances=16，上游并发连接 ≥16。
 connect = "tcp_src"
 enable = true
 key = "ingress"
@@ -6,3 +16,4 @@ addr = "127.0.0.1"
 port = "9800"
 framing = "len"
 data_format = "arrow_framed"
+instances = 16
