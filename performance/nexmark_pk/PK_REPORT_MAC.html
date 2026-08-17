@@ -110,7 +110,7 @@
 
   <h1>wfusion vs Flink — NexMark PK 性能报告</h1>
   <div class="meta">
-    测试日期 <b>2026-08-17</b>（P0-② content 记账 2GB，全量重跑）· 对齐口径 NexMark 100M/查询 + discard 输出（blackhole）· send-arrow <code>cont</code> 连续流（shard-files 唯一数据，4 连接）·
+    测试日期 <b>2026-08-17</b>（<b>wfusion 0.3.1</b> / wp-reactor 1.0.2，P0-② content 记账 2GB，全量重跑）· 对齐口径 NexMark 100M/查询 + discard 输出（blackhole）· send-arrow <code>cont</code> 连续流（shard-files 唯一数据，4 连接）·
     硬件 Apple M3 Max（16 核 / 64GB，稳态 ~4-13 核） · EPS 为 append_total 口径，run 间 ±5-10%
   </div>
 
@@ -209,11 +209,12 @@
 
   <h2>结论</h2>
   <ul>
-    <li><b>全部 7 查询同时超过 Open Flink 与阿里 VVR（2026-08-17 重测口径）</b>：vs OSS 3.5-261×、vs VVR 1.0-30×；Q3 由落后反超为 2.4×</li>
+    <li><b>全部 7 查询同时超过 Open Flink 与阿里 VVR（2026-08-17 重测口径）</b>：vs OSS 3.5-261×、vs VVR 1.0-30×；Q3 由落后反超为 2.4×、Q9 升 30×</li>
     <li><b>100M 口径已完整对齐</b>：7 查询无丢失、内存有界（RSS 5.4-14.0GB 峰值后回落）、EPS 稳定</li>
     <li><b>吞吐分布 = 规则负载</b>：Q1/Q3/Q9（轻规则）11.2-11.3M；Q5/Q7（per-key 状态规则）3.1-3.4M 是规则计算上限，非供给瓶颈</li>
     <li><b>内存有界</b>：RSS 峰值 5.4-14.0GB，64GB 机器余量充足</li>
   </ul>
+  <p style="font-size:13px;color:var(--text-muted)">Linux 8 CU 对等实测（4/7 领先 VVR、简单查询落后）见 <code>PK_REPORT_LINUX.html</code>。</p>
 
   <p class="foot">完整技术细节、优化链、瓶颈分析见 <code>PK_REPORT_MAC.md</code> · 复测：<code>./bench.sh all cont 100m</code></p>
 </div>

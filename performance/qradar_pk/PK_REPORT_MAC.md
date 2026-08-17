@@ -1,6 +1,6 @@
 # wfusion vs IBM QRadar EP — 450 规则高压吞吐性能报告（Apple Silicon 环境）
 
-> 测试日期：2026-08-17（P0-② content 记账 2GB 之后，当前二进制）
+> 测试日期：2026-08-17（**wfusion 0.3.1** / wp-reactor 1.0.2，P0-② content 记账 2GB 之后）
 > 对标：IBM QRadar Event Processor 认证负载（**80k EPS @ 451 条规则**）
 > 场景：`wf-examples/performance/qradar_pk`（450 条有状态规则 / 6 类事件源 / 1000 sip 键）
 
@@ -28,7 +28,7 @@
 | 芯片 | Apple M3 Max（16 核：12 性能 + 4 能效），有效并行 6-9 核 |
 | 内存 | 64 GB |
 | 系统 | macOS |
-| 引擎 | wfusion release（当前构建，含 P0-② content 记账） |
+| 引擎 | **wfusion 0.3.1** / wp-reactor 1.0.2（release，含 P0-② content 记账） |
 | 注入 | `wfgen send` 单连接流式（CHUNK=10000），1M 事件 |
 | 对照 | IBM QRadar Event Processor 1699（虚拟版）：56-80 核 + 128GB，认证上限 80k EPS @ 451 规则 |
 

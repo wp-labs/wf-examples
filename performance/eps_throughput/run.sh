@@ -10,15 +10,32 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 PROFILE="${PROFILE:-release}"   # release | debug — 压测默认 release（debug 显著偏慢）
-REPO_ROOT="${REPO_ROOT:-$(cd ../../../warp-fusion && pwd)}"  # 默认 warp-fusion 根
-if [ -x "$REPO_ROOT/target/$PROFILE/wfusion" ] && [ -x "$REPO_ROOT/target/$PROFILE/wfgen" ]; then
-  WFUSION="${WFUSION:-$REPO_ROOT/target/$PROFILE/wfusion}"
-  WFGEN="${WFGEN:-$REPO_ROOT/target/$PROFILE/wfgen}"
-else
-  WFUSION="${WFUSION:-wfusion}"
-  WFGEN="${WFGEN:-wfgen}"
-  echo "   （未找到 $PROFILE 二进制，回退 PATH：$WFUSION / $WFGEN）" >&2
+# 二进制来源：优先本地 warp-fusion 的 target/$PROFILE 构建（仅当存在时）；否则回退 PATH。
+# 不把路径固化为 ../../../warp-fusion —— 脚本可复制到任意目录运行，只要 wfusion/wfgen 在 PATH。
+REPO_ROOT="${REPO_ROOT:-}"
+if [ -z "$REPO_ROOT" ] && [ -d "../../../warp-fusion" ]; then
+  REPO_ROOT="$(cd ../../../warp-fusion && pwd)"
 fi
+WFUSION="${WFUSION:-}"
+WFGEN="${WFGEN:-}"
+FROM_REPO=1
+if [ -z "$WFUSION" ] && [ -n "$REPO_ROOT" ] && [ -x "$REPO_ROOT/target/$PROFILE/wfusion" ]; then
+  WFUSION="$REPO_ROOT/target/$PROFILE/wfusion"
+else
+  FROM_REPO=0
+fi
+if [ -z "$WFGEN" ] && [ -n "$REPO_ROOT" ] && [ -x "$REPO_ROOT/target/$PROFILE/wfgen" ]; then
+  WFGEN="$REPO_ROOT/target/$PROFILE/wfgen"
+else
+  FROM_REPO=0
+fi
+if [ -z "$WFUSION" ]; then WFUSION="$(command -v wfusion 2>/dev/null || true)"; fi
+if [ -z "$WFGEN" ]; then WFGEN="$(command -v wfgen 2>/dev/null || true)"; fi
+if [ -z "$WFUSION" ] || [ -z "$WFGEN" ]; then
+  echo "错误: 找不到 wfusion/wfgen 二进制（设置 REPO_ROOT/WFUSION/WFGEN，或加入 PATH）" >&2
+  exit 1
+fi
+[ "$FROM_REPO" = 1 ] || echo "   （未找到 $PROFILE 构建，回退 PATH：${WFUSION} / ${WFGEN}）" >&2
 PY=${PYTHON:-python3}
 PORT=9800
 METRICS=data/metrics.ndjson

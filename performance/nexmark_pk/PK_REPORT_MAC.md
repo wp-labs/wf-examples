@@ -1,6 +1,6 @@
 # wfusion vs Flink — NexMark PK 性能报告（Apple Silicon 环境）
 
-> 测试日期：2026-08-17（P0-② content 记账 2GB，2026-08-17 全量重跑）
+> 测试日期：2026-08-17（**wfusion 0.3.1** / wp-reactor 1.0.2，P0-② content 记账 2GB，2026-08-17 全量重跑）
 > 对齐口径：NexMark 标准数据 + 查询 + **100M 记录/查询**（与 Flink 白皮书一致）+ discard 输出（blackhole）
 > **send-arrow `cont` 连续流**：100M 唯一事件预编码分片帧（shard-files，4 连接并发推）
 > **计时口径**：window append_total 追平 100M（append_total，见 §3）
@@ -21,6 +21,8 @@
 | 复杂窗口查询（Q4/Q5/Q7） | **8.3-12× VVR、13-39× Open Flink** |
 | 内存 | 100M 下 RSS 峰值 5.4-14.0GB，峰值后回落（有界、非泄漏） |
 | 稳定性 | 100M 全部处理（appended=100M/100M），无丢失，正确性 clean |
+
+> **Linux 8 CU 对等实测见独立报告 `PK_REPORT_LINUX.md`**（2026-08-17，消除硬件红利）。
 
 ---
 
@@ -147,6 +149,8 @@
 - **但 vs Flink 的复杂查询优势依然巨大**：Q4/Q5/Q7 vs OSS 13-39×、vs VVR 8.3-12×——
   Flink 的分布式 + exactly-once 在复杂查询上放大代价 20× 的结论不变；
 - Q3/Q9（join，几乎无窗口聚合）最高：11.2-11.3M，与 Q1 同档。
+
+> **Linux 8 CU 对等实测见独立报告 `PK_REPORT_LINUX.md`**（2026-08-17，硬件与 VVR 8 CU 对等）。
 
 ### 4.3 完整性
 
@@ -343,6 +347,8 @@ PK **无"指标错配"的逻辑问题**——两边都是处理能力指标（RP
   3.1-3.4M 是规则计算上限，非供给瓶颈；Flink 的分布式 + exactly-once 在复杂查询上
   放大代价 20× 的架构差异结论不变
 - **内存有界**：RSS 峰值 5.4-14.0GB（Q9 最低 / Q1 最高），64GB 机器余量充足，且峰值后回落
+
+> **Linux 8 CU 对等实测（4/7 领先 VVR、简单查询落后）见 `PK_REPORT_LINUX.md`**。
 
 > 完整技术细节、优化链、瓶颈分析见 `TASK_PK_FLINK.md` §8；基准工具见本目录 `bench.sh`
 > （`./bench.sh all cont 100m`）。
