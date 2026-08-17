@@ -318,8 +318,11 @@ run_cont_one() {
   local T0=$("$PY" -c 'import time; print(time.time())')
   if [ -n "$SHARD_KEYS" ] && [ "$CONNECTIONS" -gt 1 ]; then
     # 生成时分片(shard-frames)→ 纯 copy 多连接发送(键闭包,零解码):
-    # 先检查分片文件缓存(同 TOTAL×CONNECTIONS 复用),缺则 shard-frames 一次生成。
-    local SHARD_PREFIX="data/shard_${TOTAL}_c${CONNECTIONS}"
+    # 先检查分片文件缓存(同 TOTAL×CONNECTIONS×shard-keys 复用),缺则 shard-frames
+    # 一次生成。缓存 key 必须带 shard-keys 指纹——换键会静默复用旧分片文件(曾踩坑)。
+    local SHARD_KEY_FP
+    SHARD_KEY_FP=$("$PY" -c 'import hashlib,sys;print(hashlib.md5(sys.argv[1].encode()).hexdigest()[:8])' "$SHARD_KEYS")
+    local SHARD_PREFIX="data/shard_${TOTAL}_c${CONNECTIONS}_k${SHARD_KEY_FP}"
     local SHARD_FILES=""
     local i
     for i in $(seq 0 $(( CONNECTIONS - 1 ))); do
