@@ -115,7 +115,7 @@
   </div>
 
   <div class="kpi-row">
-    <div class="kpi"><div class="label">450 规则吞吐</div><div class="value">103.7k</div><div class="delta up">EPS · 200k 事件单连接流式（初测口径）</div></div>
+    <div class="kpi"><div class="label">450 规则吞吐</div><div class="value">103.3k</div><div class="delta up">EPS · 两轮 103.7k/103.0k（±0.7%）</div></div>
     <div class="kpi"><div class="label">vs QRadar EP 认证上限</div><div class="value">1.3×</div><div class="delta up">80k @ 451 规则（56-80 核）</div></div>
     <div class="kpi"><div class="label">每核效率（按 8 核估算）</div><div class="value">~13k</div><div class="delta up">EPS/核 vs QRadar 虚拟版 ~1.0-1.4k（高 ~10-13×）</div></div>
     <div class="kpi"><div class="label">#18 门禁</div><div class="value">通过</div><div class="delta up">驱逐 0 · emitted 2.4M · 293/450 规则触发</div></div>
@@ -126,7 +126,7 @@
     <div class="chart-title">1. EPS 对比（450 规则，8 核单进程）</div>
     <div class="chart-sub">wfusion 单进程 @ AMD EPYC 8 vCPU vs QRadar 认证/物理上限</div>
     <div class="legend">
-      <span><span class="swatch" style="background:var(--series-1)"></span>wfusion（103.7k）</span>
+      <span><span class="swatch" style="background:var(--series-1)"></span>wfusion（103.3k）</span>
       <span><span class="swatch" style="background:var(--series-2)"></span>QRadar EP 虚拟版认证（80k）</span>
       <span><span class="swatch" style="background:var(--series-3)"></span>QRadar 物理 appliance（20k）</span>
     </div>
@@ -144,7 +144,7 @@
       <!-- bars: 103.7k -> h=104px scale 1k=1px; 80k->80; 20k->20 -->
       <g>
         <rect x="130" y="146" width="90" height="104" rx="4" fill="var(--series-1)"/>
-        <text x="175" y="138" text-anchor="middle" fill="var(--text-primary)" font-size="13" font-weight="600">103.7k</text>
+        <text x="175" y="138" text-anchor="middle" fill="var(--text-primary)" font-size="13" font-weight="600">103.3k</text>
         <text x="175" y="275" text-anchor="middle" fill="var(--text-secondary)" font-size="12">wfusion</text>
 
         <rect x="330" y="170" width="90" height="80" rx="4" fill="var(--series-2)"/>
@@ -176,10 +176,10 @@
   <table>
     <thead><tr><th>项</th><th class="num">值</th><th>说明</th></tr></thead>
     <tbody>
-      <tr><td>EPS</td><td class="num"><b>103,692</b></td><td>200k 事件 / 1.93s send 墙钟（单连接流式，初测口径）</td></tr>
-      <tr><td>#18 回归</td><td class="num"><b>通过</b></td><td>内存驱逐 0 · emitted 2,399,911 · conn_rules 29,310 · rules_seen 293</td></tr>
+      <tr><td>EPS</td><td class="num"><b>~103.3k</b></td><td>两轮 103,692 / 102,979（±0.7%），send 墙钟 1.93s / 1.94s</td></tr>
+      <tr><td>#18 回归</td><td class="num"><b>通过</b></td><td>内存驱逐 0 · emitted 2,403,016 · conn_rules 29,359 · rules_seen 293</td></tr>
       <tr><td>规则触发</td><td class="num">293/450</td><td>200k 数据分布下其余阈值/过滤不满足（与 Mac 报告 200k 口径一致）</td></tr>
-      <tr><td>RSS</td><td class="num">未测</td><td>footprint 为 macOS 工具，Linux 上采样跳过（见诚实边界）</td></tr>
+      <tr><td>RSS</td><td class="num"><b>2.29GB</b></td><td>/proc VmRSS 平台期峰值；Mac 200k 口径 2.25GB，基本一致</td></tr>
     </tbody>
   </table>
 
@@ -194,8 +194,8 @@
   <!-- ============ 诚实边界 ============ -->
   <h2>诚实边界</h2>
   <ol>
-    <li><b>EPS 为 200k 突发初测</b>（默认事件数），非 1M 三轮稳态；单连接流式、CHUNK=10000——1M 长稳 EPS 只会更高不会更低（Mac 口径同向）；</li>
-    <li><b>RSS 未测</b>：footprint 为 macOS 专用工具，Linux 上采样静默跳过（RSS_peak=0）——内存数字待补；</li>
+    <li><b>EPS 为 200k 突发初测</b>（默认事件数，两轮 103,692 / 102,979 复现 ±0.7%），非 1M 三轮稳态；单连接流式、CHUNK=10000——1M 长稳 EPS 只会更高不会更低（Mac 口径同向），1M 长稳待跑；</li>
+    <li><b>RSS 为 /proc VmRSS 平台期峰值</b>（Linux 回退路径；macOS 用 footprint 的 phys_footprint，两者口径略异）；</li>
     <li><b>CPU% 未测</b>：每核效率按 8 核满负荷估算，未用 wait4/rusage 实测；</li>
     <li><b>QRadar 数字来源单一</b>（IBM 官方认证方法论），不可复现；对照含板载采集/存储等产品层组件（非仅规则引擎），利于 QRadar。</li>
   </ol>
