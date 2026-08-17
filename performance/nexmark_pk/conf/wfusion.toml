@@ -9,6 +9,10 @@ windows = "models/schemas/windows.toml"
 parse_parallelism = 10
 rule_parallelism = 10
 rule_exec_timeout = "30s"
+# 二分法实证(2026-08-17 §2.3):preread 预算槽位是第一道墙——IPC 解码把
+# ~7.7MB wire 膨胀成 ~116MB Arrow 内存,256MB 默认仅 ~2 槽。4GB = ~34 槽,
+# 实测 q1 +40%(探针态)、q2 +23%;正常形态增益见基准记录。内存代价 RSS +3GB。
+parse_buffer_bytes = 4294967296
 schemas = "models/schemas/*.wfs"
 rules = "models/rules/*.wfl"
 
