@@ -1,7 +1,7 @@
 [window_defaults]
 evict_interval = "30s"
 max_window_bytes = "256MB"
-max_total_bytes = "2GB"
+max_total_bytes = "8GB"
 evict_policy = "time_first"
 watermark = "1s"
 allowed_lateness = "30m"
@@ -11,7 +11,9 @@ late_policy = "drop"
 mode = "local"
 # 200k normal 下 conn 窗口深内容(含 parsed-event 足迹, e14ed6d)约 490MB——
 # 256MB 会触发有损内存驱逐，close 路径规则全部归零(#18 门禁实测)。
-max_window_bytes = "1GB"
+# 1M 长跑下窗口内容 ~2.5GB+(5× 数据),1GB 仍会驱逐(2026-08-17 实测 38 条),
+# 提到 4GB(nexmark 经验:窗口 cap 须与数据量匹配,bid 窗口 15GB)。
+max_window_bytes = "4GB"
 over_cap = "5m"
 
 # 输出窗口（over=0）

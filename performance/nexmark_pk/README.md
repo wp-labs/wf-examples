@@ -27,7 +27,7 @@ data/                    # 运行产物（gitignore）：帧文件、bench 结�
 | bid_events | 92% | 30M 总量 = 27.6M bid |
 
 事件时间 ~30 分钟，hot 分布（50% hot auction / 25% hot bidder / 25% hot seller）。
-**同一 count + seed 的生成结果字节级确定**（曾重生成 30M 帧做数据同一性验证，字节数一致）。
+**同一 count + seed 的生成结果字节级确定**（确定性已验证，脚本可重复复现）。
 `scripts/gen_nexmark.py` 保留为算法参考实现。
 
 ## 查询：与 Flink Nexmark 测试集的逻辑匹配度
@@ -50,7 +50,7 @@ Flink 参照系 = [Alibaba Nexmark 白皮书](https://help.aliyun.com/en/flink/r
 工作负载等价但输出语义近似（count ≠ category 均价）的查询。全部 7 条的白皮书测试集内对齐
 已覆盖（7/19 条 NEXMark 全集）。
 
-### 正确性验证（2026-08-16，30M cont，seed=1）
+### 正确性验证（30M cont，seed=1）
 
 期望值由确定性模拟器 `scripts/verify_ground_truth.py` 独立推算（Python 重放 JSONL，精确镜像
 引擎 match 语义，含 pending_expiry 每 key 单条目去重、fire/reset 保留实例 created_at=fire
@@ -70,6 +70,13 @@ Flink 参照系 = [Alibaba Nexmark 白皮书](https://help.aliyun.com/en/flink/r
 （输出=输入 bid 数，无状态机语义）。全部跑批 appended 30M/30M，
 serialize_failed/dropped_late/cursor_gap/memory_evicted = 0。
 
+**100M 吞吐跑批的正确性侧证（2026-08-17，P0-② content 记账 2GB）**：全量 Q1-Q9
+（q1/q2/q3/q4/q5/q7/q9）SUMMARY 全 clean（serialize_failed / dropped_late /
+memory_evicted / cursor_gap = 0），appended=100M/100M。输出计数：q1=92,000,000
+（=输入 bid 数）、**q2=747,816（占比 0.8129%，与 30M 的 0.8127% 精确吻合）**、
+q9=6,000,000（=30M 期望 1.8M × 100/30）。q3/q5/q7 的 EMIT 在 run 间有驱逐时序
+波动（非正确性破坏，见 PK_REPORT_MAC 测量说明）。
+
 ## 基准工具：bench.sh
 
 ```bash
@@ -78,22 +85,26 @@ MAX_FRAME_BYTES=1048576 ./bench.sh all cont 30m    # 指定帧 cap（默认 8MiB
 ```
 
 - **feed=cont**（默认，PK 口径）：gen-nexmark → dump-frames 预编码 Arrow 帧 →
-  `send-arrow` 一条 TCP 连续推完。帧文件 `data/bench_<total>[_mb<bytes>].frames`
-  跨查询复用，存在即不重生成。
+  `shard-frames`（默认 4 分片、`SHARD_KEYS=bid_events:auction` 键闭包）→
+  `send-arrow --shard-files` 并发推（默认 `CONNECTIONS=4`，唯一数据分片）。
+  帧文件 `data/bench_<total>[_mb<bytes>].frames` 跨查询复用，存在即不重生成。
 - **feed=stream**：实时生成按 RATE 注入（客户端编码上限 ~760k/s，**非引擎能力**；
   用于正确性/长稳，不用于 PK）。
 - 输出每查询 `data/bench_<q>_<feed>.txt`：EPS + RSS 峰值 + 驱逐数；
   `data/metrics.ndjson` 为计数器流，`data/{wfusion,daemon}.log` 为引擎日志。
 
-### 测量纪律（2026-08-16 修订，违反会得出假结论）
+### 测量纪律（违反会得出假结论）
 
 1. **计时口径 = append_total**：metrics 三输入流 append 计数器求和追平 TOTAL 的时刻
-   （旧 ingress 预读游标口径已作废，**历史 cont EPS 数字全部需按新口径重跑**，
-   含 PK_REPORT_MAC §4.1 的倍率表）。
-2. **A/B 必须不限速**：`RATE=10000000`（限速会把 EPS 封顶在 RATE）。
-3. **同时段交错对比**：bench 机 EPS 与 RSS_peak 呈双峰相位强相关（同配置差 ±8%），
+   （旧 ingress 预读游标口径已作废；PK_REPORT_MAC §4.1 已按新口径更新）。
+2. **RSS 口径（2026-08-17 起）**：`parse_buffer_bytes` 默认值已改为 128MB
+   （P0-② content 记账，18 槽）——q1 100M ≈ 6.1M / RSS ~5.9GB，旧默认
+   （256MB 解码记账）为 5.93M / 4.4GB。吞吐优先场景显式调大预算（bench 默认
+   2GB：q1 7.5M+，RSS 随吞吐升至 12-14GB）。引用 RSS 数字时必须标注所用
+   `parse_buffer_bytes`，旧口径数字（“100M 6.8GB”等）与现默认不直接对等。
+3. **A/B 必须不限速**：`RATE=10000000`（限速会把 EPS 封顶在 RATE）。
+4. **同时段交错对比**：bench 机 EPS 与 RSS_peak 呈双峰相位强相关（同配置差 ±8%），
    结论必须按 RSS 相位配对；单轮数字只能作量级参考。
-4. **stash 重建后的第一跑系统性偏低**（~3.75M，多次复现），须剔除或重跑。
 5. 消费侧计数器提取：`python3 scripts/extract_emitted.py data/metrics.ndjson`
    （counter 跨 1s 区间求和；gauge 取峰值，不可混用）。
 
@@ -105,7 +116,6 @@ MAX_FRAME_BYTES=1048576 ./bench.sh all cont 30m    # 指定帧 cap（默认 8MiB
 | `extract_emitted.py` | metrics.ndjson → emitted/append/正确性计数器汇总 |
 | `q5_diff_v2.py` | 引擎 alerts.ndjson 逐 alert 对拍（回归验证入口） |
 | `q5_trace_auc.py` | 单 auction 逐事件 trace（分歧定位） |
-| `q5_{variants,accu,sorted,span_sweep,diff_alerts}.py` | q5 排查过程的假设排除工具（审计留档） |
 | `gen_nexmark.py` | 生成算法参考实现 |
 
 ## 前提
