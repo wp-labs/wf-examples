@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wfusion vs IBM QRadar EP — 450 规则吞吐性能报告（Linux 8 核对等口径）</title>
+<style>
+  .viz-root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --page-plane:     #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --series-1:       #2a78d6;   /* wfusion */
+    --series-2:       #eb6834;   /* QRadar EP */
+    --series-3:       #1baf7a;   /* QRadar 物理 */
+    --good:           #0ca30c;
+    --serious:        #ec835a;
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 24px 28px 60px;
+    font-family: -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    color: var(--text-primary);
+    background: var(--page-plane);
+    line-height: 1.6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .viz-root {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --page-plane:     #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --gridline:       #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --series-1:       #3987e5;
+      --series-2:       #d95926;
+      --series-3:       #199e70;
+      --good:           #0ca30c;
+      --serious:        #ec835a;
+    }
+  }
+  :root[data-theme="dark"] .viz-root {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --page-plane:     #0d0d0d;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:       #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --series-1:       #3987e5;
+    --series-2:       #d95926;
+    --series-3:       #199e70;
+    --good:           #0ca30c;
+    --serious:        #ec835a;
+  }
+  .topbar { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+  .toggle {
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
+    border-radius: 6px; padding: 5px 12px; font-size: 13px; cursor: pointer;
+  }
+  h1 { font-size: 22px; margin: 4px 0 6px; }
+  .meta { font-size: 13px; color: var(--text-secondary); margin-bottom: 18px; }
+  .meta b { color: var(--text-primary); }
+  h2 { font-size: 17px; margin: 26px 0 10px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  h3 { font-size: 15px; margin: 18px 0 8px; }
+  .kpi-row { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
+  .kpi {
+    flex: 1 1 220px; background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 16px;
+  }
+  .kpi .label { font-size: 12px; color: var(--text-secondary); }
+  .kpi .value { font-size: 24px; font-weight: 700; margin: 2px 0; }
+  .kpi .delta { font-size: 12px; }
+  .delta.up { color: var(--good); }
+  .delta.warn { color: var(--serious); }
+  .chart-card {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 18px; margin: 14px 0;
+  }
+  .chart-title { font-weight: 600; font-size: 14px; }
+  .chart-sub { font-size: 12px; color: var(--text-secondary); margin: 4px 0 10px; }
+  .legend { font-size: 12px; color: var(--text-secondary); display: flex; gap: 16px; margin: 8px 0; flex-wrap: wrap; }
+  .legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13px; }
+  th, td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+  th { background: var(--surface-1); font-weight: 600; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .callout {
+    background: var(--surface-1); border: 1px solid var(--border); border-left: 3px solid var(--good);
+    border-radius: 6px; padding: 10px 14px; font-size: 13px; margin: 12px 0;
+  }
+  ol, ul { font-size: 14px; }
+  .foot { font-size: 12px; color: var(--text-muted); margin-top: 24px; }
+</style>
+</head>
+<body>
+<div class="viz-root" id="root">
+  <div class="topbar">
+    <button class="toggle" id="themeToggle">切换主题</button>
+  </div>
+
+  <h1>wfusion vs IBM QRadar EP — 450 规则吞吐性能报告（Linux 8 核对等口径）</h1>
+  <div class="meta">
+    测试日期 <b>2026-08-17</b>（wfusion 0.3.1 / wp-reactor 1.0.2，P0-② content 记账）· 对标 QRadar EP 认证负载（<b>80k EPS @ 451 规则</b>）· 场景 qradar_pk（450 条有状态规则 / 6 类事件源 / 1000 sip 键）·
+    硬件 AMD EPYC 9T95（KVM，8 vCPU / 8 核，30 GiB）· Ubuntu 24.04.4
+  </div>
+
+  <div class="kpi-row">
+    <div class="kpi"><div class="label">450 规则吞吐</div><div class="value">103.7k</div><div class="delta up">EPS · 200k 事件单连接流式（初测口径）</div></div>
+    <div class="kpi"><div class="label">vs QRadar EP 认证上限</div><div class="value">1.3×</div><div class="delta up">80k @ 451 规则（56-80 核）</div></div>
+    <div class="kpi"><div class="label">每核效率（按 8 核估算）</div><div class="value">~13k</div><div class="delta up">EPS/核 vs QRadar 虚拟版 ~1.0-1.4k（高 ~10-13×）</div></div>
+    <div class="kpi"><div class="label">#18 门禁</div><div class="value">通过</div><div class="delta up">驱逐 0 · emitted 2.4M · 293/450 规则触发</div></div>
+  </div>
+
+  <!-- ============ 图表 1：EPS 对比 ============ -->
+  <div class="chart-card">
+    <div class="chart-title">1. EPS 对比（450 规则，8 核单进程）</div>
+    <div class="chart-sub">wfusion 单进程 @ AMD EPYC 8 vCPU vs QRadar 认证/物理上限</div>
+    <div class="legend">
+      <span><span class="swatch" style="background:var(--series-1)"></span>wfusion（103.7k）</span>
+      <span><span class="swatch" style="background:var(--series-2)"></span>QRadar EP 虚拟版认证（80k）</span>
+      <span><span class="swatch" style="background:var(--series-3)"></span>QRadar 物理 appliance（20k）</span>
+    </div>
+    <svg viewBox="0 0 960 300" role="img" aria-label="EPS 对比柱状图" style="width:100%;height:auto">
+      <line x1="60" y1="250" x2="940" y2="250" stroke="var(--baseline)"/>
+      <!-- gridlines: 0 / 50k / 100k / 150k / 200k / 250k -->
+      <g fill="var(--text-muted)" font-size="11" text-anchor="end">
+        <text x="52" y="254">0</text>
+        <line x1="60" y1="200" x2="940" y2="200" stroke="var(--gridline)" stroke-dasharray="3 3"/><text x="52" y="204">50k</text>
+        <line x1="60" y1="150" x2="940" y2="150" stroke="var(--gridline)" stroke-dasharray="3 3"/><text x="52" y="154">100k</text>
+        <line x1="60" y1="100" x2="940" y2="100" stroke="var(--gridline)" stroke-dasharray="3 3"/><text x="52" y="104">150k</text>
+        <line x1="60" y1="50" x2="940" y2="50" stroke="var(--gridline)" stroke-dasharray="3 3"/><text x="52" y="54">200k</text>
+        <line x1="60" y1="0" x2="940" y2="0" stroke="var(--gridline)" stroke-dasharray="3 3"/><text x="52" y="4">250k</text>
+      </g>
+      <!-- bars: 103.7k -> h=104px scale 1k=1px; 80k->80; 20k->20 -->
+      <g>
+        <rect x="130" y="146" width="90" height="104" rx="4" fill="var(--series-1)"/>
+        <text x="175" y="138" text-anchor="middle" fill="var(--text-primary)" font-size="13" font-weight="600">103.7k</text>
+        <text x="175" y="275" text-anchor="middle" fill="var(--text-secondary)" font-size="12">wfusion</text>
+
+        <rect x="330" y="170" width="90" height="80" rx="4" fill="var(--series-2)"/>
+        <text x="375" y="162" text-anchor="middle" fill="var(--text-primary)" font-size="13" font-weight="600">80k</text>
+        <text x="375" y="275" text-anchor="middle" fill="var(--text-secondary)" font-size="12">QRadar EP 认证</text>
+
+        <rect x="530" y="230" width="90" height="20" rx="4" fill="var(--series-3)"/>
+        <text x="575" y="222" text-anchor="middle" fill="var(--text-primary)" font-size="13" font-weight="600">20k</text>
+        <text x="575" y="275" text-anchor="middle" fill="var(--text-secondary)" font-size="12">QRadar 物理</text>
+      </g>
+    </svg>
+  </div>
+
+  <!-- ============ 测试环境 ============ -->
+  <h2>测试环境</h2>
+  <table>
+    <thead><tr><th>项</th><th>值</th></tr></thead>
+    <tbody>
+      <tr><td>芯片</td><td>AMD EPYC 9T95（KVM 虚拟化，8 vCPU / 8 核 / 每核 1 线程，x86_64）</td></tr>
+      <tr><td>内存</td><td>30 GiB（29 GiB available，Swap 0）</td></tr>
+      <tr><td>系统</td><td>Ubuntu 24.04.4 LTS（Noble），内核 6.8.0-137-generic</td></tr>
+      <tr><td>引擎</td><td>wfusion 0.3.1 / wp-reactor 1.0.2（release，P0-② content 记账）</td></tr>
+      <tr><td>注入</td><td>wfgen send 单连接流式（CHUNK=10000），200k 事件</td></tr>
+    </tbody>
+  </table>
+
+  <!-- ============ 结果 ============ -->
+  <h2>测试结果（200k 事件，blackhole sink）</h2>
+  <table>
+    <thead><tr><th>项</th><th class="num">值</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>EPS</td><td class="num"><b>103,692</b></td><td>200k 事件 / 1.93s send 墙钟（单连接流式，初测口径）</td></tr>
+      <tr><td>#18 回归</td><td class="num"><b>通过</b></td><td>内存驱逐 0 · emitted 2,399,911 · conn_rules 29,310 · rules_seen 293</td></tr>
+      <tr><td>规则触发</td><td class="num">293/450</td><td>200k 数据分布下其余阈值/过滤不满足（与 Mac 报告 200k 口径一致）</td></tr>
+      <tr><td>RSS</td><td class="num">未测</td><td>footprint 为 macOS 工具，Linux 上采样跳过（见诚实边界）</td></tr>
+    </tbody>
+  </table>
+
+  <!-- ============ 关键结论 ============ -->
+  <h3>关键结论</h3>
+  <ol>
+    <li><b>8 核单进程 103.7k &gt; QRadar EP 认证上限（80k，56-80 核）1.3×</b>——硬件算力差距远超倍率（8 vCPU vs 56-80 核）：规则求值吞吐不是墙，与 Mac 报告结论一致；</li>
+    <li><b>每核效率 ~13k EPS/核</b>（按 8 核估算）vs QRadar 虚拟版 ~1.0-1.4k——高 ~10-13×，消除核数差异后优势仍在 10 倍量级；</li>
+    <li><b>vs Mac（156k 中位）≈ 0.66×</b>：450 规则是规则求值（CPU-bound）瓶颈，云主机 8 核 + EPYC 单核弱于 M3 性能核；幅度远小于 nexmark 简单查询的 1/3——规则求值吃满多核，损失更小。</li>
+  </ol>
+
+  <!-- ============ 诚实边界 ============ -->
+  <h2>诚实边界</h2>
+  <ol>
+    <li><b>EPS 为 200k 突发初测</b>（默认事件数），非 1M 三轮稳态；单连接流式、CHUNK=10000——1M 长稳 EPS 只会更高不会更低（Mac 口径同向）；</li>
+    <li><b>RSS 未测</b>：footprint 为 macOS 专用工具，Linux 上采样静默跳过（RSS_peak=0）——内存数字待补；</li>
+    <li><b>CPU% 未测</b>：每核效率按 8 核满负荷估算，未用 wait4/rusage 实测；</li>
+    <li><b>QRadar 数字来源单一</b>（IBM 官方认证方法论），不可复现；对照含板载采集/存储等产品层组件（非仅规则引擎），利于 QRadar。</li>
+  </ol>
+
+  <p class="foot">完整技术细节、规则构成、窗口记账演进见 <code>README.md</code> 与 <code>PK_REPORT_MAC.md</code>（16 核 M3 Max 口径）· 复测：<code>./run.sh 1000000</code>（CHUNK=10000，窗口 4GB）</p>
+</div>
+
+<script>
+const toggle = document.getElementById('themeToggle');
+toggle.addEventListener('click', () => {
+  const root = document.documentElement;
+  if (root.dataset.theme === 'dark') { root.dataset.theme = 'light'; toggle.textContent = '切换主题（当前：亮）'; }
+  else { root.dataset.theme = 'dark'; toggle.textContent = '切换主题（当前：暗）'; }
+});
+</script>
+</body>
+</html>

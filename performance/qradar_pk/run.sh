@@ -75,13 +75,13 @@ echo "==> 0. 启动 daemon（TCP 源 + 指标，report_interval=1s） profile=$P
 DAEMON_PID=$!
 trap 'kill $DAEMON_PID $SAMPLER_PID 2>/dev/null || true' EXIT
 
-# RSS 采样循环：macOS footprint（ps 在沙箱环境被拒，bench.sh 同款回退），
-# 每 1s 采样 phys_footprint，峰值落盘。送达后由 PLATEAU 控制继续采样时长。
+# RSS 采样循环：优先 macOS footprint；Linux 用 /proc/<pid>/status VmRSS；兜底 ps -o rss=。
+# 每 1s 采样峰值落盘（字节）。送达后由 PLATEAU 控制继续采样时长。
 RSS_FILE=data/rss_peak_bytes.txt
 echo 0 > "$RSS_FILE"
-(
-  while kill -0 "$DAEMON_PID" 2>/dev/null; do
-    # footprint 输出形如: "wfusion [123]: 64-bit    Footprint: 4321 KB (…)"
+rss_bytes() {
+  # macOS footprint: "wfusion [123]: 64-bit    Footprint: 4321 KB (…)"
+  if command -v footprint >/dev/null 2>&1; then
     LINE=$(footprint "$DAEMON_PID" 2>/dev/null | grep -E 'Footprint:' | head -1)
     VAL=$(echo "$LINE" | sed -E 's/.*Footprint:[[:space:]]*([0-9.]+)[[:space:]]*([KMGT]?)B.*/\1 \2/')
     NUM="${VAL%% *}"; UNIT="${VAL##* }"
@@ -93,11 +93,23 @@ echo 0 > "$RSS_FILE"
         K) MULT=1024 ;;
         *) MULT=1 ;;
       esac
-      F=$("$PY" -c "print(int($NUM * $MULT))" 2>/dev/null || echo 0)
-      if [ -n "$F" ] && [ "$F" -gt 0 ]; then
-        CUR=$(cat "$RSS_FILE" 2>/dev/null || echo 0)
-        [ "$F" -gt "$CUR" ] && echo "$F" > "$RSS_FILE"
-      fi
+      "$PY" -c "print(int($NUM * $MULT))" 2>/dev/null || echo 0
+      return
+    fi
+  fi
+  # Linux: /proc/<pid>/status 的 VmRSS（kB → bytes）
+  if [ -r "/proc/$DAEMON_PID/status" ]; then
+    awk '/^VmRSS:/{print $2 * 1024}' "/proc/$DAEMON_PID/status" 2>/dev/null && return
+  fi
+  # 兜底: ps -o rss=（kB → bytes）
+  ps -o rss= -p "$DAEMON_PID" 2>/dev/null | awk '{print $1 * 1024}'
+}
+(
+  while kill -0 "$DAEMON_PID" 2>/dev/null; do
+    F=$(rss_bytes)
+    if [ -n "$F" ] && [ "$F" -gt 0 ]; then
+      CUR=$(cat "$RSS_FILE" 2>/dev/null || echo 0)
+      [ "$F" -gt "$CUR" ] && echo "$F" > "$RSS_FILE"
     fi
     sleep 1
   done
