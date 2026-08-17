@@ -14,12 +14,17 @@
 #   调优用环境变量（并行度默认取 conf/wfusion.toml）:
 #     PARSE_PARALLELISM / RULE_PARALLELISM / MAX_FRAME_BYTES / MAX_FRAME_ROWS
 #     MAX_INGEST_RATE（引擎端限速）/ RATE / SLICE_MS（stream）
-#     CONNECTIONS（cont 并发连接数，>1 时每条连接推完整帧文件，C-UCP 档位）
+#     CONNECTIONS（cont 并发连接数，默认 4——2026-08-17 实测 100m 下
+#       c4=5.91M ≈ c16=5.93M > 单连接 4.5M,4 即甜点;配合 SHARD_KEYS 走
+#       生成时分片 --shard-files,同 key 同连接(键闭包),有状态负载也安全）
+#     SHARD_KEYS（分片键，默认 "bid_events:auction"，见 wp-reactor
+#       docs/design/concurrency-scaling.md §3.1;置空 = 纯 copy 多连接）
 #     WARMUP=1（cont：先跑一轮预热不计结果——stash 重建后首跑系统性偏低，须剔除）
 # 示例:
 #   PARSE_PARALLELISM=6 RULE_PARALLELISM=6 MAX_FRAME_BYTES=204800 ./bench.sh q1 cont 100m
 #   CONNECTIONS=16 ./bench.sh q1 cont 30m
 #   WARMUP=1 ./bench.sh all cont 30m
+#   SHARD_KEYS="" CONNECTIONS=16 ./bench.sh q1 cont 100m   # 无状态天花板:纯 copy
 #
 # 输出每查询: EPS（引擎 append 数/墙钟，端到端口径）+ RSS 峰值 + 驱逐数
 #   + 口径上下文（并行度/帧大小/时间戳）+ 正确性计数器摘要
@@ -40,10 +45,11 @@ MAX_INGEST_RATE="${MAX_INGEST_RATE:-}"
 RATE="${RATE:-3000000}"
 SLICE_MS="${SLICE_MS:-1000}"
 WARMUP="${WARMUP:-0}"
-CONNECTIONS="${CONNECTIONS:-1}"
+CONNECTIONS="${CONNECTIONS:-4}"
 # 按流指定分区 key(键闭包):"bid_events:auction,auction_events:id,person_events:id"
 # 配合 CONNECTIONS>1,同 key 事件同连接,有状态规则也安全(实测 emitted 与单连接逐位一致)
-SHARD_KEYS="${SHARD_KEYS:-}"
+# 默认 bid_events:auction —— 2026-08-17 实测 100m 下 4 分片 ≈ 16 分片吞吐,16 不再拆。
+SHARD_KEYS="${SHARD_KEYS:-bid_events:auction}"
 
 # 二进制来源：优先本地 warp-fusion 的 target/release 构建（仅当存在时）；否则回退 PATH。
 # 不把路径固化为 ../../../warp-fusion —— 脚本可复制到任意目录运行，只要 wfusion/wfgen 在 PATH。

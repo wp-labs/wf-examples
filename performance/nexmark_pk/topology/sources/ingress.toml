@@ -7,7 +7,7 @@
 #     4.2→4.98→5.40→6.78→8.27→9.91M EPS（近线性未饱和）。
 #   - 连接数（C-UCP，上游供给）与 instances 独立:建议连接数 ≥ instances，
 #     实例循环在连接间 async 切换，instances=8 配 16 连接 ≈ instances=16 配 16 连接。
-#   - 生产建议:instances=16，上游并发连接 ≥16。
+#   - 生产建议:instances=16,上游并发连接 ≥16。
 connect = "tcp_src"
 enable = true
 key = "ingress"
@@ -16,4 +16,4 @@ addr = "127.0.0.1"
 port = "9800"
 framing = "len"
 data_format = "arrow_framed"
-instances = 16
+instances = 4
