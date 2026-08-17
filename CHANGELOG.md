@@ -2,7 +2,7 @@
 
 All notable changes to the wf-examples performance / verification scenarios will be documented in this file.
 
-## [Unreleased]
+## [2026-08-17]
 
 ### Changed
 
