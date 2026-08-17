@@ -1,6 +1,7 @@
 # qradar_pk — 450 规则高压吞吐 + QRadar EP 对标
 
-> 性能结论与诚实边界见 `PK_REPORT_MAC.md`（姊妹文档，2026-08-17）。
+> 性能结论与诚实边界见 `PK_REPORT_MAC.md`（16 核 M3 Max 口径）与 `PK_REPORT_LINUX.md`
+> （Linux 8 核对等口径），2026-08-17。
 
 生产环境的 CEP/SIEM 部署通常跑 50-500+ 条规则。本场景用 **450 条规则**验证高规则量下的
 引擎吞吐与内存扩展性，并作为 **wp-reactor#18**（object 字段内存驱逐）的回归门禁。
@@ -148,7 +149,6 @@ window 记账含 parsed-event 足迹（e14ed6d）等演进后复测。EPS 用 se
 | IBM QRadar Event Processor 1699（虚拟版） | 80k EPS（认证上限） | **451**（官方认证负载：定制规则+构建块） | **56 核（最低）~ 80 核（建议）+ 128GB 内存**（IBM 官方系统要求表 80k 档） | IBM「最大 EPS 认证方法论」公开口径，事件均值 382B，250k 唯一源 IP。**对标对象 = EP 1699 节点**（含板载 Event Collector 采集/规范化 + 2TB 内置事件存储，非仅规则引擎）；Console/Data Node/App Host 等产品层组件未计入 |
 | IBM QRadar 物理 appliance（xx05 M5/M6，如 1605） | 20k EPS（许可上限） | 同上 | M5：2× Xeon E5-2620 v4（8C 2.1GHz）= 16 核/32 线程 + 64GB DDR4；M6：2× Xeon Silver 4210 = 20 核/40 线程 | 双 750W 冗余电源的 1U 机架服务器（Lenovo x3550 M5 / SR630 M6 底座） |
 | QRadar 产品生态 | — | 预置 1,400+ 规则 | — | 全量规则集远大于认证负载 451 |
-| Flink CEP（OneAPM 实战，4 节点×180GB） | 228k EPS | 未公开 | 4 节点 × 180GB 内存服务器 | 告警规则场景，后因"太吃硬件"弃用 |
 | Flink CEP 单核裸模式匹配 | ~650k EPS | **1**（单一简单 pattern） | 单核 | 无实例状态、无规则集 |
 | **wfusion（本场景）** | **~150-162k EPS（450 规则，1M 稳态）** | **450**（均有状态） | **单进程 @ M3 Max 笔记本芯片，有效并行 6-9 核，RSS ~6.7GB** | 1000 sip 键基数 |
 
@@ -200,11 +200,12 @@ conn_events 上限提至 **4GB**、全局 `max_total_bytes` 提至 **8GB**
 
 ## 前提
 
-- `wfusion` / `wfgen` 在 PATH（或用 `WFUSION=/path WFGEN=/path`）；run.sh 默认探测
-  `../../../warp-fusion/target/release`。
+- `wfusion` / `wfgen` 在 PATH（或用 `WFUSION=/path WFGEN=/path` 覆盖）；run.sh 优先探测
+  本地 `../../../warp-fusion/target/$PROFILE`（`PROFILE=release|debug`），无本地构建则回退 PATH。
 - 二进制需含 wp-reactor#18 内容记账修复（228f441）；窗口记账含 parsed-event
   足迹（e14ed6d）后 conn_events 上限须 ≥1GB（见「窗口记账演进」节）。
 - 200000 事件建议 ≥4GB 内存、**1M 长跑建议 ≥8GB**（conn 窗口 4GB + 规则实例/输出）；
   `nc`、`python3`；端口 9800 空闲。
-- run.sh 自动以 `footprint` 采样 daemon RSS（macOS；沙箱下 `ps` 不可用），
-  送达后 `PLATEAU`（默认 8s）平台期采样，RSS 峰值在结果行输出。
+- run.sh 自动采样 daemon RSS：macOS `footprint` → Linux `/proc/<pid>/status` VmRSS → `ps`
+  兜底；送达后 `PLATEAU`（默认 8s）平台期采样，RSS 峰值在结果行输出（Linux 口径为 VmRSS，
+  与 macOS footprint phys_footprint 略异）。
