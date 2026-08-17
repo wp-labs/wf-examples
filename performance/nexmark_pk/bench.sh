@@ -38,9 +38,26 @@ RATE="${RATE:-3000000}"
 SLICE_MS="${SLICE_MS:-1000}"
 WARMUP="${WARMUP:-0}"
 
-REPO="${REPO:-$(cd ../../../warp-fusion && pwd)}"
-WFUSION="${WFUSION:-$REPO/target/release/wfusion}"
-WFGEN="${WFGEN:-$REPO/target/release/wfgen}"
+# 二进制来源：优先本地 warp-fusion 的 target/release 构建（仅当存在时）；否则回退 PATH。
+# 不把路径固化为 ../../../warp-fusion —— 脚本可复制到任意目录运行，只要 wfusion/wfgen 在 PATH。
+REPO="${REPO:-}"
+if [ -z "$REPO" ] && [ -d "../../../warp-fusion" ]; then
+  REPO="$(cd ../../../warp-fusion && pwd)"
+fi
+WFUSION="${WFUSION:-}"
+WFGEN="${WFGEN:-}"
+if [ -z "$WFUSION" ] && [ -n "$REPO" ] && [ -x "$REPO/target/release/wfusion" ]; then
+  WFUSION="$REPO/target/release/wfusion"
+fi
+if [ -z "$WFGEN" ] && [ -n "$REPO" ] && [ -x "$REPO/target/release/wfgen" ]; then
+  WFGEN="$REPO/target/release/wfgen"
+fi
+if [ -z "$WFUSION" ]; then WFUSION="$(command -v wfusion 2>/dev/null || true)"; fi
+if [ -z "$WFGEN" ]; then WFGEN="$(command -v wfgen 2>/dev/null || true)"; fi
+if [ -z "$WFUSION" ] || [ -z "$WFGEN" ]; then
+  echo "错误: 找不到 wfusion/wfgen 二进制（设置 REPO/WFUSION/WFGEN，或加入 PATH）" >&2
+  exit 1
+fi
 PY="${PYTHON:-python3}"
 PORT=9800
 
