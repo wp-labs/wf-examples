@@ -19,6 +19,12 @@ import json, random, sys
 count = int(sys.argv[1])
 rnd = random.Random(42)
 BASE_NS = 1767225600000000000  # 2026-01-01T00:00:00Z
+# 事件时间步长（ns/事件）：300µs → 5m 窗口装 ~1M 事件（窗口内容 ~2.5GB，与 1M 基线一致）。
+# 修复前 1µs/事件把 N 个事件压缩在 N µs 事件时间里（10M 仅 10s），远小于窗口 over_cap=5m，
+# 窗口无法按时间老化、内容随 N 线性涨（10M 需 ~25GB → 驱逐风暴 → 引擎失联卡死）。
+# 300µs/事件让事件时间跨度随 N 拉开到 ≥ 窗口时长，窗口按 5m 老化、内存有界
+# ∝ (窗口时长 × 速率) ≈ 1M 事件 ≈ 2.5GB，任意 N 都能在固定内存上跑。
+EVENT_TIME_STEP_NS = 300_000  # 300µs
 POOL = 1000
 DPORTS = [80, 443, 22, 3389, 53, 8080, 8443, 137]
 PROTOS = ["tcp", "udp", "icmp", "sctp"]
@@ -39,7 +45,7 @@ UAS = ["curl", "chrome", "python-requests", "safari"]
 STATUSES = [200, 301, 404, 500]
 FILES = ["/etc/app/config.yaml", "/var/log/auth.log", "/data/db.sqlite", "/home/user/secret.txt"]
 for i in range(count):
-    t = BASE_NS + i * 1000 + rnd.randint(0, 400)  # 1µs 基准 + 抖动
+    t = BASE_NS + i * EVENT_TIME_STEP_NS + rnd.randint(0, 400)  # 基准步长 + 抖动
     r = i % 20
     if r >= 19:  # 5% file_events
         ev = {
