@@ -63,10 +63,19 @@ METRICS=data/metrics.ndjson
 # 会严重低估 RSS——README 2026-08-11 口径为"送达后平台期峰值"）。
 PLATEAU="${PLATEAU:-8}"
 
+# send-arrow 注入（方向 B）：dump-frames 预编码 + 多连接 raw-copy，绕开 `wfgen send`
+# 的 JSONL 实时编码客户端墙。CONNECTIONS>1 是多连接注入；SHARD_KEYS 按流指定
+# match key 做键闭包分片（同 key 同连接，保证有状态规则正确）。
+CONNECTIONS="${CONNECTIONS:-4}"
+SHARD_KEYS="${SHARD_KEYS:-conn_events:sip,dns_events:sip,proxy_events:sip,firewall_events:sip,auth_events:source_ip}"
+# RATE_BYTES：send-arrow 限速注入（bytes/秒）。0=不限速(burst)；>0 匀速注入，测引擎在这个
+# 注入速率下能否跟上（持续能力拐点）。300k 事件 / 244B ≈ 目标 EPS×244。
+RATE_BYTES="${RATE_BYTES:-0}"
+
 mkdir -p data
 # 用截断（: >）而非 rm 清理旧产物：与安全删除钩子解耦（钩子对不存在文件
 # fail-closed、对重复路径 fail-closed、轮内删除数超阈值会整体拦截）。
-for f in "$METRICS" data/default.ndjson data/error.ndjson data/burst.jsonl data/wfusion.log data/daemon.log data/rss_peak_bytes.txt; do
+for f in "$METRICS" data/default.ndjson data/error.ndjson data/burst.jsonl data/burst_*.frames data/wfusion.log data/daemon.log data/rss_peak_bytes.txt; do
   mkdir -p "$(dirname "$f")"; : > "$f" 2>/dev/null || true
 done
 
@@ -124,8 +133,17 @@ for i in $(seq 1 50); do
 done
 [ "$READY" = 1 ] || { echo "ERROR: TCP 源未就绪"; tail -20 data/daemon.log; exit 1; }
 
-echo "==> 2. 生成 $N 事件（sip 复用池 1000，正常流量长尾）"
+echo "==> 2. 生成 $N 事件（源 IP 长尾 10100 + 泊松时间 12min，符合现实）"
 "$PY" scripts/gen_events.py "$N" > data/burst.jsonl
+
+# 预编码成 Arrow frames（绕开 `wfgen send` JSONL 实时编码客户端墙）。
+# 必须在 step 0 的 daemon 运行期间 dump，且 send-arrow 回放到同一 daemon（schema 一致）。
+FRAMES=data/burst_${N}.frames
+echo "==> 2b. 预编码帧（dump-frames → ${FRAMES}）"
+"$WFGEN" dump-frames --scenario scenarios/throughput.wfg --input data/burst.jsonl \
+  --addr 127.0.0.1:$PORT --ws models/schemas/network.wfs --output "$FRAMES" \
+  --chunk 10000 --max-frame-bytes 8388608 --max-frame-rows 100000 > /dev/null 2>&1
+rm -f data/burst.jsonl
 
 # 送达计数（metrics 中 rows_total 为每区间 delta，累加得总送达）
 received() {
@@ -144,26 +162,70 @@ print(s)
 EOF
 }
 
-# 单连接流式：一个 wfgen 进程（wfgen send --chunk 分批 --rate-ms 节拍），
-# EPS 按 send 墙钟计时（避免 metrics 1s 上报拖慢 elapsed）。
-# CHUNK 越大越接近全速；RATE_MS>0 模拟真实持续入流速率。
-CHUNK="${CHUNK:-10000}"
-RATE_MS="${RATE_MS:-0}"
-echo "==> 3. 单连接流式发送（--chunk ${CHUNK} --rate-ms ${RATE_MS}）"
+# 引擎消化信号：统计 metrics.ndjson 里 emitted_total 各规则 label 的累计值之和，
+# 连续若干秒不再增长则判定引擎处理完（qradar 无 append_total，emitted 累计是
+# 可靠完成信号；matches 是每秒增量不可用）。
+sum_emitted() {
+  "$PY" - "$METRICS" <<'EOF'
+import json, os, sys
+path = sys.argv[1]
+try:
+    size = os.path.getsize(path)
+    # 只读文件尾部（最新快照区），避免全扫累积 NDJSON。
+    tail = min(size, 2 * 1024 * 1024)
+    with open(path, "rb") as f:
+        f.seek(size - tail if tail < size else 0)
+        data = f.read().decode(errors="replace")
+    label = {}
+    for line in data.splitlines():
+        try: o = json.loads(line)
+        except Exception: continue
+        if o.get("name") != "emitted_total":
+            continue
+        try: v = int(o.get("value", 0))
+        except (TypeError, ValueError): continue
+        label[o.get("label", "?")] = v
+    print(sum(label.values()))
+except FileNotFoundError:
+    print(0)
+EOF
+}
+
+# send-arrow 多连接注入（raw-copy，瞬时推完），再等引擎消化（emitted 累计停滞）。
+if [ "$CONNECTIONS" -gt 1 ]; then
+  echo "==> 3. send-arrow ${CONNECTIONS} 连接注入（SHARD_KEYS=${SHARD_KEYS%%:*},... raw-copy）"
+else
+  echo "==> 3. send-arrow 单连接注入（raw-copy）"
+fi
 START=$($PY -c 'import time; print(time.time())')
-"$WFGEN" send --scenario scenarios/throughput.wfg --input data/burst.jsonl \
-  --addr 127.0.0.1:$PORT --ws models/schemas/network.wfs \
-  --chunk "$CHUNK" --rate-ms "$RATE_MS" > /dev/null 2>&1
-END=$($PY -c 'import time; print(time.time())')
-ELAPSED=$($PY -c "print($END - $START)")
-for i in $(seq 1 150); do
-  if [ "$(received)" -ge "$N" ]; then break; fi
-  sleep 0.2
+# rate 参数：RATE_BYTES>0 时加 --rate-bytes（限速匀速注入）；否则不限速。
+RATE_ARG=""
+if [ "$RATE_BYTES" -gt 0 ]; then RATE_ARG="--rate-bytes $RATE_BYTES"; fi
+if [ "$CONNECTIONS" -gt 1 ] && [ -n "$SHARD_KEYS" ]; then
+  "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT \
+    --connections "$CONNECTIONS" --shard-keys "$SHARD_KEYS" $RATE_ARG > /dev/null 2>&1 \
+    || "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT --connections "$CONNECTIONS" $RATE_ARG > /dev/null 2>&1
+elif [ "$CONNECTIONS" -gt 1 ]; then
+  "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT --connections "$CONNECTIONS" $RATE_ARG > /dev/null 2>&1
+else
+  "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT $RATE_ARG > /dev/null 2>&1
+fi
+SEND_DONE=$($PY -c 'import time; print(time.time())')
+# 等引擎消化：emitted 累计连续 4 秒停滞（snapshot 1s → ~4s 无新增长）判断处理完。
+PE=0; STALL=0; END=""
+for i in $(seq 1 600); do
+  E=$(sum_emitted)
+  if [ "$E" = "$PE" ]; then STALL=$((STALL+1)); else STALL=0; PE=$E; fi
+  if [ "$STALL" -ge 4 ]; then END=$($PY -c 'import time; print(time.time())'); break; fi
+  sleep 0.3
 done
+[ -n "$END" ] || END=$($PY -c 'import time; print(time.time())')
+ELAPSED=$($PY -c "print($END - $START)")
 D=$(received)
+E=$(sum_emitted)
 EPS=$($PY -c "print(int($N / $ELAPSED))" 2>/dev/null || echo 0)
-echo "    接收 $D / $N 事件，send 墙钟 ${ELAPSED}s"
-echo "    EPS = $EPS events/sec (单连接流式)"
+echo "    接收 $D / $N 事件，send 墙钟 $($PY -c "print(f'{$SEND_DONE-$START:.1f}')")s，引擎消化追平 ${ELAPSED}s (emitted累计=$E, 限速=${RATE_BYTES}B/s)"
+echo "    EPS = $EPS events/sec (send-arrow ${CONNECTIONS}连接 / 引擎消化口径)"
 
 # 送达后平台期：继续运行 PLATEAU 秒采 RSS 峰值 + 等告警落盘（实例存活至窗口关闭）
 echo "==> 4. 送达后平台期采样 ${PLATEAU}s（RSS 峰值 + 告警落盘）"
