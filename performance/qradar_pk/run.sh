@@ -68,8 +68,9 @@ PLATEAU="${PLATEAU:-8}"
 # match key 做键闭包分片（同 key 同连接，保证有状态规则正确）。
 CONNECTIONS="${CONNECTIONS:-4}"
 SHARD_KEYS="${SHARD_KEYS:-conn_events:sip,dns_events:sip,proxy_events:sip,firewall_events:sip,auth_events:source_ip}"
-# RATE_BYTES：send-arrow 限速注入（bytes/秒）。0=不限速(burst)；>0 匀速注入，测引擎在这个
-# 注入速率下能否跟上（持续能力拐点）。300k 事件 / 244B ≈ 目标 EPS×244。
+# RATE_BYTES：send-arrow 持续注入速率（bytes/秒），默认 0=不限速（nexmark 用）。
+# 对 qradar 测速务必设 >0（持续注入，禁用 burst——burst 会窗口积压失真，见 TEST_PLAN §3.4）。
+# 注入速率 ≈ 目标EPS × 每事件字节(~244B)。脚本输出「注入墙钟 vs 全墙钟」判断引擎是否跟上。
 RATE_BYTES="${RATE_BYTES:-0}"
 
 mkdir -p data
@@ -224,7 +225,7 @@ ELAPSED=$($PY -c "print($END - $START)")
 D=$(received)
 E=$(sum_emitted)
 EPS=$($PY -c "print(int($N / $ELAPSED))" 2>/dev/null || echo 0)
-echo "    接收 $D / $N 事件，send 墙钟 $($PY -c "print(f'{$SEND_DONE-$START:.1f}')")s，引擎消化追平 ${ELAPSED}s (emitted累计=$E, 限速=${RATE_BYTES}B/s)"
+echo "    接收 $D / $N 事件：注入墙钟 $($PY -c "print(f'{$SEND_DONE-$START:.1f}')")s，全墙钟(引擎消化完)${ELAPSED}s (emitted累计=$E, 限速=${RATE_BYTES}B/s)"
 echo "    EPS = $EPS events/sec (send-arrow ${CONNECTIONS}连接 / 引擎消化口径)"
 
 # 送达后平台期：继续运行 PLATEAU 秒采 RSS 峰值 + 等告警落盘（实例存活至窗口关闭）
