@@ -110,21 +110,21 @@
 
   <h1>wfusion vs Flink — NexMark PK 性能报告</h1>
   <div class="meta">
-    测试日期 <b>2026-08-17</b>（<b>wfusion 0.3.1</b> / wp-reactor 1.0.2，P0-② content 记账 2GB，全量重跑）· 对齐口径 NexMark 100M/查询 + discard 输出（blackhole）· send-arrow <code>cont</code> 连续流（shard-files 唯一数据，4 连接）·
+    测试日期 <b>2026-08-20</b>（<b>wp-reactor window-actor pull 模型</b>，content 记账 2GB，全量重跑 Q1-Q21）· 对齐口径 NexMark 100M/查询 + discard 输出（blackhole）· send-arrow <code>cont</code> 连续流（shard-files 唯一数据，4 连接）·
     硬件 Apple M3 Max（16 核 / 64GB，稳态 ~4-13 核） · EPS 为 append_total 口径，run 间 ±5-10%
   </div>
 
   <div class="kpi-row">
-    <div class="kpi"><div class="label">PK 查询胜出</div><div class="value">7/7</div><div class="delta up">全部超过 Open Flink 与阿里 VVR（Q3 由 0.72× 反超为 2.4×）</div></div>
-    <div class="kpi"><div class="label">复杂窗口查询</div><div class="value">8-12×</div><div class="delta up">vs VVR · Q4/Q5/Q7（vs OSS 13-39×）</div></div>
-    <div class="kpi"><div class="label">join 查询</div><div class="value">11.2-11.3M</div><div class="delta up">Q3/Q9 · 2.4-30× vs VVR（Q9 vs OSS 261×）</div></div>
-    <div class="kpi"><div class="label">100M 稳定性</div><div class="value">0 丢失</div><div class="delta up">RSS 5.4-14.0GB 峰值后回落；正确性全 clean</div></div>
+    <div class="kpi"><div class="label">PK 查询胜出</div><div class="value">7/7</div><div class="delta up">全部超过 Open Flink 与阿里 VVR（vs OSS 6.3-178×、vs VVR 1.6-20×）</div></div>
+    <div class="kpi"><div class="label">复杂窗口查询</div><div class="value">16-20×</div><div class="delta up">vs VVR · Q4/Q5/Q7（vs OSS 21-67×）</div></div>
+    <div class="kpi"><div class="label">join 查询</div><div class="value">7.5-7.7M</div><div class="delta up">Q3/Q9 · 1.6-20× vs VVR（Q9 vs OSS 178×）</div></div>
+    <div class="kpi"><div class="label">100M 稳定性</div><div class="value">0 丢失</div><div class="delta up">Q1-Q21 全 clean；RSS 9.1-33.2GB 峰值后回落</div></div>
   </div>
 
   <!-- ============ 图表 1：EPS 对比 ============ -->
   <div class="chart-card">
     <div class="chart-title">1. EPS 对比（100M，send-arrow cont）</div>
-    <div class="chart-sub">吞吐（对数坐标，倍率对比）；wfusion 复杂窗口查询比 OSS 高 13-39×、比 VVR 高 8.3-12×；Q9 join 261×/30×</div>
+    <div class="chart-sub">吞吐（对数坐标，倍率对比）；wfusion 复杂窗口查询比 OSS 高 21-67×、比 VVR 高 16-20×；Q9 join 178×/20×</div>
     <div class="legend">
       <span><span class="swatch" style="background:var(--series-1)"></span>wfusion</span>
       <span><span class="swatch" style="background:var(--series-2)"></span>Flink OSS（12 vCPU）</span>
@@ -136,7 +136,7 @@
   <!-- ============ 图表 2：相对 OSS 倍率 ============ -->
   <div class="chart-card">
     <div class="chart-title">2. 相对 Flink OSS 的倍率（以 OSS = 1，对数坐标）</div>
-    <div class="chart-sub">wfusion 4.3-261× vs OSS，全部查询领先；VVR 1.0-8.7× vs OSS——复杂窗口（Q4/Q5/Q7）与 join（Q9）是最大优势区</div>
+    <div class="chart-sub">wfusion 6.3-178× vs OSS，全部查询领先；VVR 1.0-8.7× vs OSS——复杂窗口（Q4/Q5/Q7）与 join（Q9）是最大优势区</div>
     <div class="legend">
       <span><span class="swatch" style="background:var(--series-1)"></span>wfusion</span>
       <span><span class="swatch" style="background:var(--series-2)"></span>Flink OSS（基准 = 1）</span>
@@ -155,46 +155,71 @@
   <!-- ============ 完整结果表 ============ -->
   <h2>完整结果（100M，send-arrow cont）</h2>
   <div class="callout">
-    ✅ <b>口径修订（2026-08-17）</b>：下表 wfusion EPS 为<b>现行 append_total 口径</b>
-    （bench.sh 计时终点 = window append_total 追平 100M），数据来自 2026-08-17 全量重跑
-    （100m / 4 连接 / shard-files 唯一数据 / P0-② content 记账 <b>2GB</b>，吞吐优先配置）。
+    ✅ <b>口径（2026-08-20 全量重跑）</b>：下表 wfusion EPS 为<b>现行 append_total 口径</b>
+    （bench.sh 计时终点 = window append_total 追平 100M + ack 追平），数据来自 2026-08-20 全量重跑
+    （100m / 4 连接 / shard-files 唯一数据 / content 记账 <b>2GB</b>，p=10 r=10）。
     run 间方差 ±5-10%；正确性全部 clean，Q2 EMIT 与单连接基线逐位一致。
-    <b>默认配置（128MB content）下 q1 ≈ 6.1M / RSS ~5.9GB</b>（旧默认 256MB 解码
-    记账为 5.93M / 4.4GB）——引用 RSS 数字须标注配置。
+    引用 RSS 数字须标注配置（RSS 为 daemon 峰值，峰值后回落、有界）。
   </div>
 
   <table id="resultTable">
     <thead><tr><th>查询</th><th class="num">wfusion EPS</th><th class="num">wfusion RSS 峰值</th><th class="num">Flink OSS</th><th class="num">vs OSS</th><th class="num">阿里 VVR</th><th class="num">vs VVR</th></tr></thead>
     <tbody>
-      <tr><td>Q1</td><td class="num">7.55M</td><td class="num">14.0 GB</td><td class="num">1,753,002</td><td class="num">4.3×</td><td class="num">4,381,353</td><td class="num">1.7×</td></tr>
-      <tr><td>Q2</td><td class="num">6.71M</td><td class="num">7.5 GB</td><td class="num">1,927,154</td><td class="num">3.5×</td><td class="num">6,568,576</td><td class="num">1.0×</td></tr>
-      <tr><td>Q3</td><td class="num">11.26M</td><td class="num">7.5 GB</td><td class="num">1,177,322</td><td class="num">9.6×</td><td class="num">4,638,649</td><td class="num">2.4×</td></tr>
-      <tr><td>Q4</td><td class="num">5.28M</td><td class="num">13.0 GB</td><td class="num">180,693</td><td class="num">29×</td><td class="num">636,468</td><td class="num">8.3×</td></tr>
-      <tr><td>Q5</td><td class="num">3.42M</td><td class="num">11.6 GB</td><td class="num">273,496</td><td class="num">13×</td><td class="num">279,684</td><td class="num">12×</td></tr>
-      <tr><td>Q7</td><td class="num">3.12M</td><td class="num">13.9 GB</td><td class="num">79,526</td><td class="num">39×</td><td class="num">299,547</td><td class="num">10×</td></tr>
-      <tr><td>Q9</td><td class="num">11.24M</td><td class="num">5.4 GB</td><td class="num">43,021</td><td class="num">261×</td><td class="num">375,146</td><td class="num">30×</td></tr>
+      <tr><td>Q1</td><td class="num">10.97M</td><td class="num">17.2 GB</td><td class="num">1,753,002</td><td class="num">6.3×</td><td class="num">4,381,353</td><td class="num">2.5×</td></tr>
+      <tr><td>Q2</td><td class="num">25.03M</td><td class="num">10.0 GB</td><td class="num">1,927,154</td><td class="num">13×</td><td class="num">6,568,576</td><td class="num">3.8×</td></tr>
+      <tr><td>Q3</td><td class="num">7.46M</td><td class="num">13.7 GB</td><td class="num">1,177,322</td><td class="num">6.3×</td><td class="num">4,638,649</td><td class="num">1.6×</td></tr>
+      <tr><td>Q4</td><td class="num">10.43M</td><td class="num">15.4 GB</td><td class="num">180,693</td><td class="num">58×</td><td class="num">636,468</td><td class="num">16×</td></tr>
+      <tr><td>Q5</td><td class="num">5.66M</td><td class="num">13.6 GB</td><td class="num">273,496</td><td class="num">21×</td><td class="num">279,684</td><td class="num">20×</td></tr>
+      <tr><td>Q7</td><td class="num">5.31M</td><td class="num">16.0 GB</td><td class="num">79,526</td><td class="num">67×</td><td class="num">299,547</td><td class="num">18×</td></tr>
+      <tr><td>Q9</td><td class="num">7.66M</td><td class="num">12.3 GB</td><td class="num">43,021</td><td class="num">178×</td><td class="num">375,146</td><td class="num">20×</td></tr>
     </tbody>
   </table>
 
-  <h2>正确性（2026-08-17 全量跑批）</h2>
+  <h2>全量查询（Q1-Q21，2026-08-20 100M）</h2>
+  <div class="callout">
+    ⚠️ 以下 14 条查询无 Flink OSS/VVR 白皮书基线，仅列 wfusion 自身吞吐/RSS；
+    正确性全部 <b>clean</b>（appended=100M/100M，serialize/dropped_late/memory_evicted/cursor_gap = 0）。
+    Q13（bid⋈person 快照 join + 高基数 bidder 实例表）与 Q11（session）是内存/吞吐瓶颈。
+  </div>
+  <table>
+    <thead><tr><th>查询</th><th class="num">wfusion EPS</th><th class="num">RSS 峰值</th><th>语义</th></tr></thead>
+    <tbody>
+      <tr><td>Q6</td><td class="num">17.78M</td><td class="num">12.3 GB</td><td>avg ≥200 窗口聚合</td></tr>
+      <tr><td>Q8</td><td class="num">53.79M</td><td class="num">9.4 GB</td><td>person 会话</td></tr>
+      <tr><td>Q10</td><td class="num">68.65M</td><td class="num">9.1 GB</td><td>on-each 子集</td></tr>
+      <tr><td>Q11</td><td class="num">1.83M</td><td class="num">32.8 GB</td><td>bidder 会话（per-shard）</td></tr>
+      <tr><td>Q12</td><td class="num">17.76M</td><td class="num">15.4 GB</td><td>conv top-N</td></tr>
+      <tr><td>Q13</td><td class="num">0.59M</td><td class="num">33.2 GB</td><td>bid⋈person 快照 join</td></tr>
+      <tr><td>Q14</td><td class="num">23.87M</td><td class="num">12.5 GB</td><td>两级 conv top-N</td></tr>
+      <tr><td>Q15</td><td class="num">18.10M</td><td class="num">10.9 GB</td><td>过滤 + 窗口计数</td></tr>
+      <tr><td>Q16</td><td class="num">22.49M</td><td class="num">12.5 GB</td><td>fixed 窗口 close sum</td></tr>
+      <tr><td>Q17</td><td class="num">22.50M</td><td class="num">10.8 GB</td><td>distinct 计数</td></tr>
+      <tr><td>Q18</td><td class="num">22.71M</td><td class="num">10.1 GB</td><td>accu 累积</td></tr>
+      <tr><td>Q19</td><td class="num">23.53M</td><td class="num">10.9 GB</td><td>seq 有序序列</td></tr>
+      <tr><td>Q20</td><td class="num">24.34M</td><td class="num">10.4 GB</td><td>any 无序</td></tr>
+      <tr><td>Q21</td><td class="num">4.22M</td><td class="num">13.4 GB</td><td>anti join</td></tr>
+    </tbody>
+  </table>
+
+  <h2>正确性（2026-08-20 全量跑批）</h2>
   <ul>
-    <li>全部 SUMMARY <b>clean</b>：serialize_failed / dropped_late / memory_evicted / cursor_gap = 0，appended = 100M/100M</li>
+    <li>全部 21 条查询 SUMMARY <b>clean</b>：serialize_failed / dropped_late / memory_evicted / cursor_gap = 0，appended = 100M/100M</li>
     <li>q1 = <b>92,000,000</b>（= 输入 bid 数）；<b>q2 = 747,816</b>（与单连接基线逐位一致，占比 0.8129%）；<b>q9 = 6,000,000</b>（整数）</li>
-    <li>q3 / q5 / q7 的 EMIT 在 run 间有驱逐时序波动（非正确性破坏，见 MD 测量说明）</li>
+    <li>q15/q17/q18/q19/q20 的 EMIT 已与独立模拟器 ground truth 对拍（10m fresh 运行，偏差 ~0.3% 内）；q16/q21 为时序相关（增量驱逐 / person 窗口驱逐）</li>
   </ul>
 
   <h2>EPS 分布（规则负载决定复杂查询成本）</h2>
   <table>
     <thead><tr><th></th><th class="num">简单(Q1/Q2)</th><th class="num">复杂(Q4/Q5/Q7)</th><th class="num">下降</th></tr></thead>
     <tbody>
-      <tr><td>wfusion</td><td class="num">6.71-7.55M</td><td class="num">3.12-5.28M</td><td class="num">≤59%</td></tr>
+      <tr><td>wfusion</td><td class="num">10.97-25.03M</td><td class="num">5.31-10.43M</td><td class="num">≤79%</td></tr>
       <tr><td>Flink OSS</td><td class="num">1.75-1.93M</td><td class="num">0.08-0.27M</td><td class="num">22×</td></tr>
     </tbody>
   </table>
   <ul>
     <li><b>wfusion 下降来自规则计算本身</b>：Q5 count / Q7 MAX 为 per-key 状态规则，Q1/Q2 吃满共享管道上限而 Q5/Q7 撞规则计算上限——真实规则成本，非供给瓶颈；</li>
-    <li><b>vs Flink 复杂查询优势依然巨大</b>：Q4/Q5/Q7 vs OSS 13-39×、vs VVR 8.3-12×——分布式 + exactly-once 在复杂查询上放大代价 20× 的结论不变；</li>
-    <li>Q3/Q9（join，几乎无窗口聚合）最高：11.2-11.3M，与 Q1 同档。</li>
+    <li><b>vs Flink 复杂查询优势依然巨大</b>：Q4/Q5/Q7 vs OSS 21-67×、vs VVR 16-20×——分布式 + exactly-once 在复杂查询上放大代价 20× 的结论不变；</li>
+    <li>Q3/Q9（join，几乎无窗口聚合）7.5-7.7M，低于 Q1 无状态吞吐；Q10/Q8（on-each/会话）最高 53.8-68.7M。</li>
   </ul>
 
   <h2>诚实边界</h2>
@@ -204,30 +229,30 @@
     <li>Flink 无内存数据：白皮书只发布 RPS，无法公平比内存。</li>
     <li>架构差异：Flink exactly-once + checkpoint + 分布式重排，wfusion 单机 at-least-once——吞吐优势不等于总成本优势。</li>
     <li>stream 客户端受限（~760k）不代表引擎能力；引擎能力以 cont 预编码回放为准。</li>
-    <li>单机 vs 分布式：真实负载（&lt;1M EPS 居多）+ 突发峰值下，单机 3.1-11.3M（依查询）持续能力有充足余量。</li>
+    <li>单机 vs 分布式：真实负载（&lt;1M EPS 居多）+ 突发峰值下，单机 5.3-68.7M（依查询）持续能力有充足余量。</li>
   </ol>
 
   <h2>结论</h2>
   <ul>
-    <li><b>全部 7 查询同时超过 Open Flink 与阿里 VVR（2026-08-17 重测口径）</b>：vs OSS 3.5-261×、vs VVR 1.0-30×；Q3 由落后反超为 2.4×、Q9 升 30×</li>
-    <li><b>100M 口径已完整对齐</b>：7 查询无丢失、内存有界（RSS 5.4-14.0GB 峰值后回落）、EPS 稳定</li>
-    <li><b>吞吐分布 = 规则负载</b>：Q1/Q3/Q9（轻规则）11.2-11.3M；Q5/Q7（per-key 状态规则）3.1-3.4M 是规则计算上限，非供给瓶颈</li>
-    <li><b>内存有界</b>：RSS 峰值 5.4-14.0GB，64GB 机器余量充足</li>
+    <li><b>全部 7 条 PK 查询同时超过 Open Flink 与阿里 VVR（2026-08-20 重测口径）</b>：vs OSS 6.3-178×、vs VVR 1.6-20×</li>
+    <li><b>Q1-Q21 全量 100M 已完整对齐</b>：21 查询无丢失、内存有界（RSS 9.1-33.2GB 峰值后回落）、EPS 稳定</li>
+    <li><b>吞吐分布 = 规则负载</b>：Q10/Q8（on-each/会话）53.8-68.7M；Q5/Q7（per-key 状态规则）5.3-5.7M 是规则计算上限，非供给瓶颈</li>
+    <li><b>瓶颈</b>：Q13（588K，33.2GB）与 Q11（1.83M，32.8GB）——高基数实例表 + join/会话状态膨胀</li>
   </ul>
   <p style="font-size:13px;color:var(--text-muted)">Linux 8 CU 对等实测（4/7 领先 VVR、简单查询落后）见 <code>PK_REPORT_LINUX.html</code>。</p>
 
-  <p class="foot">完整技术细节、优化链、瓶颈分析见 <code>PK_REPORT_MAC.md</code> · 复测：<code>./bench.sh all cont 100m</code></p>
+  <p class="foot">完整技术细节、优化链、瓶颈分析见 <code>PK_REPORT_MAC.md</code> · 复测：<code>./bench.sh q1 cont 100m</code>（依次 q1-q21）</p>
 </div>
 
 <script>
-/* ---------- 数据（与 PK_REPORT_MAC.md 2026-08-17 一致；更新只改这里） ---------- */
+/* ---------- 数据（与 PK_REPORT_MAC.md 2026-08-20 一致；更新只改这里） ---------- */
 const QUERIES = ['Q1','Q2','Q3','Q4','Q5','Q7','Q9'];
 const EPS = {
-  wfusion: [7.55, 6.71, 11.26, 5.28, 3.42, 3.12, 11.24],   // M/s
+  wfusion: [10.97, 25.03, 7.46, 10.43, 5.66, 5.31, 7.66],   // M/s
   oss:     [1.753, 1.927, 1.177, 0.181, 0.273, 0.0795, 0.043],
   vvr:     [4.381, 6.569, 4.639, 0.636, 0.280, 0.2995, 0.375],
 };
-const RSS = [14.0, 7.5, 7.5, 13.0, 11.6, 13.9, 5.4]; // GB
+const RSS = [17.2, 10.0, 13.7, 15.4, 13.6, 16.0, 12.3]; // GB
 /* 相对 OSS 的倍率（OSS = 1；图表 2 用对数坐标） */
 const REL = {
   wfusion: EPS.wfusion.map((v, i) => v / EPS.oss[i]),

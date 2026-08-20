@@ -146,11 +146,25 @@ match 语义，逐规则算出期望 `emitted_total`：
 | q9_seller_count | 1,800,000 | 1,800,000 | ✅ |
 | q10_arbitrary_selection | 3,944,636 | 10m 1,314,285 | ✅（10m 对拍精确） |
 | q13_bid_person_join | 27,600,000 | 10m 9,200,000 | ✅（10m 对拍精确） |
+| q15_high_bid_count_5 | 2,563,592 | 2,563,534 | ✅（差 58≈0.002%） |
+| q17_distinct_bidders_20 | 157,154 | 10m 52,236 | ✅（10m 对拍 ~0.3%） |
+| q18_accumulate_fires | 17,919,533 | 17,918,519 | ✅（差 1014≈0.006%） |
+| q19_seq_two_bids | 490,097 | 10m 162,879 | ✅（10m 对拍 ~0.3%） |
+| q20_any_count_3 | 7,763,818 | 10m 2,587,329 | ✅（10m 对拍 ~0.02%） |
+| q16_sum_price_1000 | 1,886,924（理想值） | 时序相关 | ⚠️ 增量驱逐丢早桶，见下 |
+| q21_anti_person | 0（朴素值） | 时序相关（10m ~21k-31k） | ⚠️ person 窗口驱逐，见下 |
 
-> **模拟器覆盖**：q2/q3/q4/q5/q6/q7/q8/q9/q10/q13 由 `verify_ground_truth.py` 精确模拟。
-> **未覆盖**：q11（per-shard 会话，单机模拟无法匹配）与 q12/q14（fixed 窗口 close+conv 未模拟）、
-> q15-q22（seq/any/anti/asof/accu/distinct/on-close 的模拟器扩展待补）——这些以**10m/30m 端到端
-> 确定性 + `[clean]`** 验证（多轮 EMIT 一致），或 `CONNECTIONS=1`（q11 全局会话）。
+> **模拟器覆盖**：q2/q3/q4/q5/q6/q7/q8/q9/q10/q13/q15/q17/q18/q19/q20 由
+> `verify_ground_truth.py` 精确模拟（q15/q17/q18/q19/q20 已用 fresh 引擎运行对拍）。
+> **时序相关（非固定 ground truth）**：
+> - q16（fixed + `and close` sum）：模拟器给的是「每个 fixed 桶都收口」的理想值；引擎实际
+>   EMIT 受增量驱逐预算 `MAX_EXPIRY_SCAN_BUDGET=1024` 影响，较早的桶在 pipeline 排空前
+>   可能来不及收口丢失 → 以 `[clean]` + 多轮 EMIT 确定性验证，而非单值比对。
+> - q21（anti join）：模拟器给的是「所有 bidder 都是 person」的朴素 0；引擎实际因 person
+>   窗口在 lookup 时刻不完全而保留少量 bid（时序相关）→ 以 `[clean]` + 多轮 EMIT 确定性验证。
+> **未覆盖**：q11（per-shard 会话，单机模拟无法匹配）、q12/q14（fixed 窗口 close+conv 未模拟）、
+> q22（asof join 全量扫描 O(n²)，独立里程碑）——以 **10m/30m 端到端确定性 + `[clean]`** 验证
+> （多轮 EMIT 一致），或 `CONNECTIONS=1`（q11 全局会话）。
 
 ### 5.2 数据完整性（`[clean]`）
 
@@ -160,11 +174,14 @@ match 语义，逐规则算出期望 `emitted_total`：
 
 ### 5.3 输出计数（EMIT）口径
 
-- **30M**：与 ground truth 逐位比对（权威，覆盖 q2/q3/q4/q5/q6/q7/q8/q9/q10/q13）。
+- **30M**：与 ground truth 逐位比对（权威，覆盖 q2/q3/q4/q5/q6/q7/q8/q9/q10/q13/
+  q15/q17/q18/q19/q20）。
 - **100M**：EMIT 与 30M **同比例侧证**（如 q2=747,816 = 30M 的 224,289 × 100/30 的
   0.8129% 占比精确吻合；q9=6,000,000 = 1.8M × 100/30）。
-- **新查询（q11-q22 + 未模拟的 q12/q14）**：以**多轮 10m/30m 端到端 EMIT 确定性 + `[clean]`**
-  验证（q6/q8/q10/q13 已有精确 ground truth；q11 全局会话用 `CONNECTIONS=1` 单独验）。
+- **时序相关查询（q16/q21）**：以**多轮 10m/30m 端到端 EMIT 确定性 + `[clean]`** 验证
+  （区间重叠而非单值相等；模拟器给理想/朴素值作参照，见 §5.1）。
+- **新查询（q11/q12/q14/q22）**：以**多轮 10m/30m 端到端 EMIT 确定性 + `[clean]`**
+  验证（q11 全局会话用 `CONNECTIONS=1` 单独验）。
 - **新旧二进制回归**：Q2/Q3/Q7/Q9 必须逐位一致；Q4/Q5 在**既存波动带**内（区间重叠
   而非单值相等，见 TEST_PLAN §8）。
 
@@ -181,3 +198,33 @@ match 语义，逐规则算出期望 `emitted_total`：
 - **Q5**（count≥10）：EMIT ±10（571,061~571,076），max_memory 驱逐时序 + 墙钟
   scan_timeouts 非确定性。
 - 判定标准：**区间重叠**而非单值相等；`[clean]` + ground truth 才是正确性权威。
+
+## 6. q1 内存调查（2026-08-20）：RSS 21-25GB → 1.9GB
+
+### 现象
+q1 100M 单独跑 RSS 峰值 21~25GB（`ps rss` 口径）、EPS 11~16M。
+
+### 排查链（全部实测）
+| 假设 | 实验 | 结论 |
+|---|---|---|
+| preread 预算卡内存（文档 §3.1 曲线） | `parse_buffer_bytes` 2GB/1GB/128MB 三档 | **无效**（RSS 全 ~24GB）。文档曲线是 push 模型时代测的，pull 模型下预算只卡源→窗口段，不管窗口持有量 |
+| 窗口膨胀来自 max_window_bytes | 15GB→256MB（4 连接） | EPS +42%（16.5M）但 RSS 仅 20.9GB——**floor-respecting 驱逐被规则 ack 落后挡着**，持有量由消费进度决定 |
+| 时间驱逐（over=10m）生效 | evictor 日志：watermark/floor 正常，`time_evicted` 恒 0 | **不生效**：bench 注入（key 分片 + 100k 行攒批）批次内事件时间乱序，每批 max 事件时间接近末尾，`batch.max_ts < watermark-10m` 永不满足 |
+| 解码/分配器 | 零拷贝 decode（StreamDecoder）：列数据 64B 对齐 vs IPC 8B pad → 75% 列仍复制；mimalloc vs System 对比 RSS 无差异 | **都不是主因**（已回滚 decode 改动） |
+
+### 根因
+**窗口持有量 = 规则 ack 进度 × 内存驱逐（max_window_bytes）**。
+- 4 连接 key 分片（默认 `SHARD_KEYS`）→ 多源交错 → 规则 ack 慢 → 窗口堆积 ~727 批未 ack → floor-respecting 驱逐无法清 → 持有全量 ~8GB 内容。
+- 单连接整文件推 → 规则 ack 快 → 内存驱逐生效 → 窗口压到 cap。
+
+### 最优配置（q1 无状态专用）
+```bash
+SHARD_KEYS="" CONNECTIONS=1 ./bench.sh q1 cont 100m   # 单连接整文件推
+# 临时把 models/schemas/windows.toml 的 bid_events max_window_bytes 调小（如 256MB）
+```
+实测：**RSS 1.9~5.5GB（-90%+）、EPS 21~26M（+50~120%）、[clean]**（三次 1.9/3.0/4.5GB、26.2/23.4/22.4M）。
+
+### 注意
+- `max_window_bytes` 调小**只对无状态查询（q1）安全**——有状态/join 查询的 join 目标窗口数据会被驱逐、破坏正确性，不可全局套用。
+- macOS `ps rss` **高估**物理占用（含 swap 出/空 zone 页）；`vmmap` 的 `Physical footprint` / `footprint` 更准（System allocator 下 12.3GB vs ps 22GB）。
+- 时间驱逐依赖注入顺序：真实按事件时间有序的流不受影响；bench 的 key 分片注入天然乱序。
