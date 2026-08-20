@@ -1,4 +1,7 @@
 # Issue: q5 100M 冻结（~69M appends 后 pipeline 停滞）
+> 注：feed 模式旧名 `cont` 已于 2026-08-20 改名 **`replay`**（重放预编码帧），
+> `cont` 别名已移除——现需 `./bench.sh <q> replay 100m`。本文为历史记录，
+> 正文中的 `cont` 均指现 `replay`。
 
 **状态：** 已定位根因；两项修复已实现（cheap-skip + recalibrate-skip），把冻结点从
 ~69M 推进到 ~99M+（100M 从"必冻"变成"多数跑通"）；剩余 ~1M 尾部 evict 偶发，见"剩余问题"。

@@ -1,4 +1,7 @@
 # wfusion vs Flink — NexMark PK 性能报告（Apple Silicon 环境）
+> 注：feed 模式旧名 `cont` 已于 2026-08-20 改名 **`replay`**（重放预编码帧），
+> `cont` 别名已移除——现需 `./bench.sh <q> replay 100m`。本文为历史记录，
+> 正文中的 `cont` 均指现 `replay`。
 
 > 测试日期：2026-08-17（**wfusion 0.3.1** / wp-reactor 1.0.2，P0-② content 记账 2GB，2026-08-17 全量重跑）
 > 对齐口径：NexMark 标准数据 + 查询 + **100M 记录/查询**（与 Flink 白皮书一致）+ discard 输出（blackhole）

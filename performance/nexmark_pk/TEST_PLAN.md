@@ -9,8 +9,9 @@
 | 层 | 工具 | 验证什么 | 耗时 |
 |---|---|---|---|
 | 微基准 | `cargo test --release -p wf-engine columnar_bench`（`#[ignore]`） | 列式读/emit/建 set/缓存的逐操作耗时 | ~1 min |
-| 端到端正确性 | `bench.sh <q> cont 30m` + `verify_ground_truth.py` + `[clean]` + EMIT | 输出与确定性 ground truth 一致 | ~10 min/批 |
-| 端到端吞吐 | `bench.sh all cont 10m/30m/100m` | EPS + RSS_peak，A/B 对比 | 10m ~7 min；30m ~20 min |
+| 端到端正确性 | `bench.sh <q> replay 30m` + `verify_ground_truth.py` + `[clean]` + EMIT | 输出与确定性 ground truth 一致 | ~10 min/批 |
+| 端到端吞吐 | `bench.sh all replay 10m/30m/100m` | EPS + RSS_peak，A/B 对比 | 10m ~7 min；30m ~20 min |
+| 端到端长稳 | `bench.sh <q> stream <total>`（按 RATE 实时注入） | 真实时间窗口语义 + 长时内存有界/无泄漏（**非性能口径**，客户端编码受限 ~760k/s） | 视时长 |
 | 回归对比 | 新旧 wfusion 二进制同参数各跑一遍 | EMIT 一致 + EPS/RSS 变化 | 视规模 |
 
 ## 1. 环境与前置
@@ -58,14 +59,18 @@ cargo test --release -p wf-engine columnar_bench -- --ignored --nocapture
 
 ## 3. 端到端正确性（30M 规模，seed=1）
 
-ground truth 由 `scripts/verify_ground_truth.py` 确定性模拟推算（Q2-Q9 期望 emitted）。
+ground truth 由 `verify_ground_truth.py` 的 Rust 移植生成（`wfgen verify-nexmark`，
+同一 rng 序列、同一桶序，10M ~33s / 30M ~2min，输出与 Python 版逐位一致）。
 
 ```bash
-# 1) 跑 30M 全部查询，输出到 data/bench_<q>_cont.txt
-WFUSION=... WFGEN=... ./bench.sh all cont 30m
-# 2) 检查每个查询文件
+# 1) 生成 30M ground truth（模拟器，替代 Python 版）
+wfgen verify-nexmark 30000000 > /tmp/gt30.json
+# 2) 跑 30M 全部查询并自动对拍（bench.sh --verify 一键：跑批后调
+#    verify-nexmark 生成 ground truth 并对拍 EMIT，含已知波动带分类）
+WFUSION=... WFGEN=... ./bench.sh all replay 30m --verify
+# 3) 检查每个查询文件（或只看 --verify 报告）
 for q in q1 q2 q3 q4 q5 q7 q9; do
-  echo "== $q =="; grep -E "SUMMARY|EMIT" data/bench_${q}_cont.txt
+  echo "== $q =="; grep -E "SUMMARY|EMIT" data/bench_${q}_replay.txt
 done
 ```
 
@@ -85,9 +90,9 @@ done
 
 ```bash
 # 单查询
-WFUSION=... WFGEN=... ./bench.sh q2 cont 10m
+WFUSION=... WFGEN=... ./bench.sh q2 replay 10m
 # 全部（顺序跑，每查询独立 metrics）
-WFUSION=... WFGEN=... ./bench.sh all cont 10m
+WFUSION=... WFGEN=... ./bench.sh all replay 10m
 ```
 
 **测量纪律（违反会得出假结论）**：
@@ -106,8 +111,8 @@ WFUSION=... WFGEN=... ./bench.sh all cont 10m
 OLD=path/to/old-wfusion  NEW=path/to/new-wfusion
 for q in q1 q2 q3 q4 q5 q7 q9; do
   for BIN in "$OLD" "$NEW"; do
-    WFUSION=$BIN WFGEN=${BIN%wfusion}wfgen ./bench.sh $q cont 10m 2>&1 | grep "^$q/cont"
-    grep -E "EMIT|SUMMARY" data/bench_${q}_cont.txt
+    WFUSION=$BIN WFGEN=${BIN%wfusion}wfgen ./bench.sh $q replay 10m 2>&1 | grep "^$q/replay"
+    grep -E "EMIT|SUMMARY" data/bench_${q}_replay.txt
   done
 done
 ```
@@ -161,7 +166,7 @@ done
 | 产物 | 路径 |
 |---|---|
 | 帧文件 | `data/bench_<total>[_mb<bytes>]_v2.frames`（复用，DATA_VER 可覆盖） |
-| 每查询结果 | `data/bench_<q>_cont.txt`（EPS/RSS/EMIT/SUMMARY） |
+| 每查询结果 | `data/bench_<q>_replay.txt`（EPS/RSS/EMIT/SUMMARY） |
 | 计数器流 | `data/metrics.ndjson`（`scripts/extract_emitted.py` 汇总） |
 | 引擎/daemon 日志 | `data/wfusion.log` / `data/daemon.log` |
 | 性能报告 | `PK_REPORT_MAC.md` / `PK_REPORT_LINUX.md` |

@@ -91,7 +91,7 @@ NEXMark 标准数据的要求，本实现（`scripts/gen_nexmark.py` + `wfgen ge
 
 ## 4. 我们如何准备数据（管线）
 
-`bench.sh` 的 `feed=cont`（PK 口径）数据准备管线，产物全部可缓存复用：
+`bench.sh` 的 `feed=replay`（PK 口径）数据准备管线，产物全部可缓存复用：
 
 ```
 1. 生成        wfgen gen-nexmark <N>                     → data/burst_bench.jsonl（N 条 JSONL 事件流）
@@ -219,7 +219,7 @@ q1 100M 单独跑 RSS 峰值 21~25GB（`ps rss` 口径）、EPS 11~16M。
 
 ### 最优配置（q1 无状态专用）
 ```bash
-SHARD_KEYS="" CONNECTIONS=1 ./bench.sh q1 cont 100m   # 单连接整文件推
+SHARD_KEYS="" CONNECTIONS=1 ./bench.sh q1 replay 100m   # 单连接整文件推
 # 临时把 models/schemas/windows.toml 的 bid_events max_window_bytes 调小（如 256MB）
 ```
 实测：**RSS 1.9~5.5GB（-90%+）、EPS 21~26M（+50~120%）、[clean]**（三次 1.9/3.0/4.5GB、26.2/23.4/22.4M）。

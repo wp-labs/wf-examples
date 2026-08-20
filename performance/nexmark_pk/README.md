@@ -50,7 +50,7 @@ Flink 参照系 = [Alibaba Nexmark 白皮书](https://help.aliyun.com/en/flink/r
 工作负载等价但输出语义近似（count ≠ category 均价）的查询。全部 7 条的白皮书测试集内对齐
 已覆盖（7/19 条 NEXMark 全集）。
 
-### 正确性验证（30M cont，seed=1）
+### 正确性验证（30M replay，seed=1）
 
 期望值由确定性模拟器 `scripts/verify_ground_truth.py` 独立推算（Python 重放 JSONL，精确镜像
 引擎 match 语义，含 pending_expiry 每 key 单条目去重、fire/reset 保留实例 created_at=fire
@@ -92,16 +92,21 @@ q9=6,000,000（=30M 期望 1.8M × 100/30）。q3/q5/q7 的 EMIT 在 run 间有�
 ## 基准工具：bench.sh
 
 ```bash
-./bench.sh [query=all|q1|q2|q3|q4|q5|q7|q9] [feed=cont|stream] [total=100m|30m|10m]
-MAX_FRAME_BYTES=1048576 ./bench.sh all cont 30m    # 指定帧 cap（默认 8MiB）
+./bench.sh [query=all|q1|q2|q3|q4|q5|q7|q9] [feed=replay|stream] [total=100m|30m|10m]
+MAX_FRAME_BYTES=1048576 ./bench.sh all replay 30m    # 指定帧 cap（默认 8MiB）
 ```
 
-- **feed=cont**（默认，PK 口径）：gen-nexmark → dump-frames 预编码 Arrow 帧 →
-  `shard-frames`（默认 4 分片、`SHARD_KEYS=bid_events:auction` 键闭包）→
-  `send-arrow --shard-files` 并发推（默认 `CONNECTIONS=4`，唯一数据分片）。
-  帧文件 `data/bench_<total>[_mb<bytes>].frames` 跨查询复用，存在即不重生成。
-- **feed=stream**：实时生成按 RATE 注入（客户端编码上限 ~760k/s，**非引擎能力**；
-  用于正确性/长稳，不用于 PK）。
+- **feed=replay**（默认，PK 口径）：gen-nexmark → dump-frames 预编码 Arrow 帧 →
+  send-arrow 重放（默认 **单连接**整文件推，`CONNECTIONS=1`、`SHARD_KEYS` 空；
+  多连接仅在有状态负载需要键闭包分片时用）。事件按 30s 桶序（v2 排序数据），
+  帧/分片缓存带 `DATA_VER`（默认 v2）指纹，`data/bench_<total>_v2.frames`
+  跨查询复用，存在即不重生成。**测引擎峰值持续吞吐（性能基准口径）**。
+- **feed=stream**：wfgen 实时生成按 RATE 注入（事件时间随墙钟推进，客户端编码
+  上限 ~760k/s——**非引擎能力**，EPS 不可比）。**使用场景**：
+  ① 真实时间窗口语义（`over=10m` 时间驱逐/watermark 按真实时间实时发生，而非
+  replay 的追赶式）；② 长时稳定性/内存有界（中低速持续跑几十分钟~几小时，看
+  RSS 是否有界、不泄漏）；③ 生产形态模拟（事件时间=现在，验证 late/`allowed_lateness`
+  行为）。**不用于**吞吐对比与短时跑批。
 - 输出每查询 `data/bench_<q>_<feed>.txt`：EPS + RSS 峰值 + 驱逐数；
   `data/metrics.ndjson` 为计数器流，`data/{wfusion,daemon}.log` 为引擎日志。
 
