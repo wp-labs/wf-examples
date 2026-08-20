@@ -16,5 +16,5 @@ rule q16_sum_price_1000 {
     } -> score(30.0)
     entity(digit, b.auction)
     yield nexmark_alerts (id = b.auction, alert_type = "q16_sum1000", detail = "window sum >= 1000", request_count = 1)
-    limits { max_memory = "512MB" }
+    limits { max_memory = "8GB" }
 }

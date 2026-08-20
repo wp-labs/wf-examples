@@ -13,5 +13,5 @@ rule q17_distinct_bidders_20 {
     } -> score(20.0)
     entity(digit, b.auction)
     yield nexmark_alerts (id = b.auction, alert_type = "q17_dist20", detail = "20+ distinct bidders", request_count = 1)
-    limits { max_memory = "512MB" }
+    limits { max_memory = "16GB" }
 }

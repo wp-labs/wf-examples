@@ -151,15 +151,16 @@ match 语义，逐规则算出期望 `emitted_total`：
 | q18_accumulate_fires | 17,919,533 | 17,918,519 | ✅（差 1014≈0.006%） |
 | q19_seq_two_bids | 490,097 | 10m 162,879 | ✅（10m 对拍 ~0.3%） |
 | q20_any_count_3 | 7,763,818 | 10m 2,587,329 | ✅（10m 对拍 ~0.02%） |
-| q16_sum_price_1000 | 1,886,924（理想值） | 时序相关 | ⚠️ 增量驱逐丢早桶，见下 |
+| q16_sum_price_1000 | 1,886,924 | 1,886,924 | ✅（2026-08-20 修复：max_memory 8GB 去限流 + scan_timeouts 无界预算收口最后桶） |
 | q21_anti_person | 0（朴素值） | 时序相关（10m ~21k-31k） | ⚠️ person 窗口驱逐，见下 |
 
-> **模拟器覆盖**：q2/q3/q4/q5/q6/q7/q8/q9/q10/q13/q15/q17/q18/q19/q20 由
-> `verify_ground_truth.py` 精确模拟（q15/q17/q18/q19/q20 已用 fresh 引擎运行对拍）。
+> **模拟器覆盖**：q2/q3/q4/q5/q6/q7/q8/q9/q10/q13/q15/q16/q17/q18/q19/q20 由
+> 模拟器精确对拍（q15~q20 已用 fresh 引擎运行对拍；q16 2026-08-20 起逐位一致）。
 > **时序相关（非固定 ground truth）**：
-> - q16（fixed + `and close` sum）：模拟器给的是「每个 fixed 桶都收口」的理想值；引擎实际
->   EMIT 受增量驱逐预算 `MAX_EXPIRY_SCAN_BUDGET=1024` 影响，较早的桶在 pipeline 排空前
->   可能来不及收口丢失 → 以 `[clean]` + 多轮 EMIT 确定性验证，而非单值比对。
+> - q16（fixed + `and close` sum）：2026-08-20 修复后与模拟器**逐位一致**——根因是
+>   ① `max_memory=512MB` 在 30m 规模触发 Throttle 丢事件（sum 累计不全，EMIT 低 8 倍）
+>   改为 8GB；② 最后桶在数据末尾过期晚于最后事件时间，靠墙钟 `scan_timeouts` 兜底，
+>   但 1024 增量预算处理不完 → 改 scan_timeouts 用**无界预算**（事件热路径仍 1024 防冻结）。
 > - q21（anti join）：模拟器给的是「所有 bidder 都是 person」的朴素 0；引擎实际因 person
 >   窗口在 lookup 时刻不完全而保留少量 bid（时序相关）→ 以 `[clean]` + 多轮 EMIT 确定性验证。
 > **未覆盖**：q11（per-shard 会话，单机模拟无法匹配）、q12/q14（fixed 窗口 close+conv 未模拟）、
@@ -198,6 +199,45 @@ match 语义，逐规则算出期望 `emitted_total`：
 - **Q5**（count≥10）：EMIT ±10（571,061~571,076），max_memory 驱逐时序 + 墙钟
   scan_timeouts 非确定性。
 - 判定标准：**区间重叠**而非单值相等；`[clean]` + ground truth 才是正确性权威。
+
+### 5.6 max_memory：限流机制与计算公式（2026-08-20 定稿）
+
+规则级 `limits { max_memory }` 是**实例内存硬上限**，超限行为（默认 `on_exceed = throttle`）：
+引擎每事件检查 `Σ实例估算内存 ≥ max_memory`，超限**静默丢弃该事件**（不推进规则状态、不
+fire；无日志、无指标、`[clean]` 照常）→ EMIT 悄悄变少且不随数据规模增长，极易误判成
+“引擎正确、对拍基准错”。`drop_oldest` 驱逐最旧实例（状态丢失）、`fail_rule` 让规则永久失效。
+
+**判定依据 = 引擎估算**（`match_engine/state.rs::estimated_bytes`），不是真实 RSS（实测 RSS
+约为估算的 2~3×，`collected_values` 等有 cap 且不计入估算）。每实例估算构成：
+
+```
+128 (Instance) + 32 (key) + Σ step×branch×80 + distinct_set(≈40B/值) + field_values + baselines×128
+```
+
+NEXMark 查询每实例估算：
+
+| 类型 | 查询 | 每实例 base |
+|---|---|---|
+| 单 step count/avg/max | q5/q6/q7/q15/q18 | 240B |
+| 双 step（seq 两步 / any 两步） | q19/q20 | 320B |
+| distinct | q17 | 240B + 40B×去重 bidder（≈15） |
+
+**实例数 = 规则 key 基数**（NEXMark = auction 数 = 0.06 × 总事件数）：10m→600k、30m→1.8M、
+100m→6M。
+
+**计算公式**：`max_memory ≥ 实例数 × 每实例估算 × 安全系数(2~4，覆盖引擎开销/估算波动)`
+
+| 规模 | 单 step | 双 step | distinct |
+|---|---|---|---|
+| 10m | 0.3GB | 0.4GB | ~0.6GB |
+| 30m | 0.9GB | 1.2GB | ~2.3GB |
+| 100m | 2.9GB | 3.8GB | ~10GB |
+
+**实测验证**：q20 30m 公式 576MB → 512MB 触发（EMIT 2.16M vs 8.45M）、1GB 不触发 ✅；
+q5 30m 432MB < 512MB 不触发 ✅——这就是 30m 对拍只有 q17/q19/q20 失败的原因（均为
+估算超 512MB 的双 step/distinct 型）。**“内存不足能跑多高速率”**：max_memory 不限制速率，
+只限制**正确处理的数据规模**（超限后事件静默丢弃、不降速不报错）；速率上限由 CPU/管道并行度
+决定。给定 M 与每实例估算 e：能正确处理的 key 数 = M/e（NEXMark 规模 = (M/e)/0.06）。
 
 ## 6. q1 内存调查（2026-08-20）：RSS 21-25GB → 1.9GB
 

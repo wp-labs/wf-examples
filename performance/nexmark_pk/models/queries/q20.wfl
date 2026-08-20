@@ -15,5 +15,5 @@ rule q20_any_count_3 {
     } -> score(20.0)
     entity(digit, b.auction)
     yield nexmark_alerts (id = b.auction, alert_type = "q20_any3", detail = "count >= 3 (any)", request_count = 1)
-    limits { max_memory = "512MB" }
+    limits { max_memory = "8GB" }
 }

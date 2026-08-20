@@ -16,5 +16,5 @@ rule q19_seq_two_bids {
     } -> score(20.0)
     entity(digit, b.auction)
     yield nexmark_alerts (id = b.auction, alert_type = "q19_seq2", detail = "2 bids in sequence", request_count = 1)
-    limits { max_memory = "512MB" }
+    limits { max_memory = "8GB" }
 }
