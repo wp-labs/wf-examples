@@ -11,6 +11,10 @@
 #
 # 用法:
 #   ./bench.sh [query=q1|..|q22|all] [feed=replay|stream] [total=100m|30m|10m]   (旧名 cont 已移除)
+#   ./bench.sh clean [cache|all]   清除生成数据：
+#       cache（默认）= 预编码帧/分片缓存 + 日志 + 临时文件（可再生，磁盘大头，
+#                     典型 ~10G/100m）；保留结果文件 data/bench_*.txt
+#       all          = 连结果文件 data/bench_*.txt、data/verify_*.txt 一起删
 #   调优用环境变量（并行度默认取 conf/wfusion.toml）:
 #     PARSE_PARALLELISM / RULE_PARALLELISM / MAX_FRAME_BYTES / MAX_FRAME_ROWS
 #     MAX_INGEST_RATE（引擎端限速）/ RATE / SLICE_MS（stream）
@@ -36,6 +40,42 @@
 # 结果写 data/bench_<query>_<feed>.txt（含完整 correctness 明细附录）
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
+
+# ---- clean：清除生成数据（缓存/日志/临时 → 结果文件） ----
+# 必须在 QUERY 校验之前拦截（clean 不是 query）。
+# 缓存按 TOTAL×DATA_VER×帧大小×分片键可再生成（gen-nexmark → dump-frames/
+# shard-frames），是磁盘大头（100m 帧缓存 ~7.2G）；结果 txt 是测量记录保留。
+# 内联 daemon 清理（不依赖后文函数定义）：删除前确保没有进程在写。
+if [ "${1:-}" = "clean" ]; then
+  CLEAN_MODE="${2:-cache}"
+  case "$CLEAN_MODE" in
+    cache|all)
+      echo "== bench.sh clean ${CLEAN_MODE}: 清除生成数据 =="
+      pkill -9 -f "wfusion daemon" 2>/dev/null
+      pkill -9 -f "wfgen send-arrow" 2>/dev/null
+      sleep 1
+      # 大缓存：预编码帧 + 键闭包分片帧（可再生）
+      rm -f data/bench_*.frames data/shard_*.frames
+      # 日志/临时：运行残留（start_daemon 每次 rm -f 重写，可任意删）
+      rm -f data/metrics.ndjson data/wfusion.log data/daemon.log data/stream.log \
+            data/error.ndjson data/burst_bench.jsonl data/bench_q1q21_100m.log \
+            data/daemon_file.log data/wfusion_file.log \
+            /tmp/bench_rss.txt /tmp/bench_conf.toml /tmp/bench_conf.toml.tmp \
+            /tmp/bench_gt_verify.json /tmp/bench_warmup_q1.txt
+      if [ "$CLEAN_MODE" = "all" ]; then
+        # 结果文件 + 旧验证产物（--verify 输出在 /tmp 已清，data/verify_*.txt 是旧命名的残留）
+        rm -f data/bench_*_replay.txt data/bench_*_stream.txt data/verify_*.txt \
+              data/window_shard_bench_*.txt
+        echo "  → 结果文件已删"
+      else
+        echo "  → 保留结果文件 data/bench_*.txt（要连结果一起删用: ./bench.sh clean all）"
+      fi
+      echo "  → data/ 剩余 $(du -sh data 2>/dev/null | cut -f1)"
+      exit 0
+      ;;
+    *) echo "bad clean mode '$CLEAN_MODE' (cache|all)"; exit 1;;
+  esac
+fi
 
 QUERY="${1:-all}"
 FEED="${2:-replay}"
