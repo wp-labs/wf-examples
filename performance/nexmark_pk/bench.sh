@@ -14,21 +14,21 @@
 #   调优用环境变量（并行度默认取 conf/wfusion.toml）:
 #     PARSE_PARALLELISM / RULE_PARALLELISM / MAX_FRAME_BYTES / MAX_FRAME_ROWS
 #     MAX_INGEST_RATE（引擎端限速）/ RATE / SLICE_MS（stream）
-#     CONNECTIONS（cont 并发连接数，默认 4——2026-08-18 晚实测：发送分片数对
-#       端到端 EPS 不敏感（主墙是规则 CPU 而非 ingress；C=4 与 C=8 同落在
-#       load 噪声带内，q1-throughput-bisection 记录），余度后把默认从 8 降到
-#       4 减连接开销；配 SHARD_KEYS 走生成时分片 --shard-files，同 key 同连接
-#       （键闭包），有状态负载也安全）
-#     SHARD_KEYS（分片键，默认三流各自按键分 "bid_events:auction,
-#       auction_events:id,person_events:id"——避免旧单键分片把 auction/person
-#       全塞进 s0 热点分片；见 wp-reactor docs/design/q1-throughput-bisection.md
-#       §4；置空 = 纯 copy 多连接）
+#     CONNECTIONS（cont 并发连接数，默认 1——2026-08-20 起默认单连接：
+#       gen-nexmark 输出已按事件时间排序（v2 数据），单连接整文件推保持时间
+#       有序 → over=10m 时间驱逐生效 → 窗口只持 ~10 分钟数据 → 内存/吞吐双赢
+#       （q1 100M：RSS 24GB→3GB、EPS 11M→26M，正确性 clean）。多连接
+#       （显式 CONNECTIONS>1）会让批次时间乱序（时间驱逐失效、窗口持全量、
+#       内存膨胀），仅在有状态负载需要键闭包分片时使用，并配 SHARD_KEYS）
+#     SHARD_KEYS（键闭包分片键，默认空=不分片单连接推整文件；CONNECTIONS>1 时
+#       配 "bid_events:auction,auction_events:id,person_events:id" 走生成时
+#       shard-frames --shard-files，同 key 同连接，有状态负载也安全）
 #     WARMUP=1（cont：先跑一轮预热不计结果——stash 重建后首跑系统性偏低，须剔除）
 # 示例:
 #   PARSE_PARALLELISM=6 RULE_PARALLELISM=6 MAX_FRAME_BYTES=204800 ./bench.sh q1 cont 100m
-#   CONNECTIONS=16 ./bench.sh q1 cont 30m
 #   WARMUP=1 ./bench.sh all cont 30m
-#   SHARD_KEYS="" CONNECTIONS=16 ./bench.sh q1 cont 100m   # 无状态天花板:纯 copy
+#   CONNECTIONS=4 SHARD_KEYS="bid_events:auction,auction_events:id,person_events:id" ./bench.sh q2 cont 30m  # 有状态:键闭包多连接
+#   DATA_VER=old ./bench.sh q1 cont 100m   # 强制用旧乱序数据复现对比
 #
 # 输出每查询: EPS（引擎 append 数/墙钟，端到端口径）+ RSS 峰值 + 驱逐数
 #   + 口径上下文（并行度/帧大小/时间戳）+ 正确性计数器摘要
@@ -49,12 +49,14 @@ MAX_INGEST_RATE="${MAX_INGEST_RATE:-}"
 RATE="${RATE:-3000000}"
 SLICE_MS="${SLICE_MS:-1000}"
 WARMUP="${WARMUP:-0}"
-CONNECTIONS="${CONNECTIONS:-4}"
-# 按流指定分区 key(键闭包):"bid_events:auction,auction_events:id,person_events:id"
-# 配合 CONNECTIONS>1,同 key 事件同连接,有状态规则也安全(实测 emitted 与单连接逐位一致)
-# 默认三流各自按键分(2026-08-18)——旧单键(bid_events:auction)把 auction/person
-# 全塞进 s0 热点分片(ingress 卡 14.05M);三流分片均匀(默认 4 分片,每片 ~2.5GB)。
-SHARD_KEYS="${SHARD_KEYS:-bid_events:auction,auction_events:id,person_events:id}"
+CONNECTIONS="${CONNECTIONS:-1}"
+# 数据版本指纹：gen-nexmark 排序输出（2026-08-20）后，帧/分片缓存必须带版本号，
+# 否则旧乱序缓存被静默复用（时间驱逐失效、窗口持全量、RSS 20GB+ 的根因）。
+# 换 DATA_VER 即强制重新生成对应版本缓存。
+DATA_VER="${DATA_VER:-v2}"
+# 键闭包分片键：默认空 = 单连接整文件推（时间有序 → 时间驱逐生效）。
+# CONNECTIONS>1 时配三流各自按键分，走生成时 shard-frames（同 key 同连接）。
+SHARD_KEYS="${SHARD_KEYS:-}"
 
 # 二进制来源：优先本地 warp-fusion 的 target/release 构建（仅当存在时）；否则回退 PATH。
 # 不把路径固化为 ../../../warp-fusion —— 脚本可复制到任意目录运行，只要 wfusion/wfgen 在 PATH。
@@ -315,11 +317,11 @@ report_result() {
 }
 
 # ---- feed=cont：send-arrow 连续流（预编码帧，CONNECTIONS 条连接并发推） ----
-# 默认帧大小（8MiB）复用 bench_${TOTAL}.frames；非默认大小用带后缀名（避免覆盖）。
+# 默认帧大小（8MiB）复用 bench_${TOTAL}_${DATA_VER}.frames；非默认大小用带后缀名（避免覆盖）。
 if [ "$MAX_FRAME_BYTES" = "8388608" ]; then
-  FRAMES=data/bench_${TOTAL}.frames
+  FRAMES=data/bench_${TOTAL}_${DATA_VER}.frames
 else
-  FRAMES=data/bench_${TOTAL}_mb${MAX_FRAME_BYTES}.frames
+  FRAMES=data/bench_${TOTAL}_mb${MAX_FRAME_BYTES}_${DATA_VER}.frames
 fi
 if [ "$FEED" = "cont" ] && [ ! -f "$FRAMES" ]; then
   echo "==> 预编码帧（gen-nexmark ${TOTAL_N} → dump-frames, max_frame_bytes=${MAX_FRAME_BYTES}）"
@@ -350,7 +352,7 @@ run_cont_one() {
     # 一次生成。缓存 key 必须带 shard-keys 指纹——换键会静默复用旧分片文件(曾踩坑)。
     local SHARD_KEY_FP
     SHARD_KEY_FP=$("$PY" -c 'import hashlib,sys;print(hashlib.md5(sys.argv[1].encode()).hexdigest()[:8])' "$SHARD_KEYS")
-    local SHARD_PREFIX="data/shard_${TOTAL}_c${CONNECTIONS}_k${SHARD_KEY_FP}"
+    local SHARD_PREFIX="data/shard_${TOTAL}_${DATA_VER}_c${CONNECTIONS}_k${SHARD_KEY_FP}"
     local SHARD_FILES=""
     local i
     for i in $(seq 0 $(( CONNECTIONS - 1 ))); do

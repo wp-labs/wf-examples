@@ -20,7 +20,16 @@ cd wf-examples/performance/nexmark_pk
 # 二进制：本地 warp-fusion release 或 WFUSION/WFGEN 覆盖
 WFUSION=/path/to/wfusion WFGEN=/path/to/wfgen
 # 需 wfusion/wfgen 含 gen-nexmark / dump-frames / send-arrow / stream 子命令
-# 前置：nc、python3；端口 9800 空闲；数据帧 data/bench_<total>.frames（存在即复用）
+# 前置：nc、python3；端口 9800 空闲；数据帧 data/bench_<total>_v2.frames（存在即复用）
+#
+# 数据与注入（2026-08-20 定案）：
+# - gen-nexmark 默认按事件时间排序输出（v2，`--no-sort` 保留旧 phase-major）——
+#   批次事件时间跨度从 ~24min 降到几秒，over=10m 时间驱逐恢复；
+# - bench.sh 默认单连接整文件推（CONNECTIONS=1、SHARD_KEYS 空）——时间有序 →
+#   时间驱逐生效 → 窗口只持 ~10 分钟数据 → 内存/吞吐双赢（q1 100M RSS 24→3GB、
+#   EPS 11→26M，clean）。多连接（CONNECTIONS>1 + SHARD_KEYS）会打乱批次时间序
+#   （时间驱逐失效），仅在有状态负载需要键闭包分片时使用；
+# - 帧/分片缓存带 DATA_VER（默认 v2）指纹，换数据版本自动重新生成。
 ```
 
 **构建（改动后必须重建）**：
@@ -67,6 +76,7 @@ done
 | `SUMMARY` | 全部 `clean`（serialize_failed / dropped_late / memory_evicted / cursor_gap = 0） |
 | `appended` | 30M/30M（或 100M/100M） |
 | EMIT 期望（30M seed=1，来自 README） | q2=224,289 · q3=1,800,000 · q4=27,600,000 · q5=1,712,532(±62 墙钟) · q7=10,350,961/34,578/0 · q9=1,800,000 |
+| EMIT 与 v1 数据 | v2 排序数据**事件集合不变**（rng 序列/字段一致，仅输出顺序不同），计数类 EMIT 应一致；时序相关（q16/q21）以多轮确定性 + clean 验证 |
 | 逐 alert 对拍（可选，深验） | `python3 scripts/q5_diff_v2.py` 28k 探针全量吻合 |
 
 > 30M 全量 ground truth 是权威；10m/100m 只做 EMIT 比例侧证 + 新旧一致（见 §6）。
@@ -142,12 +152,15 @@ done
 - **Q7**（emit 密集）：EPS -8~15% 是列式 emit 路径 `to_event` 重建（260.9ns vs clone
   183.4ns）的固有代价，已微基准锁定；RSS -18% 抵偿。
 - **10m 短程 EPS**：load 噪声大，只作方向参考；结论用 30m/100m + 多次中位。
+- **注入方式（2026-08-20）**：默认单连接 + v2 排序数据；多连接（key 分片）会让
+  批次时间乱序 → 时间驱逐失效 → 窗口持全量 → RSS 20GB+（q1 曾 24GB）。引用内存
+  数字必须标注注入方式与 DATA_VER，否则跨口径不可比。
 
 ## 9. 产物位置
 
 | 产物 | 路径 |
 |---|---|
-| 帧文件 | `data/bench_<total>[_mb<bytes>].frames`（复用） |
+| 帧文件 | `data/bench_<total>[_mb<bytes>]_v2.frames`（复用，DATA_VER 可覆盖） |
 | 每查询结果 | `data/bench_<q>_cont.txt`（EPS/RSS/EMIT/SUMMARY） |
 | 计数器流 | `data/metrics.ndjson`（`scripts/extract_emitted.py` 汇总） |
 | 引擎/daemon 日志 | `data/wfusion.log` / `data/daemon.log` |

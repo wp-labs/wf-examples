@@ -228,3 +228,14 @@ SHARD_KEYS="" CONNECTIONS=1 ./bench.sh q1 cont 100m   # 单连接整文件推
 - `max_window_bytes` 调小**只对无状态查询（q1）安全**——有状态/join 查询的 join 目标窗口数据会被驱逐、破坏正确性，不可全局套用。
 - macOS `ps rss` **高估**物理占用（含 swap 出/空 zone 页）；`vmmap` 的 `Physical footprint` / `footprint` 更准（System allocator 下 12.3GB vs ps 22GB）。
 - 时间驱逐依赖注入顺序：真实按事件时间有序的流不受影响；bench 的 key 分片注入天然乱序。
+
+### 定案（2026-08-20 固化）
+
+- **`gen-nexmark` 默认按事件时间排序输出**（60×30s 桶 + 桶内排序，内存有界，
+  事件集合不变，`--no-sort` 保留旧 phase-major）——已提交 warp-fusion。
+- **`bench.sh` 默认单连接**（`CONNECTIONS=1`、`SHARD_KEYS` 空）+ 帧缓存带
+  `DATA_VER`（默认 v2）指纹，旧乱序缓存自动失效。
+- **实测口径**（单连接 + v2 数据）：q1 100M RSS 3.0GB（256MB cap）/ 7.6GB
+  （15GB cap）、EPS 25-26M、clean；Q1~Q21 30M 全 `[clean]`。
+- 多连接（key 分片）仅在有状态负载需要键闭包时使用，引用内存数字必须标注
+  注入方式与 DATA_VER。
