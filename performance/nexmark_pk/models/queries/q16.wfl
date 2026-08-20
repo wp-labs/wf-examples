@@ -18,3 +18,19 @@ rule q16_sum_price_1000 {
     yield nexmark_alerts (id = b.auction, alert_type = "q16_sum1000", detail = "window sum >= 1000", request_count = 1)
     limits { max_memory = "8GB" }
 }
+
+test q16_close_hit for q16_sum_price_1000 {
+  input {
+    row(b, auction = 1, bidder = 1, price = 500, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 600, channel = "G", url = "u");
+    tick(11m);
+  }
+  expect { hits == 1; }
+}
+test q16_close_no_hit for q16_sum_price_1000 {
+  input {
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    tick(11m);
+  }
+  expect { hits == 0; }
+}

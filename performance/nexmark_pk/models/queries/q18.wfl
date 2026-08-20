@@ -15,3 +15,30 @@ rule q18_accumulate_fires {
     yield nexmark_alerts (id = b.auction, alert_type = "q18_accu5", detail = "every 5th bid", request_count = 1)
     limits { max_memory = "512MB" }
 }
+
+test q18_five for q18_accumulate_fires {
+  input {
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+  }
+  expect { hits == 1; }
+}
+test q18_rearm for q18_accumulate_fires {
+  input {
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+  }
+  // on event<accu>：count 不清零，第 5 行首次 fire 后每行继续 fire（引擎/模拟器一致）
+  expect { hits == 6; }
+}

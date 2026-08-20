@@ -10,3 +10,36 @@ rule q2_mod_123 {
     yield nexmark_alerts (id = b.auction, alert_type = "q2_mod123", detail = "auction % 123 == 0", request_count = 1)
     limits { max_memory = "512MB" }
 }
+
+test q2_mod123_hit for q2_mod_123 {
+    input {
+        row(b, auction = 123, bidder = 1, price = 100, channel = "Google", url = "u", dateTime = 1000);
+    }
+    expect {
+        hits == 1;
+        hit[0].entity_id == "123";
+        hit[0].score == 5.0;
+    }
+}
+
+test q2_mod123_no_hit for q2_mod_123 {
+    input {
+        row(b, auction = 124, bidder = 1, price = 100, channel = "Google", url = "u", dateTime = 1000);
+        row(b, auction = 122, bidder = 1, price = 100, channel = "Google", url = "u", dateTime = 1001);
+    }
+    expect {
+        hits == 0;
+    }
+}
+
+test q2_mod123_multiple_hits for q2_mod_123 {
+    input {
+        row(b, auction = 123, bidder = 1, price = 100, channel = "Google", url = "u", dateTime = 1000);
+        row(b, auction = 246, bidder = 1, price = 100, channel = "Google", url = "u", dateTime = 1001);
+        row(b, auction = 369, bidder = 1, price = 100, channel = "Google", url = "u", dateTime = 1002);
+        row(b, auction = 124, bidder = 1, price = 100, channel = "Google", url = "u", dateTime = 1003);
+    }
+    expect {
+        hits == 3;
+    }
+}

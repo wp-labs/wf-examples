@@ -15,3 +15,10 @@ rule q13_bid_person_join {
     yield nexmark_alerts (id = b.bidder, alert_type = "q13_sidejoin", detail = "bid joined person", request_count = 1)
     limits { max_memory = "512MB" }
 }
+
+test q13_hit for q13_bid_person_join {
+  input {
+    row(b, auction = 1, bidder = 5, price = 100, channel = "G", url = "u");
+  }
+  expect { hits == 1; hit[0].entity_id == "5"; }
+}

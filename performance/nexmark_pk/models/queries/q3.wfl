@@ -12,3 +12,10 @@ rule q3_auction_seller {
     yield nexmark_alerts (id = a.id, alert_type = "q3", detail = a.seller, request_count = 1)
     limits { max_memory = "512MB" }
 }
+
+test q3_hit for q3_auction_seller {
+  input {
+    row(a, id = 1, seller = 100, itemName = "i", description = "d", initialBid = 10, reserve = 20, expires = 1000, category = 1, extra = "");
+  }
+  expect { hits == 1; hit[0].entity_id == "1"; }
+}

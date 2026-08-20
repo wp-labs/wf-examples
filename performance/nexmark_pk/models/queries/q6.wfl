@@ -14,3 +14,18 @@ rule q6_avg_price_200 {
     yield nexmark_alerts (id = b.auction, alert_type = "q6_avg200", detail = "avg bid >= 200", request_count = 1)
     limits { max_memory = "512MB" }
 }
+
+test q6_avg_hit for q6_avg_price_200 {
+  input {
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 300, channel = "G", url = "u");
+  }
+  expect { hits == 1; }
+}
+test q6_avg_no_hit for q6_avg_price_200 {
+  input {
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 150, channel = "G", url = "u");
+  }
+  expect { hits == 0; }
+}

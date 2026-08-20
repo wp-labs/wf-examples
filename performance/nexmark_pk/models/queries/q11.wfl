@@ -17,3 +17,18 @@ rule q11_user_session {
     yield nexmark_alerts (id = b.bidder, alert_type = "q11_session", detail = "bidder session", request_count = 1)
     limits { max_memory = "512MB" }
 }
+
+test q11_hit for q11_user_session {
+  input {
+    row(b, auction = 1, bidder = 5, price = 100, channel = "G", url = "u");
+  }
+  expect { hits == 1; hit[0].entity_id == "5"; }
+}
+test q11_session_gap for q11_user_session {
+  input {
+    row(b, auction = 1, bidder = 5, price = 100, channel = "G", url = "u");
+    tick(61s);
+    row(b, auction = 2, bidder = 5, price = 100, channel = "G", url = "u");
+  }
+  expect { hits == 2; }
+}

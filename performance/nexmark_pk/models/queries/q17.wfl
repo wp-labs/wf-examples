@@ -15,3 +15,53 @@ rule q17_distinct_bidders_20 {
     yield nexmark_alerts (id = b.auction, alert_type = "q17_dist20", detail = "20+ distinct bidders", request_count = 1)
     limits { max_memory = "16GB" }
 }
+
+test q17_hit for q17_distinct_bidders_20 {
+  input {
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 2, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 3, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 4, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 5, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 6, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 7, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 8, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 9, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 10, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 11, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 12, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 13, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 14, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 15, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 16, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 17, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 18, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 19, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 20, price = 100, channel = "G", url = "u");
+  }
+  expect { hits == 1; }
+}
+test q17_nineteen_no_hit for q17_distinct_bidders_20 {
+  input {
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 2, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 3, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 4, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 5, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 6, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 7, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 8, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 9, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 10, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 11, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 12, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 13, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 14, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 15, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 16, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 17, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 18, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 19, price = 100, channel = "G", url = "u");
+  }
+  expect { hits == 0; }
+}

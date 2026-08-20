@@ -13,3 +13,10 @@ rule q4_real_avg_100 {
     yield nexmark_alerts (id = b.auction, alert_type = "q4_real_100", detail = "bid joined", request_count = 1)
     limits { max_memory = "512MB" }
 }
+
+test q4_hit for q4_real_avg_100 {
+  input {
+        row(b, auction = 5, bidder = 1, price = 100, channel = "G", url = "u");
+  }
+  expect { hits == 1; }
+}

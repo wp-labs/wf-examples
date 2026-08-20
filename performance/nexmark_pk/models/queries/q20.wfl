@@ -17,3 +17,19 @@ rule q20_any_count_3 {
     yield nexmark_alerts (id = b.auction, alert_type = "q20_any3", detail = "count >= 3 (any)", request_count = 1)
     limits { max_memory = "8GB" }
 }
+
+test q20_hit for q20_any_count_3 {
+  input {
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+  }
+  expect { hits == 1; }
+}
+test q20_two_no_hit for q20_any_count_3 {
+  input {
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+  }
+  expect { hits == 0; }
+}

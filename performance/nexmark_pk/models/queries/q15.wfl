@@ -14,3 +14,24 @@ rule q15_high_bid_count_5 {
     yield nexmark_alerts (id = b.auction, alert_type = "q15_hi5", detail = ">=5 high bids", request_count = 1)
     limits { max_memory = "512MB" }
 }
+
+test q15_hit for q15_high_bid_count_5 {
+  input {
+    row(b, auction = 1, bidder = 1, price = 200, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 200, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 200, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 200, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 200, channel = "G", url = "u");
+  }
+  expect { hits == 1; }
+}
+test q15_filter_no_hit for q15_high_bid_count_5 {
+  input {
+    row(b, auction = 1, bidder = 1, price = 50, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 50, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 50, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 50, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 50, channel = "G", url = "u");
+  }
+  expect { hits == 0; }
+}

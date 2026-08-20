@@ -18,3 +18,19 @@ rule q19_seq_two_bids {
     yield nexmark_alerts (id = b.auction, alert_type = "q19_seq2", detail = "2 bids in sequence", request_count = 1)
     limits { max_memory = "8GB" }
 }
+
+test q19_hit for q19_seq_two_bids {
+  input {
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+  }
+  expect { hits == 1; }
+}
+test q19_too_late for q19_seq_two_bids {
+  input {
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    tick(61s);
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+  }
+  expect { hits == 0; }
+}

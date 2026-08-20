@@ -14,3 +14,21 @@ rule q8_monitor_new_user {
     yield nexmark_alerts (id = p.id, alert_type = "q8_new_user", detail = "new user session", request_count = 1)
     limits { max_memory = "512MB" }
 }
+
+test q8_hit for q8_monitor_new_user {
+  input {
+    row(p, id = 1, name = "n", email = "e", city = "c", state = "s");
+  }
+  expect { hits == 1; hit[0].entity_id == "1"; }
+}
+test q8_session_gap for q8_monitor_new_user {
+  input {
+    row(p, id = 1, name = "n", email = "e", city = "c", state = "s");
+    row(p, id = 1, name = "n", email = "e", city = "c", state = "s");
+    tick(61s);
+    row(p, id = 1, name = "n", email = "e", city = "c", state = "s");
+  }
+  // count>=1：每行都 fire（引擎/模拟器一致：EMIT = person 事件数）；session
+  // 只决定窗口归属。tick 跨 60s gap → 第 3 行属新会话（窗口信息不同）。
+  expect { hits == 3; }
+}

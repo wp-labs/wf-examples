@@ -12,3 +12,10 @@ rule q9_seller_count {
     yield nexmark_alerts (id = a.seller, alert_type = "q9", detail = a.id, request_count = 1)
     limits { max_memory = "512MB" }
 }
+
+test q9_hit for q9_seller_count {
+  input {
+    row(a, id = 1, seller = 5, itemName = "i", description = "d", initialBid = 10, reserve = 20, expires = 1000, category = 1, extra = "");
+  }
+  expect { hits == 1; hit[0].entity_id == "5"; }
+}
