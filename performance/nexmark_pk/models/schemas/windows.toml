@@ -21,7 +21,7 @@ over_cap = "15m"
 
 [window.bid_events]
 mode = "local"
-max_window_bytes = "15GB"
+max_window_bytes = "256MB"
 over_cap = "15m"
 
 # 输出窗口（over=0）
