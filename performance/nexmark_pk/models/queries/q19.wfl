@@ -1,0 +1,20 @@
+use "nexmark.wfs"
+
+// Q19：有序序列（`on event seq`）——每 auction 连续 2 笔 bid、第 2 笔在第 1 笔 60s 内
+// 到达则触发（对齐 Flink Q19 的序列/事件时序面，白皮书 6.16×）。
+//
+// 用 sliding `match<auction:10m>` + `on event seq { has b; has b within 60s; }`：
+// 同一 source 的两步有序（第 2 步 within 60s）。测试 **`on event seq` 有序序列**
+// 能力面（此前查询未覆盖）。
+rule q19_seq_two_bids {
+    events { b : bid_events }
+    match<auction:10m> {
+        on event seq {
+            has b;
+            has b within 60s;
+        }
+    } -> score(20.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q19_seq2", detail = "2 bids in sequence", request_count = 1)
+    limits { max_memory = "512MB" }
+}

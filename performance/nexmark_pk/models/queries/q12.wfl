@@ -1,0 +1,20 @@
+use "nexmark.wfs"
+
+// Q12：Top-N——每固定 10m 窗口，按 bid 数取**前 3 个 auction**（对齐 Flink Q12 的 Top-N 面）。
+//
+// 用 conv 后处理：fixed 窗口收口时按 close 的 bid 数降序排序，只保留 Top-3。
+// 每个窗口输出 ≤3 条告警（conv top-N 语义，见 examples/conv）。测试 **conv 聚合
+// （sort + top-N）+ fixed 窗口**能力面。
+rule q12_top_auctions_by_count {
+    events { b : bid_events }
+    match<auction:10m:fixed> {
+        on event { b | count >= 1; }
+        and close { n: b | count >= 1; }
+    } -> score(15.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q12_top", detail = "top auction", request_count = 1)
+    conv {
+        sort(-n) | top(3) ;
+    }
+    limits { max_memory = "512MB" }
+}

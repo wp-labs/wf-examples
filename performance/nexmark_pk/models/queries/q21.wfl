@@ -1,0 +1,18 @@
+use "nexmark.wfs"
+
+// Q21：anti join——bidder 不在 person 表的 bid 触发（对齐 Flink Q21 的 anti/semi join 面，
+// 白皮书 5.79×）。
+//
+// `join person_events anti on b.bidder == person_events.id`：命中 person 的 bid 被丢弃，
+// 只保留 bidder 不在 person 窗口的 bid。NEXMark 数据所有 bidder 都存在 → 期望 EMIT 0
+// （anti join 正确丢弃全部），用于验证 anti join 语义。测试 **anti join** 能力面。
+rule q21_anti_person {
+    events { b : bid_events }
+    match<auction:10m> {
+        on event { b | count >= 1; }
+    } -> score(10.0)
+    join person_events anti on b.bidder == person_events.id
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q21_anti", detail = "bidder not a person", request_count = 1)
+    limits { max_memory = "512MB" }
+}

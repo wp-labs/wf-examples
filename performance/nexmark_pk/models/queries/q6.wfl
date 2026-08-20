@@ -1,0 +1,16 @@
+use "nexmark.wfs"
+
+// Q6：按 auction 的 10m 窗口**均价**（对齐 Flink Q6 的窗口 avg 聚合面）。
+//
+// 标准 Q6「Average Selling Price by Seller」按卖家聚合均价；本实现因窗口键必须来自
+// 原始事件（卖家来自 join，属 emit 后数据），按 **auction** 聚合（bid 自带 auction 键），
+// 语义对齐面是「窗口内 avg measure + 状态机」——测试 avg 聚合路径。
+rule q6_avg_price_200 {
+    events { b : bid_events }
+    match<auction:10m> {
+        on event { b.price | avg >= 200; }
+    } -> score(20.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q6_avg200", detail = "avg bid >= 200", request_count = 1)
+    limits { max_memory = "512MB" }
+}

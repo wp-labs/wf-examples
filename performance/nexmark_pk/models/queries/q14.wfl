@@ -1,0 +1,25 @@
+use "nexmark.wfs"
+
+// Q14：两段式 Top-N——每固定 10m 窗口按 seller 的 auction 数取**前 10**（对齐 Flink Q14 的
+// 两级聚合 Top-N 面：先窗口聚合，再跨 key 排序取 Top-N）。
+//
+// 第一段：auction 流按 seller 固定窗口计数；第二段：conv 按计数降序排序保留 Top-10。
+// 每个窗口输出 ≤10 条告警。测试 **conv top-N（更大 N）+ 第二窗口键（seller）**能力面。
+//
+// 注意：bench 的 SHARD_KEYS 把 auction_events 按 id 分片（Q3/Q4 需要），同一 seller 的
+// auction 跨 shard——但 conv 阶段（ConvStageTask）会把各分片的 raw closes 合并后再做
+// 全局 top-N（barrier 等齐水位 + apply_conv over merged batch），所以 Top-N 是**全局**
+// seller 语义，不受分片影响。
+rule q14_top_10_sellers {
+    events { a : auction_events }
+    match<seller:10m:fixed> {
+        on event { a | count >= 1; }
+        and close { n: a | count >= 1; }
+    } -> score(20.0)
+    entity(digit, a.seller)
+    yield nexmark_alerts (id = a.seller, alert_type = "q14_top10", detail = "top seller", request_count = 1)
+    conv {
+        sort(-n) | top(10) ;
+    }
+    limits { max_memory = "512MB" }
+}

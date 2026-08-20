@@ -63,8 +63,20 @@ Flink 参照系 = [Alibaba Nexmark 白皮书](https://help.aliyun.com/en/flink/r
 | q4_real_avg_100 | 27,600,000 | 27,600,000 | ✅ |
 | q5_bidcount_10 | 1,712,532 | 1,712,470 | ✅（差 62 = 0.0036%，scan_timeouts 墙钟非确定性） |
 | q5_bidcount_50 / 100 | 0 / 0 | 0 / 0 | ✅ |
+| q6_avg_price_200 | 9,794,325 | 10m 3,263,324 | ✅（10m 对拍 ±1 墙钟摆动） |
 | q7_maxbid_200/500/1000 | 10,350,961 / 34,578 / 0 | 同左 | ✅ |
+| q8_monitor_new_user | 600,000 | 10m 200,000 | ✅（10m 对拍精确） |
 | q9_seller_count | 1,800,000 | 1,800,000 | ✅ |
+| q10_arbitrary_selection | 3,944,636 | 10m 1,314,285 | ✅（10m 对拍精确） |
+| q13_bid_person_join | 27,600,000 | 10m 9,200,000 | ✅（10m 对拍精确） |
+
+> **新查询语义诚实标注**：q6 按 auction 聚合均价（非标准按卖家——卖家来自 join，窗口键须取原始
+> 事件）；q8/q11 会话窗口（`session(gap)`）。**q11 的会话在 bench 按 auction 分片下是 per-shard**
+> （同一 bidder 的 bid 跨 shard，会话被切碎；要全局会话语义须 `CONNECTIONS=1` 或按 bidder 分片）；
+> **q12/q14 的 conv top-N 是全局的**（conv 阶段跨分片合并后做 top-N，`CONNECTIONS=4` 即全局）。
+> `verify_ground_truth.py` 单机模拟覆盖 q6/q8/q10/q13，**不覆盖 q11（per-shard）与 q12/q14
+> （fixed 窗口 close+conv 未模拟）**——q11 全局语义以 `CONNECTIONS=1` 验证，q12/q14 以 30M
+> 端到端确定性 + `[clean]` 为准。
 
 28k 事件探针逐 alert 对拍 **2,679/2,679 全量精确吻合**（含 fire 时刻）。q1 为无状态路径
 （输出=输入 bid 数，无状态机语义）。全部跑批 appended 30M/30M，

@@ -1,0 +1,18 @@
+use "nexmark.wfs"
+
+// Q22：asof join——每 bid 按时间邻近（within 60s）关联最近的 person 事件（对齐 Flink
+// Q22 的时间邻近 join 面，白皮书 3.04×）。
+//
+// `join person_events asof within 60s on b.bidder == person_events.id`：bid 与
+// person_events 时间戳最近且 within 60s 的行关联。NEXMark 的 person 在 bid 前创建 →
+// 每 bid 都能 asof 命中 → EMIT ≈ bid 数。测试 **asof join** 能力面。
+rule q22_asof_person {
+    events { b : bid_events }
+    match<auction:10m> {
+        on event { b | count >= 1; }
+    } -> score(10.0)
+    join person_events asof within 60s on b.bidder == person_events.id
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q22_asof", detail = "asof joined person", request_count = 1)
+    limits { max_memory = "512MB" }
+}

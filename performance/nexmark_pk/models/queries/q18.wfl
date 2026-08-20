@@ -1,0 +1,17 @@
+use "nexmark.wfs"
+
+// Q18：`on event<accu>` 窗口内累积——每 auction 每累计 5 笔 bid 触发一次，fire 后
+// count 不清零、持续累积到窗口过期（对齐 Flink Q18 的复杂窗口/累积聚合面，白皮书 5.97×）。
+//
+// 用 sliding `match<auction:10m>` + `on event<accu> { b | count >= 5; }`：count 在第
+// 5/10/15/... 笔触发（running cumulative，fire 不 reset）。测试 **`on event<accu>`
+// 窗口内累积** 能力面（此前查询未覆盖）。
+rule q18_accumulate_fires {
+    events { b : bid_events }
+    match<auction:10m> {
+        on event<accu> { b | count >= 5; }
+    } -> score(15.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q18_accu5", detail = "every 5th bid", request_count = 1)
+    limits { max_memory = "512MB" }
+}

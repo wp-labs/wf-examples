@@ -1,0 +1,12 @@
+use "nexmark.wfs"
+
+// Q10：任意选择——按确定性条件取 bid 子集（对齐 Flink Q10「Arbitrary Selection」）。
+//
+// `b.auction % 7 == 0` 选出一个确定性 ~1/7 子集，走 on-each 无状态路径（无实例表，
+// 每选中 bid 输出一条）。测试 **on-each + bind filter**（stateless subset）能力面。
+rule q10_arbitrary_selection {
+    events { b : bid_events && b.auction % 7 == 0 }
+    on each b -> score(5.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q10_arbitrary", detail = "selected bid", request_count = 1)
+}

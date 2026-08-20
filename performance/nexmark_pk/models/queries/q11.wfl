@@ -1,0 +1,19 @@
+use "nexmark.wfs"
+
+// Q11：用户会话——bid 流按 bidder 的**会话窗口**（对齐 Flink Q11「User Sessions」）。
+//
+// 每个 bidder 按 60s 间隙聚合为会话；`on event { count >= 1 }` 在会话内首个 bid 触发。
+// 测试 **session 窗口**（WindowSpec::Session）在 bid 流上的状态机路径。
+//
+// 注意：bench 的 SHARD_KEYS 把 bid_events 按 auction 分片（Q2/Q4/Q5/Q7 需要），
+// 同一 bidder 的 bid 会跨 shard——会话计数是**每 shard** 的（确定性、可验证，但非
+// 全局 bidder 会话语义）。若要全局语义，需单独以 CONNECTIONS=1 / bidder 分片跑。
+rule q11_user_session {
+    events { b : bid_events }
+    match<bidder:session(60s)> {
+        on event { b | count >= 1; }
+    } -> score(10.0)
+    entity(digit, b.bidder)
+    yield nexmark_alerts (id = b.bidder, alert_type = "q11_session", detail = "bidder session", request_count = 1)
+    limits { max_memory = "512MB" }
+}

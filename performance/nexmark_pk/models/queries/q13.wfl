@@ -1,0 +1,17 @@
+use "nexmark.wfs"
+
+// Q13：有界侧输入 join——bid ⋈ person 快照 join（对齐 Flink Q13「Bounded Side Input Join」）。
+//
+// 把 person 表作为（准静态）侧输入，每条 bid 快照查找 bidder → person。
+// wfusion 的 snapshot join 对缓冲窗口做索引查找；person 流在 NEXMark 数据里近静态
+// （2%，更新少），近似有界侧输入。测试 **第二窗口 snapshot join** 能力面。
+rule q13_bid_person_join {
+    events { b : bid_events }
+    match<bidder:10m> {
+        on event { b | count >= 1; }
+    } -> score(10.0)
+    join person_events snapshot on b.bidder == person_events.id
+    entity(digit, b.bidder)
+    yield nexmark_alerts (id = b.bidder, alert_type = "q13_sidejoin", detail = "bid joined person", request_count = 1)
+    limits { max_memory = "512MB" }
+}

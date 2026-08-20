@@ -1,0 +1,17 @@
+use "nexmark.wfs"
+
+// Q17：distinct 聚合——每 auction 的**去重 bidder 数** ≥ 20 触发（对齐 Flink Q17 的
+// 去重/集合聚合面，白皮书 3.80×）。
+//
+// 用 sliding `match<auction:10m>` + `b.bidder | distinct | count`：按 auction 累积
+// distinct bidder 集合，第 20 个不同 bidder 出现时 fire，fire 后实例 reset。测试
+// **distinct 变换 + 窗口 measure** 能力面（此前查询未覆盖）。
+rule q17_distinct_bidders_20 {
+    events { b : bid_events }
+    match<auction:10m> {
+        on event { b.bidder | distinct | count >= 20; }
+    } -> score(20.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q17_dist20", detail = "20+ distinct bidders", request_count = 1)
+    limits { max_memory = "512MB" }
+}

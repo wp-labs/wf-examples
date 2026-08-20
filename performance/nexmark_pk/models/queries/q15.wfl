@@ -1,0 +1,16 @@
+use "nexmark.wfs"
+
+// Q15：过滤 + 滑窗计数——高价 bid（price > 100）在 10m 窗口内 ≥ 5 的 auction。
+//
+// 对齐 Flink Q15 的「过滤 + 窗口聚合」面（中等复杂度查询，白皮书 4.30×）。
+// 用 sliding `match<auction:10m>` + bind filter（`b.price > 100`）+ count 阈值，
+// fire 后实例 reset。测试 **bind filter + 滑窗计数** 组合能力面。
+rule q15_high_bid_count_5 {
+    events { b : bid_events && b.price > 100 }
+    match<auction:10m> {
+        on event { b | count >= 5; }
+    } -> score(25.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q15_hi5", detail = ">=5 high bids", request_count = 1)
+    limits { max_memory = "512MB" }
+}

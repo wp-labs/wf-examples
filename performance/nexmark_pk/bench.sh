@@ -10,15 +10,19 @@
 #            （~760k，客户端实时编码受限）—— 测长时实时流稳定性/内存有界
 #
 # 用法:
-#   ./bench.sh [query=q1|q2|q3|q4|q5|q7|q9|all] [feed=cont|stream] [total=100m|30m|10m]
+#   ./bench.sh [query=q1|..|q22|all] [feed=cont|stream] [total=100m|30m|10m]
 #   调优用环境变量（并行度默认取 conf/wfusion.toml）:
 #     PARSE_PARALLELISM / RULE_PARALLELISM / MAX_FRAME_BYTES / MAX_FRAME_ROWS
 #     MAX_INGEST_RATE（引擎端限速）/ RATE / SLICE_MS（stream）
-#     CONNECTIONS（cont 并发连接数，默认 4——2026-08-17 实测 100m 下
-#       c4=5.91M ≈ c16=5.93M > 单连接 4.5M,4 即甜点;配合 SHARD_KEYS 走
-#       生成时分片 --shard-files,同 key 同连接(键闭包),有状态负载也安全）
-#     SHARD_KEYS（分片键，默认 "bid_events:auction"，见 wp-reactor
-#       docs/design/concurrency-scaling.md §3.1;置空 = 纯 copy 多连接）
+#     CONNECTIONS（cont 并发连接数，默认 4——2026-08-18 晚实测：发送分片数对
+#       端到端 EPS 不敏感（主墙是规则 CPU 而非 ingress；C=4 与 C=8 同落在
+#       load 噪声带内，q1-throughput-bisection 记录），余度后把默认从 8 降到
+#       4 减连接开销；配 SHARD_KEYS 走生成时分片 --shard-files，同 key 同连接
+#       （键闭包），有状态负载也安全）
+#     SHARD_KEYS（分片键，默认三流各自按键分 "bid_events:auction,
+#       auction_events:id,person_events:id"——避免旧单键分片把 auction/person
+#       全塞进 s0 热点分片；见 wp-reactor docs/design/q1-throughput-bisection.md
+#       §4；置空 = 纯 copy 多连接）
 #     WARMUP=1（cont：先跑一轮预热不计结果——stash 重建后首跑系统性偏低，须剔除）
 # 示例:
 #   PARSE_PARALLELISM=6 RULE_PARALLELISM=6 MAX_FRAME_BYTES=204800 ./bench.sh q1 cont 100m
@@ -48,8 +52,9 @@ WARMUP="${WARMUP:-0}"
 CONNECTIONS="${CONNECTIONS:-4}"
 # 按流指定分区 key(键闭包):"bid_events:auction,auction_events:id,person_events:id"
 # 配合 CONNECTIONS>1,同 key 事件同连接,有状态规则也安全(实测 emitted 与单连接逐位一致)
-# 默认 bid_events:auction —— 2026-08-17 实测 100m 下 4 分片 ≈ 16 分片吞吐,16 不再拆。
-SHARD_KEYS="${SHARD_KEYS:-bid_events:auction}"
+# 默认三流各自按键分(2026-08-18)——旧单键(bid_events:auction)把 auction/person
+# 全塞进 s0 热点分片(ingress 卡 14.05M);三流分片均匀(默认 4 分片,每片 ~2.5GB)。
+SHARD_KEYS="${SHARD_KEYS:-bid_events:auction,auction_events:id,person_events:id}"
 
 # 二进制来源：优先本地 warp-fusion 的 target/release 构建（仅当存在时）；否则回退 PATH。
 # 不把路径固化为 ../../../warp-fusion —— 脚本可复制到任意目录运行，只要 wfusion/wfgen 在 PATH。
@@ -80,9 +85,9 @@ case "$TOTAL" in
   *) echo "bad total '$TOTAL' (10m|30m|100m)"; exit 1;;
 esac
 case "$QUERY" in
-  q1|q2|q3|q4|q5|q7|q9) QUERIES=("$QUERY");;
-  all) QUERIES=(q1 q2 q3 q4 q5 q7 q9);;
-  *) echo "bad query '$QUERY' (q1|q2|q3|q4|q5|q7|q9|all)"; exit 1;;
+  q1|q2|q3|q4|q5|q6|q7|q8|q9|q10|q11|q12|q13|q14|q15|q16|q17|q18|q19|q20|q21|q22) QUERIES=("$QUERY");;
+  all) QUERIES=(q1 q2 q3 q4 q5 q6 q7 q8 q9 q10 q11 q12 q13 q14 q15 q16 q17 q18 q19 q20 q21 q22);;
+  *) echo "bad query '$QUERY' (q1..q22|all)"; exit 1;;
 esac
 case "$FEED" in
   cont|stream) ;;
@@ -233,11 +238,11 @@ start_daemon() {
   echo "$D"
 }
 
-# 引擎端到端游标：window append_total 按输入流求和（auction/bid/person）。
-# receiver rows_total 是无界预读游标（cont 下 15s 即可拉完 100M 堆内存），
-# 用它当计时终点测的是预读速度而非处理能力。window→rule 推送通道有界
-# （RULE_CHANNEL_CAPACITY=32，满则 send().await 阻塞），append 被最慢 rule
-# 反压，故 append 追平 ≈ 规则真正吃完（误差 ≤32 批次，100M 下 <0.5%）。
+# 引擎端到端游标（pull 模型）：
+# - append_total：三输入流已 append 的行数累计（EPS 口径 + "数据已全部进入 window"）。
+# - acked_lag：每窗口 next_seq - min_acked（未 ack 批数，0 = 所有规则已消费到最新）。
+# pull 下 actor 与 rule 解耦，append 追平 ≠ 规则吃完（曾致 Q3 metrics 漏报尾部 emit）。
+# 完成条件 = append 追平 TOTAL 且 acked_lag 归零。
 engine_appended() {
   "$PY" -c "
 import json
@@ -248,6 +253,19 @@ for line in open('data/metrics.ndjson'):
     if o.get('name')=='append_total' and o.get('label') in ('auction_events','bid_events','person_events'):
         s+=int(o.get('value',0))
 print(s)"
+}
+
+# pull 完成信号：三输入窗口最新 acked_lag 之和（0 = 规则全消费完）。
+engine_acked_lag() {
+  "$PY" -c "
+import json
+lag={}
+for line in open('data/metrics.ndjson'):
+    try: o=json.loads(line)
+    except: continue
+    if o.get('name')=='acked_lag' and o.get('label') in ('auction_events','bid_events','person_events'):
+        lag[o.get('label')]=int(o.get('value',0))
+print(sum(lag.values()))"
 }
 
 # ---- 正确性摘要：emitted_total（按规则）+ 致命计数器 ----
@@ -280,7 +298,11 @@ EOF
 # 并行度混淆（曾因口径混杂误判 ±8%）。
 report_result() {
   local Q="$1" FEED="$2" OUT="$3" BODY="$4"
-  local CTX="p=${PARSE_V_EFF} r=${RULE_V_EFF} c=${CONNECTIONS}${SHARD_KEYS:+" s=${SHARD_KEYS%%:*}"} frame_mb=$((MAX_FRAME_BYTES/1048576)) $(date +%m-%d_%H:%M:%S)"
+  # loadavg（1-min）随结果记录：本机是常载开发机（Zed/VM/WorkBuddy 等后台 ~6-7），
+  # 同一配置的 EPS 随后台干扰在 43↔55M 间摆动（见 q1-throughput-bisection.md §9），
+  # 结果行不带负载上下文无法解释相位差异。
+  local LD; LD=$(sysctl -n vm.loadavg 2>/dev/null | awk '{printf "%.1f", $2}')
+  local CTX="p=${PARSE_V_EFF} r=${RULE_V_EFF} c=${CONNECTIONS}${SHARD_KEYS:+" s=${SHARD_KEYS%%:*}"} frame_mb=$((MAX_FRAME_BYTES/1048576)) load=${LD:-n/a} $(date +%m-%d_%H:%M:%S)"
   { echo "$BODY $CTX"; echo "-- correctness --"; correctness_summary; } >> "$OUT"
   # SUMMARY 行回显到 stdout（EMIT 行只进文件）
   local SUM
@@ -355,15 +377,22 @@ run_cont_one() {
     "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT --connections "$CONNECTIONS" > /dev/null 2>&1 &
   fi
   local CLIENT=$!
-  # 等引擎真正消化完（append 追平 TOTAL，而非 ingress 预读）。
+  # 等引擎真正消化完（append 追平 TOTAL 且所有规则 ack 追平，而非 ingress 预读）。
   # 超时自适应：按 100k/s 诚实下限 + 600s 余量（on-each 单线程 ~0.3M/s，
   # 100M 需 ~333s；旧的 300s 上限会在真实负载下提前超时）。
   local MAX_SEC=$(( TOTAL_N / 100000 + 600 ))
   local T2=0 APP=0 TIMEOUT=0
-  for j in $(seq 1 $(( MAX_SEC * 2 ))); do
+  # 轮询 0.1s：metrics exporter 100ms 落盘（conf/wfusion.toml report_interval），
+  # T2 误差 ≤ exporter 间隔 + 轮询间隔 ≈ 200ms——短跑（~1s feed）读数才可信
+  # （旧 1s 落盘 + 0.5s 轮询把 EPS 量化成 43/55/84M 伪档，见 wp-reactor §12）。
+  for j in $(seq 1 $(( MAX_SEC * 10 ))); do
     APP=$(engine_appended)
-    if [ "${APP:-0}" -ge "$TOTAL_N" ]; then T2=$("$PY" -c 'import time; print(time.time())'); break; fi
-    sleep 0.5
+    DRAINED=$(engine_acked_lag)
+    if [ "${APP:-0}" -ge "$TOTAL_N" ] && [ "${DRAINED:-1}" = "0" ]; then
+      T2=$("$PY" -c 'import time; print(time.time())')
+      break
+    fi
+    sleep 0.1
   done
   # 追平后 kill 客户端：CONNECTIONS>1 时客户端会推 CONNECTIONS×TOTAL 事件，
   # 引擎只需消化 TOTAL（口径统一）；单连接时客户端已推完，kill 无害。
@@ -397,7 +426,7 @@ run_stream_one() {
     --rate "$RATE" --slice-ms "$SLICE_MS" > data/stream.log 2>&1 &
   local S=$!
 
-  # 等引擎消化完（append 追平 TOTAL）。若引擎持续能力 < RATE，backlog 会
+  # 等引擎消化完（append 追平 TOTAL 且规则 ack 追平）。若引擎持续能力 < RATE，backlog 会
   # 一直堆积、append 永远追不上 → 超时退出，此时 EPS 按实际 append 数计算，
   # 即"撑不住目标速率"的诚实信号。
   local MAX_SEC=900
@@ -406,7 +435,11 @@ run_stream_one() {
   local T2=0 APP=0 TIMEOUT=0
   for j in $(seq 1 $(( MAX_SEC * 2 ))); do
     APP=$(engine_appended)
-    if [ "${APP:-0}" -ge "$TOTAL_N" ]; then T2=$("$PY" -c 'import time; print(time.time())'); break; fi
+    DRAINED=$(engine_acked_lag)
+    if [ "${APP:-0}" -ge "$TOTAL_N" ] && [ "${DRAINED:-1}" = "0" ]; then
+      T2=$("$PY" -c 'import time; print(time.time())')
+      break
+    fi
     sleep 0.5
   done
   if [ "$T2" = 0 ]; then T2=$("$PY" -c 'import time; print(time.time())'); TIMEOUT=1; fi

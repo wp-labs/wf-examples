@@ -1,0 +1,20 @@
+use "nexmark.wfs"
+
+// Q16：fixed 窗口 + `on close` 窗口聚合——每固定 10m 窗口收口时，auction 的 bid 总额
+// ≥ 1000 发告警（对齐 Flink Q16 的复杂窗口聚合面，白皮书 2.72×）。
+//
+// 用 fixed 窗口 + `and close` sum measure：窗口内 sum(b.price) 累计，窗口到期收口时
+// 判断阈值。测试 **on close 窗口聚合（sum）** 能力面（与 Q6 on-event avg 互补）。
+//
+// 注：`on close` 的 sum/avg measure 在 fixed 窗口收口路径**可用**（单测 + 端到端验证，
+// sum≥1000 10m EMIT 257,944）；早先 sum≥200k/10000 出 0 是阈值超过窗口 sum 量级所致。
+rule q16_sum_price_1000 {
+    events { b : bid_events }
+    match<auction:10m:fixed> {
+        on event { b | count >= 1; }
+        and close { total: b.price | sum >= 1000; }
+    } -> score(30.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q16_sum1000", detail = "window sum >= 1000", request_count = 1)
+    limits { max_memory = "512MB" }
+}

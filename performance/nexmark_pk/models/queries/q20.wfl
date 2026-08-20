@@ -1,0 +1,19 @@
+use "nexmark.wfs"
+
+// Q20：无序并存（`on event any`）——每 auction 的 bid 同时满足 count≥2 与 count≥3
+// 时触发（等价 count 到 3，但走 any 并行求值路径；对齐 Flink Q20 的无序/并行面，白皮书 3.20×）。
+//
+// 用 sliding `match<auction:10m>` + `on event any { b | count >= 2; b | count >= 3; }`：
+// 各 step 并行累计，全部满足即 fire。测试 **`on event any` 无序 step** 能力面。
+rule q20_any_count_3 {
+    events { b : bid_events }
+    match<auction:10m> {
+        on event any {
+            b | count >= 2;
+            b | count >= 3;
+        }
+    } -> score(20.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (id = b.auction, alert_type = "q20_any3", detail = "count >= 3 (any)", request_count = 1)
+    limits { max_memory = "512MB" }
+}
