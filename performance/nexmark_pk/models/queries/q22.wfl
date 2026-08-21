@@ -16,20 +16,18 @@ use "nexmark.wfs"
 // `mvindex()` = 数组取元素；dir1/dir2/dir3 拼入 detail（sink schema 为 nexmark_alerts
 // 四列，输出信息对齐官方 7 列投影）。数据 url 为官方 3 段目录格式（wfgen 对齐）。
 //
-// 工作负载：27.6M bid 无状态投影 + 每事件 split（3 段目录）——对齐 Flink Q22 的
-// 纯投影面（无窗口无状态，吞吐应接近 q1/q10 量级）。
+// 工作负载：27.6M bid 无状态投影 + 每事件 split 一次（`let parts = split(...)`
+// 绑定，每事件仅求值一次，避免 yield 里 3 次重复 split）——对齐 Flink Q22 的
+// 纯投影面（无窗口无状态）。
 rule q22_url_dirs {
     events { b : bid_events }
+    let parts = split(b.url, "/")
     on each b -> score(10.0)
     entity(digit, b.auction)
     yield nexmark_alerts (
         id = b.auction,
         alert_type = "q22_dir",
-        detail = concat(
-            mvindex(split(b.url, "/"), 3), "/",
-            mvindex(split(b.url, "/"), 4), "/",
-            mvindex(split(b.url, "/"), 5)
-        ),
+        detail = concat(mvindex(parts, 3), "/", mvindex(parts, 4), "/", mvindex(parts, 5)),
         request_count = 1
     )
     limits { max_memory = "512MB" }
@@ -40,5 +38,8 @@ test q22_dir_hit for q22_url_dirs {
     row(b, auction = 1, bidder = 1, price = 100, channel = "G",
         url = "https://www.nexmark.com/aaaaa/bbbbb/ccccc/item.htm?query=1");
   }
-  expect { hits == 1; }
+  expect {
+    hits == 1;
+    hit[0].field("detail") == "aaaaa/bbbbb/ccccc";
+  }
 }

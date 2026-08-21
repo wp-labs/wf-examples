@@ -374,17 +374,19 @@ FROM bid;
 | 版本 | EPS | RSS | vs VVR | 语义 |
 |---|---|---|---|---|
 | 旧（asof join） | 2.83M | 16.0GB | 0.88× | ❌ 自创 |
-| 新（URL split） | 4.31M | 16.2GB | 1.35× | ✅ 官方 |
+| 新（URL split ×3） | 4.31M | 16.2GB | 1.35× | ✅ 官方 |
+| **新 + `let` 绑定（split ×1）** | **6.63M** | **13.4GB** | **2.1×** | ✅ 官方 |
 
-**性能剖析（新）**：EPS 4.31M 低于无字符串的 q1（19.5M），根因是**每事件字符串
-处理成本**——`split` 返回 `Vec<String>`（每事件 3 次 split ≈ 24 次小字符串分配 +
-3 次 `mvindex` + `concat` 2 次分配），30M 事件 ≈ 6.6 亿次小分配。消化慢
-（4.3M/s → 30M 需 ~7s）→ send-arrow 秒推帧在管道积压 → RSS 16GB（与 q12 同类
-积压，非泄漏）。
+**性能剖析**：EPS 低于无字符串的 q1（19.5M），根因是**每事件字符串处理成本**——
+`split` 返回 `Vec<String>`（每事件 3 次 split ≈ 24 次小分配 + 3 次 `mvindex` +
+2 次 `concat` 分配）。**2026-08-21 新增 wfl `let` 绑定**（每事件求值一次）：
+`let parts = split(b.url, "/")` 替代 3 次重复 split → EPS 4.31M → 6.63M（+54%）、
+RSS 16.2GB → 13.4GB（消化加快、积压减小）、vs VVR 1.35× → 2.1×。
+剩余成本：3 次 `mvindex` + 2 次 `concat`（~5 次小分配/事件）。
 
 > 注：官方 Flink 的 SPLIT_INDEX 同为每事件字符串切分（VVR 3.2M RPS 亦含此成本），
-> 本实现 1.35× 已超 VVR；进一步优化需引擎侧 split 公共子表达式缓存或减少分配
-> （wfl 无 let 绑定，3 次 split 同一字符串）。
+> 本实现 2.1× 已超 VVR；`let` 绑定是通用语言能力（parser/checker/compiler/engine
+> 全链路，见 wf-lang `let_clause` + `RulePlan.lets` + on-each 注入）。
 
 ## 6. 未对齐查询的处理原则
 
