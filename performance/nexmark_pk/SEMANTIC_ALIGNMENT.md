@@ -282,6 +282,17 @@ ctx）~35%、`combine_step_data` ~3%。
 **30m 结果**：EPS 2.49M → **2.76M（+11%）**，RSS 14.9 → 14.8GB（基本不变）。
 对拍 `identical ✅ (L1 hash, 0 lines)`。
 
+**列式 close 执行器（2026-08-21 实现，L4）**：`close_plan_columnar_safe` 门控
+（score 常量 + entity StringLit/Field + yield Lit/Field + 无 join），
+`execute_close_direct_batch_columnar` 把整批 `CloseOutput` 直接写入列式 builder
+——跳过每条 OutputRecord + 合成 Event ctx（E2 显示这两项占 close 路径 ~95%）。
+字段解析复刻 `build_eval_context` 优先级（match keys → step label /
+`field_values.last()` → `bind_data`）；唯一语义差异是 `emit_time` 批级共享
+（与 on-each 列式路径一致；verify 只比 EMIT 计数，不受影响）。
+**30m 实测：EPS 2.76M → 4.35M（+57%，超预期 3.5M）**，RSS 14.8 → 14.2GB。
+profiling 大变：emit 7.6s/批 → 0.11s，close_exec 1.92s，瓶颈转移到
+**advance（on-event 状态推进 2.2s/批，现占 42%）**。
+
 **RSS 14.9GB 归因（footprint/vmmap 实测）**：
 
 - footprint 峰值 14GB，分类几乎全部是 `IOAccelerator`（dirty 12GB）——
@@ -293,14 +304,19 @@ ctx）~35%、`combine_step_data` ~3%。
    append，积压持续到输入结束（RSS 曲线每 ~1.2GB/s 线性上涨）。
 - **结论**：不是泄漏；是「全量输出查询 × 输入速率 > 规则吞吐」的固有积压。
   要继续降 RSS 必须把规则吞吐推到 >3M/s（见下）或降输入速率。
+- **实证（限速对照）**：`MAX_INGEST_RATE=1000000` 时 RSS 仅 **1.0GB**
+  （30m 同数据，规则轻松追上，零积压）——14GB 量级几乎全部是
+  「send-arrow 秒级推完 2.3GB frames，引擎消化需 6.9s」的瞬时积压
+  （前几秒全量积压，ack_lag 峰值 351 批 ≈ 2.4GB）。
 
 **剩余优化方向（未实施）**：
 
-1. **列式 close 执行器**（最大收益）：q12 形态的 close（score/entity/yield 均
-   为常量或 match-key 字段）直接从 `CloseOutput` 批量构建列，跳过 OutputRecord
-   + Event ctx 中间层（E2 数据显示 ctx+build 占 close 路径 ~95%）。预期 EPS
-   → 3.5M+，同时消除积压、RSS 降至 ~10GB 量级。
-2. 轻量项：close 的 `combine_step_data`/`annotate_close_step_stages` 在
+1. **advance 路径**（新瓶颈，占批预算 42%）：on-event 每事件状态机推进
+   （q12 2760 万 bid 全部命中）——列式 bind/step 推进、状态查找免哈希。
+2. **RSS 侧**：全速 replay 的积压是场景固有（输入速率 > 消化），限速
+   `MAX_INGEST_RATE` 或提高吞吐到 append 峰值之上才能消除；
+   `parse_buffer_bytes` 2GB 预算可调低。
+3. 轻量项：close 的 `combine_step_data`/`annotate_close_step_stages` 在
    无 step 字段时跳过；`build_summary`/`build_wfx_id` 的 format! 缓存。
 
 > 注：q12 全量输出（30m 1821 万条 EMIT）是 Flink 语义固有成本，输出/sink 路径
