@@ -62,7 +62,8 @@ wfgen verify-nexmark <N> --query qN
 | q18 | ✅ 对齐 | 累积聚合 | `on event<accu>` 累积 | 等价（fire 不清零） |
 | q19 | ✅ 对齐 | 序列/时序 | `on event seq` 双 bid 60s 内 | 等价 |
 | q20 | ✅ 对齐 | 无序/并行 | `on event any` count 并行 | 等价 |
-| q22 | ✅ 对齐 | asof join | `join ... asof within 60s` | 等价（每 bid 必命中 person） |
+| q21 | ✅ 对齐（2026-08-21 能力面，非官方扩展） | 加 channel_id（nexmark-flink 扩展，Not in original suite） | anti join person（能力面测试） | 官方 q21 为 url 加 channel_id 纯投影；本地以 anti join 测能力面，非官方语义（见 §5.x） |
+| q22 | ✅ 对齐（2026-08-21 重写） | **URL Directories**：每 bid 取 url split('/') 索引 3/4/5 为 dir1/dir2/dir3（nexmark-flink 扩展，Not in original suite，白皮书 3.04×） | `on each` + `split(b.url,"/")` + `mvindex` 投影（dir 拼入 detail） | 见 §5.x：旧 asof join 版（能力面测试，与官方不符）作废；数据 url 已对齐官方 3 段目录格式 |
 
 > 判定依据：各 `models/queries/*.wfl` 头部注释 + 对拍验证。q4/q6/q9 三类未完全对齐
 > 的查询，PK 表格中须标注（见 §6）。
@@ -336,6 +337,54 @@ ctx）~35%、`combine_step_data` ~3%。
 > 注：q12 全量输出（30m 1821 万条 EMIT）是 Flink 语义固有成本，输出/sink 路径
 > 无法「优化掉」；benchmark 若只关心规则处理吞吐，可改用 blackhole sink（当前
 > 已是）并在口径上注明。
+
+### 5.8 案例：Q22 语义对齐（2026-08-21，URL Directories）
+
+**变更前**：本地 q22 为「asof join person（within 60s）」——能力面测试（每 bid
+关联最近 person），**与官方语义不符**（自创）。30m 性能：EPS 2.83M、RSS 16.0GB、
+vs VVR 0.88×（全表最弱）。
+
+**官方语义**（nexmark-flink `queries/q22.sql`，标注 Not in original suite、白皮书
+采用）：
+
+```sql
+-- Query 22: Get URL Directories
+SELECT auction, bidder, price, channel,
+       SPLIT_INDEX(url, '/', 3) as dir1,
+       SPLIT_INDEX(url, '/', 4) as dir2,
+       SPLIT_INDEX(url, '/', 5) as dir3
+FROM bid;
+```
+
+每 bid 按 `/` 切 url（0 基索引）取第 3/4/5 段目录，**纯投影无状态**。
+
+**对齐步骤**：
+1. **数据侧**：wfgen 的 url 改为官方 `getBaseUrl` 格式
+   `https://www.nexmark.com/{5}/{5}/{5}/item.htm?query=1[&channel_id=N]`
+   （3 段 5 字符目录）——此前为 `hot/{i}` / 单段模板，split 索引 3/4/5 会越界。
+2. **规则侧**：`q22.wfl` 重写为 `on each` + `split(b.url,"/")` + `mvindex` 3/4/5
+   （wfl `split` = Flink SPLIT_INDEX 同款 `str::split`，0 基），dir 拼入 detail
+   （sink 为 nexmark_alerts 四列，输出信息对齐官方 7 列投影）。
+
+**验证**：oracle EMIT = 每 bid 一条（10m = 9,200,000），引擎对拍 L1 hash 一致、
+`[clean]`。
+
+**性能对比（30m，新数据 v3）**：
+
+| 版本 | EPS | RSS | vs VVR | 语义 |
+|---|---|---|---|---|
+| 旧（asof join） | 2.83M | 16.0GB | 0.88× | ❌ 自创 |
+| 新（URL split） | 4.31M | 16.2GB | 1.35× | ✅ 官方 |
+
+**性能剖析（新）**：EPS 4.31M 低于无字符串的 q1（19.5M），根因是**每事件字符串
+处理成本**——`split` 返回 `Vec<String>`（每事件 3 次 split ≈ 24 次小字符串分配 +
+3 次 `mvindex` + `concat` 2 次分配），30M 事件 ≈ 6.6 亿次小分配。消化慢
+（4.3M/s → 30M 需 ~7s）→ send-arrow 秒推帧在管道积压 → RSS 16GB（与 q12 同类
+积压，非泄漏）。
+
+> 注：官方 Flink 的 SPLIT_INDEX 同为每事件字符串切分（VVR 3.2M RPS 亦含此成本），
+> 本实现 1.35× 已超 VVR；进一步优化需引擎侧 split 公共子表达式缓存或减少分配
+> （wfl 无 let 绑定，3 次 split 同一字符串）。
 
 ## 6. 未对齐查询的处理原则
 

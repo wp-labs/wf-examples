@@ -1,20 +1,44 @@
 use "nexmark.wfs"
 
-// Q22：asof join——每 bid 按时间邻近（within 60s）关联最近的 person 事件（对齐 Flink
-// Q22 的时间邻近 join 面，白皮书 3.04×）。
+// Q22：Get URL Directories（Flink 官方 q22，nexmark-flink 扩展查询，白皮书 3.04×）。
 //
-// `join person_events asof within 60s on b.bidder == person_events.id`：bid 与
-// person_events 时间戳最近且 within 60s 的行关联。NEXMark 数据里 person 贯穿整个
-// 时间轴（均匀分布），bid 随时能在 60s 内找到 person → 测试 **asof join** 能力面。
+// 官方实现（nexmark-flink/src/main/resources/queries/q22.sql）：
+//   SELECT auction, bidder, price, channel,
+//          SPLIT_INDEX(url, '/', 3) as dir1,
+//          SPLIT_INDEX(url, '/', 4) as dir2,
+//          SPLIT_INDEX(url, '/', 5) as dir3
+//   FROM bid;
+// —— 每 bid 按 '/' 切 url（0 基索引），取第 3/4/5 段为目录结构，纯投影无状态。
 //
-// 用 on each 路径（与 q1 同理）：Flink Q22 是每 bid 一次 asof join、零 key 状态；
-// keyed 的 match<auction:10m>+count>=1 会为每个 auction 建实例表，高基数下涨破缓存
-// 拖垮吞吐（见 q1.wfl 注释的 2026-08-15 实测）。
-rule q22_asof_person {
+// 2026-08-21 语义对齐：旧版为「asof join person（within 60s）」能力面测试（自创语义，
+// 与官方不符，性能剖析见 OSS_VVR_BASELINE.md §3.5 旧表），已重写为官方语义。
+// wfusion 能力面映射：`split()` = Flink SPLIT_INDEX 同款 str::split（0 基），
+// `mvindex()` = 数组取元素；dir1/dir2/dir3 拼入 detail（sink schema 为 nexmark_alerts
+// 四列，输出信息对齐官方 7 列投影）。数据 url 为官方 3 段目录格式（wfgen 对齐）。
+//
+// 工作负载：27.6M bid 无状态投影 + 每事件 split（3 段目录）——对齐 Flink Q22 的
+// 纯投影面（无窗口无状态，吞吐应接近 q1/q10 量级）。
+rule q22_url_dirs {
     events { b : bid_events }
     on each b -> score(10.0)
-    join person_events asof within 60s on b.bidder == person_events.id
     entity(digit, b.auction)
-    yield nexmark_alerts (id = b.auction, alert_type = "q22_asof", detail = "asof joined person", request_count = 1)
+    yield nexmark_alerts (
+        id = b.auction,
+        alert_type = "q22_dir",
+        detail = concat(
+            mvindex(split(b.url, "/"), 3), "/",
+            mvindex(split(b.url, "/"), 4), "/",
+            mvindex(split(b.url, "/"), 5)
+        ),
+        request_count = 1
+    )
     limits { max_memory = "512MB" }
+}
+
+test q22_dir_hit for q22_url_dirs {
+  input {
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G",
+        url = "https://www.nexmark.com/aaaaa/bbbbb/ccccc/item.htm?query=1");
+  }
+  expect { hits == 1; }
 }

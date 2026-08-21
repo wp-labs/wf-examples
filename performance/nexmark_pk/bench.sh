@@ -94,10 +94,11 @@ RATE="${RATE:-3000000}"
 SLICE_MS="${SLICE_MS:-1000}"
 WARMUP="${WARMUP:-0}"
 CONNECTIONS="${CONNECTIONS:-1}"
-# 数据版本指纹：gen-nexmark 排序输出（2026-08-20）后，帧/分片缓存必须带版本号，
-# 否则旧乱序缓存被静默复用（时间驱逐失效、窗口持全量、RSS 20GB+ 的根因）。
-# 换 DATA_VER 即强制重新生成对应版本缓存。
-DATA_VER="${DATA_VER:-v2}"
+# 数据版本指纹：gen-nexmark 输出（2026-08-20 v2 排序；2026-08-21 v3 严格对齐
+# Flink 官方口径：价格对数均匀/热点/引用窗口/字符串随机/extra padding/url 3 段目录）。
+# 帧/分片缓存必须带版本号，否则旧口径缓存被静默复用（时间驱逐失效、窗口持全量、
+# RSS 20GB+ 的根因）。换 DATA_VER 即强制重新生成对应版本缓存。
+DATA_VER="${DATA_VER:-v3}"
 # 键闭包分片键：默认空 = 单连接整文件推（时间有序 → 时间驱逐生效）。
 # CONNECTIONS>1 时配三流各自按键分，走生成时 shard-frames（同 key 同连接）。
 SHARD_KEYS="${SHARD_KEYS:-}"
