@@ -358,6 +358,23 @@ fixed 窗口 + `and close` 规则的引擎 EMIT **非确定**（`wp-reactor` wf-
 - 因此 verify-nexmark 对 q9/q16 报**已知差异 ⚠**（oracle 为"所有窗口最终收口"理想值），
   不判失败；引擎侧确定性 EOF 收口（源连接关闭后跑一次无界扫尾）为待办修复。
 
+### 6.2 join-then-key 的 P2 悬置缺口（q4/q6，实施前必须显式处理）
+
+join 字段作键（`match<category/seller>`）已落地 P0/P1（引擎 + checker + 测试），
+但 oracle 对拍侧（P2）有两条已知缺口，实施时若不处理会返工：
+
+1. **oracle 输出不走 join 富化**：oracle 路径调 `execute_match/execute_close`
+   （不富化 join 字段），引擎走 `execute_match_with_joins/execute_close_with_joins`。
+   若 join 键规则的 yield/entity/score 读额外 join 字段，富化字段会对拍失配。
+   **现状**：Q4/Q6 恰好只读键（category/seller）+ 聚合（avg），不读额外 join
+   字段 → 可绕开；任何读 `auction.*` 的 yield 必须二选一：oracle 切
+   `*_with_joins` 并传 lookup，或约束规则面（v1 文档注明）。
+2. **右窗过期 watermark 来源未定义**：引擎的 auction 行驱逐由 auction 流自身
+   watermark 驱动；oracle 若用驱动事件（bid）的 event_nanos 当 watermark，late
+   bid 会提前驱逐 auction 行，两者发散。NEXMark 因 auction over ≈ 拍卖时长恰好
+   掩盖。v1 显式声明并验证「auction over 覆盖全部 bid 到达区间」这一 NEXMark
+   专用假设（oracle 按窗口分别跟踪 watermark 为备选）。
+
 ## 7. 引用注意
 
 - 引用任何 wfusion vs OSS/VVR 倍数前，先查 §4 状态表确认该查询语义对齐。
