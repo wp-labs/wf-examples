@@ -13,20 +13,22 @@ use "nexmark.wfs"
 //   FROM bid
 //   WHERE REGEXP_EXTRACT(url, '(&|^)channel_id=([^&]*)', 2) IS NOT NULL
 //         OR lower(channel) IN ('apple','google','facebook','baidu');
-// —— 每 bid 输出 channel_id（热通道按名映射 0/1/2/3，cold 从 url 提取
-// channel_id=N），WHERE 全量命中（热通道或 url 含 channel_id）→ 纯投影无状态。
+// —— 每命中 bid 输出 channel_id（热通道按名映射 0/1/2/3，cold 从 url 提取
+// channel_id=N）。官方 cold 通道 10% 概率无 channel_id 参数（BidGenerator
+// createChannelUrlCache 的 `random.nextInt(10) > 0` 90% 追加）→ WHERE 过滤
+// 掉这些行：输出量 = 热 50% + cold 有参 90%×50% = **95%** 的 bid（非全量）。
 //
-// 2026-08-21 语义对齐：旧版为「anti join person（bidder 不在 person）」能力面测试
-// （自创语义，与官方不符，v3 全表最弱 1.0×），已重写为官方语义。
-// wfusion 能力面映射：channel_id 为**数据生成时已知**的值（wfgen 按官方 CASE 映射
-// 与 url channel_id 计算后随 bid 输出，见 NEXMARK_CONFORMANCE.md），规则侧投影
-// 读取——wfl 无 CASE WHEN/正则函数，等价 SQL 计算在数据侧完成，输出值一致；
-// sink 为 nexmark_alerts 四列，channel_id 放 detail（与 q22 同款映射）。
+// 2026-08-22 语义修正：数据侧 wfgen 已模拟官方 90% 追加（无 channel_id 的
+// cold bid 输出 channel_id = ""），bind filter `channel_id != ""` 等价官方
+// WHERE（热通道字段恒非空 "0".."3"，cold 有参非空，cold 无参为空串被滤掉）。
+// wfusion 能力面映射：channel_id 为**数据生成时已知**的值（wfgen 按官方 CASE
+// 映射与 url channel_id 计算后随 bid 输出，见 NEXMARK_CONFORMANCE.md），规则侧
+// 过滤 + 投影读取；sink 为 nexmark_alerts 四列，channel_id 放 detail。
 //
-// 工作负载：27.6M bid 无状态投影（每 bid 输出 channel_id）——对齐 Flink Q21 的
-// 纯投影面，吞吐应接近 q1/q10 量级。
+// 工作负载：27.6M×95% ≈ 26.2M bid 过滤 + 无状态投影——对齐 Flink Q21 的
+// 过滤+投影面。
 rule q21_channel_id {
-    events { b : bid_events }
+    events { b : bid_events && b.channel_id != "" }
     on each b -> score(10.0)
     entity(digit, b.auction)
     yield nexmark_alerts (
@@ -57,5 +59,19 @@ test q21_cold_channel for q21_channel_id {
   expect {
     hits == 1;
     hit[0].field("detail") == "42";
+  }
+}
+
+test q21_cold_no_channel_id_filtered for q21_channel_id {
+  // 官方 cold 通道 10% 无 channel_id（url 无参数）→ WHERE 过滤，不输出。
+  input {
+    row(b, auction = 3, bidder = 3, price = 300, channel = "channel-7", channel_id = "",
+        url = "https://www.nexmark.com/aaaaa/bbbbb/ccccc/item.htm?query=1");
+    row(b, auction = 4, bidder = 4, price = 400, channel = "channel-8", channel_id = "8",
+        url = "https://www.nexmark.com/aaaaa/bbbbb/ccccc/item.htm?query=1&channel_id=8");
+  }
+  expect {
+    hits == 1;
+    hit[0].entity_id == "4";
   }
 }

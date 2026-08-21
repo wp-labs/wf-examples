@@ -13,11 +13,11 @@ wfgen 的**字段级结构**（比例 / ID 基线 / PK-FK 引用窗口 / 热点�
 
 | # | 偏离项 | 严重度 | wfgen 实际（修复前） | 官方权威 | 状态（2026-08-22） |
 |---|--------|--------|-----------|----------|--------------------|
-| 1 | 事件时间映射 | 🔴 显著 | 固定 30min span，rate ∝ 1/count | 固定 100µs/事件，span ∝ count | ✅ 已修（`BASE_NS + event_id×100µs`） |
+| 1 | 事件时间映射 | 🔴 显著 | 固定 30min span，rate ∝ 1/count | 固定 100µs/事件，span ∝ count | ✅ 已修（`BASE_NS + event_id×100µs`；horizon 按官方毫秒取整 166/167ms 抖动） |
 | 2 | dateTime/expires 单位 | 🟡 中 | 纳秒 (ns) | 毫秒 (ms) | ⚠️ 保留（wfgen 全链路内部统一 ns 的约定，查询侧同口径） |
 | 3 | extra 填充方差 | 🟢 低 | 固定补齐到精确目标字节 | 目标字节附近 ±20% 随机抖动 | ✅ 已修（`nextExtra` ±20% 抖动） |
 | 4 | 字符串长度分布 | 🟢 低 | 固定长度、纯 a-z | 长度 3+rand(max-3)、a-z+~1/13 special | ✅ 已修（`nextString` 带 special 参数） |
-| 5 | 冷渠道选择 | 🟡 中低 | 顺序轮询计数器 + 原始 channel_id | 随机取 + `Integer.reverse(i)` | ✅ 已修（均匀随机 + `abs(Integer.reverse(i))`） |
+| 5 | 冷渠道选择 | 🟡 中低 | 顺序轮询计数器 + 原始 channel_id（100% 追加） | 随机取 + `Integer.reverse(i)`，且缓存创建时 90% 追加（`nextInt(10)>0`，10% 无参数） | ✅ 已修（均匀随机 + `abs(Integer.reverse(i))` + 90% 追加；q21 输出量对齐官方 95%） |
 | 6 | 热 URL 目录分隔符 | 🟢 低 | 纯 a-z 目录 | `nextString(5,'_')` 可能含 '_' | ✅ 已修（URL 目录用 `nextString(5,'_')`） |
 
 另：wfgen 额外注入 `_stream`/`_window`/`_timestamp`/`channel_id` 四个非官方 schema 字段（适配器扩展，预期内；`channel_id` 现与 URL 参数一致，q21 直接消费）。
@@ -95,12 +95,21 @@ let ns = BASE_NS + event_id * INTER_EVENT_DELAY_NS;
 
 ---
 
-## 🟡 #5 中低偏离：冷渠道选择 — ✅ 已修复
+## 🟡 #5 中低偏离：冷渠道选择 — ✅ 已修复（2026-08-22 复核补充 90% 追加）
 
-- 官方冷渠道：`random.nextInt(CHANNELS_NUMBER)` 从 10000 条预生成缓存里**随机**取，`channel_id` = `Math.abs(Integer.reverse(i))`（Java int 32 位反转）。
-- wfgen 冷渠道（修复后）：`rng.random_range(0..CHANNELS_NUMBER)` 均匀随机（官方逐 bid 随机取缓存，分布一致），`channel_id = (i as i32).reverse_bits().wrapping_abs()`（`wrapping_abs` 复刻 Java `Math.abs(Integer.MIN_VALUE)` 溢出返回负值的行为）。
-- 输出 JSON 的 `channel_id` 字段（q21 消费）现与 URL 的 `channel_id` 参数一致，`check_event` 增加两者一致性校验。
-- 2026-08-22 已修：随机取通道 + `Integer.reverse(i)` + 字段/URL 一致性自检。
+- 官方冷渠道：`random.nextInt(CHANNELS_NUMBER)` 从 10000 条预生成缓存里**随机**取；
+  `createChannelUrlCache` 创建时**每条独立 90% 概率**（`random.nextInt(10) > 0`）追加
+  `channel_id = Math.abs(Integer.reverse(i))`（Java int 32 位反转），**10% 无参数**。
+- wfgen 冷渠道（修复后）：`rng.random_range(0..CHANNELS_NUMBER)` 均匀随机（分布一致），
+  `channel_id = (i as i32).reverse_bits().wrapping_abs()`（复刻 Java `Math.abs(Integer.MIN_VALUE)`
+  溢出返回负值），且 **90% 概率携带** channel_id（`random_range(0..10) > 0`）、10% 无参数
+  （url 无 `&channel_id=`，JSON 字段输出空串）。
+- 输出 JSON 的 `channel_id` 字段（q21 消费）与 URL 参数一致（`check_event` 增双向校验：
+  Some → url 必须含该参数；cold None → url 不得含）。
+- **q21 输出量影响**：官方 WHERE 过滤无 channel_id 的 cold bid → 输出量 =
+  热 50% + cold 90%×50% = **95%** 的 bid（本地 `q21.wfl` 以 `channel_id != ""`
+  bind filter 等价表达，verify-nexmark 实测 100k → 87478/92000 = 95.1%）。
+- 2026-08-21 首修（随机取 + 位反转），2026-08-22 复核官方源码补 90% 追加概率。
 
 ---
 

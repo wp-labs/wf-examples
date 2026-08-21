@@ -28,7 +28,7 @@
 | 价格分布 | `nextPrice = round(10^(6u) × 100)` 对数均匀 [100, 1e8)，initialBid/reserve/bid.price 同分布、与冷热无关 | 同公式 | **对齐** |
 | auction 有效期 | `nextAuctionLengthMs = 1 + nextLong(2×horizonMs)`，horizon = 未来 `numInFlightAuctions=100` 个 auction 的生成间隔 = 1666×100µs = 0.1666s 固定 | 同公式（horizon 固定 0.1666s，随 count 不变） | **对齐**（平均有效期 ≈166ms，同时活跃 ~100 个 auction） |
 | category | `FIRST_CATEGORY_ID=10 + rand(5)` → 10..14（5 类） | 同 | **对齐** |
-| channel | 50% 热门 4 通道（Google/Facebook/Baidu/Apple）+ 50% `channel-0..9999`（官方 cold：`random.nextInt(CHANNELS_NUMBER)` 均匀随机，`channel_id = abs(Integer.reverse(i))`） | 同 | **对齐**（`channel_id` 字段与 URL 参数一致，`--check` 校验） |
+| channel | 50% 热门 4 通道（Google/Facebook/Baidu/Apple）+ 50% `channel-0..9999`（官方 cold：`random.nextInt(CHANNELS_NUMBER)` 均匀随机；`createChannelUrlCache` 逐条 90% 概率追加 `channel_id = abs(Integer.reverse(i))`，10% 无参数） | 同 | **对齐**（`channel_id` 字段与 URL 参数一致，`--check` 校验；无参数时输出空串） |
 | city/state | 10 城 / 6 州（AZ,CA,ID,OR,WA,WY），独立随机 | 同值域、独立随机 | **对齐** |
 | name/email | `FIRST_NAMES×LAST_NAMES` 随机姓名、`nextString(7)@nextString(5).com` 随机邮箱 | 同 | **对齐** |
 | creditCard | 4 组 4 位数字（`0000-9999`） | 同 | **对齐** |
@@ -62,12 +62,15 @@
 
 **v5（2026-08-22）**：六处数据生成偏离全部按官方公式修正（见
 `REVIEW_WFGEN_DATA_GEN_DEVIATIONS.md`）：事件时间映射改为固定 100µs/事件
-（原固定 30min span）、auction 有效期 horizon 固定 0.1666s、extra ±20% 体积抖动、
-字符串长度 3+rand(max-3)+special、cold 通道均匀随机 + `abs(Integer.reverse(i))`、
-URL 目录可含 '_'。**数据跨度随 count 线性增长**（30M → 3000s ≈ 50min），
-30s 时间桶数动态；30M 帧指纹 `25e75749…` 再次变化，`data/bench_30m_v2.frames`
-与 `verify_*.txt` 锚点需重新生成。oracle 对拍（`verify-nexmark`）的 eos 水位与
-桶序同步改为动态跨度口径。
+（原固定 30min span）、auction 有效期 horizon 固定 0.1666s（并按官方毫秒取整
+复刻 166/167ms 相位抖动）、extra ±20% 体积抖动（半开区间）、字符串长度
+3+rand(max-3)+special、cold 通道均匀随机 + `abs(Integer.reverse(i))` 且 90% 追加
+（官方 `random.nextInt(10)>0`，10% 无参数）、URL 目录可含 '_'。**数据跨度随
+count 线性增长**（30M → 3000s ≈ 50min），30s 时间桶数动态；30M 帧指纹
+`25e75749…` 再次变化，`data/bench_30m_v2.frames` 与 `verify_*.txt` 锚点需重新
+生成。oracle 对拍（`verify-nexmark`）的 eos 水位与桶序同步改为动态跨度口径。
+Q21 输出量随 cold 无参 10% 调整为 **95%** 的 bid（官方 WHERE 语义，`q21.wfl`
+加 `channel_id != ""` 过滤）。
 
 **v4（2026-08-21）**：bid 增 `channel_id` 字段（q21 Add channel id 数据侧对齐，
 官方 CASE WHEN 映射 + url channel_id，生成时已知）；数据版本 v3 → v4，帧重生成。
