@@ -249,6 +249,64 @@ rule q12_bidder_10s_window_count {
 > 输出/sink 是主要成本（与 Flink Q12 全量输出一致）；引擎 profiling：emit 2.8s/批
 > 主导，advance 0.87s（旧 1.34s）。
 
+### 5.7.1 Q12 性能剖析与优化（2026-08-21，30M 实测）
+
+**30m 基线（2026-08-21，语义对齐后首次实测）**：EPS 2.49M · RSS_peak 14.9GB ·
+evict 18 · appended 30M/30M `[clean]`。10m 时 RSS 4.9GB —— 3 倍数据 3 倍内存，
+无泄漏；问题在**端到端积压**。
+
+**规则 profiling（每批 ~250 万事件）**：
+
+| 阶段 | 耗时/批 | 占比 | 说明 |
+|---|---|---|---|
+| emit_nanos | 7.6s | 67% | **close 输出路径**（1821 万条 EMIT） |
+| advance_nanos | 2.1s | 19% | on-event 状态推进（2760 万 bid） |
+| scan_nanos | 0.95s | 8% | 输入扫描 |
+| serialize_nanos | 0.65s | 6% | record→列追加（append_record） |
+| fanout_nanos | 0.5ms | ~0% | sink 投递（blackhole payload_blind） |
+
+E2 阶段计时（`E2_TIMER=1`）定位 `execute_close_with_joins` 内部：
+`build_close_alert`（OutputRecord 构建）~60%、`build_eval_context`（合成 Event
+ctx）~35%、`combine_step_data` ~3%。
+
+**实施的两项优化（wp-reactor，语义不变，对拍通过）**：
+
+1. **批量 close emit**（`rule_task::emit_batch`）：close/match 输出按
+   ALERT_BATCH_SIZE 分组，一次 pending 锁 + 一次 target 查找批量 append（原来
+   每条锁 + 线性查找）。
+2. **ctx 字段惰性构建**（`CloseCtxFields`）：静态分析 score/entity/yield 表达式
+   引用的字段名，`build_eval_context` 只构建需要的合成字段（q12 只需 match key
+   + 常量，跳过全部 `_step_*`/`_bind_*` 的 format! + Vec clone）；表达式含
+   函数调用/保留前缀引用时保守回退全量构建。
+
+**30m 结果**：EPS 2.49M → **2.76M（+11%）**，RSS 14.9 → 14.8GB（基本不变）。
+对拍 `identical ✅ (L1 hash, 0 lines)`。
+
+**RSS 14.9GB 归因（footprint/vmmap 实测）**：
+
+- footprint 峰值 14GB，分类几乎全部是 `IOAccelerator`（dirty 12GB）——
+  macOS 把 mimalloc 的 mmap segment 归入此类（MALLOC 区仅 1MB），即**真实
+  堆内存**；处理完 footprint 回落到 2.5GB。
+- 构成（推断 + 指标交叉）：未 ack 的 bid 数据积压（`memory_bytes` 峰值 2.4GB，
+  ack_lag 峰值 358 批）+ parse 预读缓冲（`parse_buffer_bytes` 2GB 预算）+ 输入
+  流转缓冲（frames 2.3GB 经 TCP 读入）。EPS 2.76M < 输入 3M/s → 消费跟不上
+   append，积压持续到输入结束（RSS 曲线每 ~1.2GB/s 线性上涨）。
+- **结论**：不是泄漏；是「全量输出查询 × 输入速率 > 规则吞吐」的固有积压。
+  要继续降 RSS 必须把规则吞吐推到 >3M/s（见下）或降输入速率。
+
+**剩余优化方向（未实施）**：
+
+1. **列式 close 执行器**（最大收益）：q12 形态的 close（score/entity/yield 均
+   为常量或 match-key 字段）直接从 `CloseOutput` 批量构建列，跳过 OutputRecord
+   + Event ctx 中间层（E2 数据显示 ctx+build 占 close 路径 ~95%）。预期 EPS
+   → 3.5M+，同时消除积压、RSS 降至 ~10GB 量级。
+2. 轻量项：close 的 `combine_step_data`/`annotate_close_step_stages` 在
+   无 step 字段时跳过；`build_summary`/`build_wfx_id` 的 format! 缓存。
+
+> 注：q12 全量输出（30m 1821 万条 EMIT）是 Flink 语义固有成本，输出/sink 路径
+> 无法「优化掉」；benchmark 若只关心规则处理吞吐，可改用 blackhole sink（当前
+> 已是）并在口径上注明。
+
 ## 6. 未对齐查询的处理原则
 
 - **q6**：白皮书未发布基线，仅自测，PK 表不列倍数。

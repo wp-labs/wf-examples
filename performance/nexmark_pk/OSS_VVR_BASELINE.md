@@ -114,7 +114,7 @@
 | q9 | 5,768,605 | 43,020 | 134.1× | 375,146 | 15.4× |
 | q10 | 38,758,595 | 526,357 | 73.6× | 1,953,049 | 19.8× |
 | q11 | 2,013,955 | 244,868 | 8.2× | 685,011 | 2.9× |
-| q12 | 3,242,672 | 822,680 | 3.9× | 2,703,360 | 1.2× |
+| q12 | 2,759,182 | 822,680 | 3.4× | 2,703,360 | 1.0× |
 | q13 | 538,178 | —（未发布） | — | —（未发布） | — |
 | q14 | 30,701,021 | 1,451,316 | 21.2× | 4,997,002 | 6.1× |
 | q15 | 7,478,547 | 544,339 | 13.7× | 2,340,057 | 3.2× |
@@ -136,16 +136,29 @@
 > （fixed+close avg，外层 category avg 平台不可表达，见 SEMANTIC_ALIGNMENT §5.3），
 > EPS 1.48M → 5.66M、RSS 22.8GB → 9.8GB，vs VVR 2.3× → 8.9×；旧 100M 口径 5.28M
 > 为旧面数字，已失效。
+> **q12 再次对齐（2026-08-21）**：旧 top3 查询与 Flink Q12（Processing Time
+> Windows：bidder × 10s 窗口 count，全量输出）语义不对齐，对比作废；对齐后 30m
+> EPS 2.76M（vs VVR 2.70M ≈ 1.0×，**为当前最弱 CASE**，剖析见 §3.5/q12），
+> RSS 14.8GB（端到端积压，见 SEMANTIC_ALIGNMENT.md §5.7.1）。
 
 ### 3.5 弱势 CASE 分析（vs VVR 优势不明显，2026-08-21）
 
-优势倍数最低的查询（q17 1.6× / q4 2.3× / q11 2.9×；**q3/q12 已对齐语义后移除**）：
+优势倍数最低的查询（q17 1.6× / q11 2.9× / q4 2.3×；**q12 对齐后 1.0× 新入列**）：
 
 | 查询 | vs VVR | wfusion EPS | RSS | 负载 | 规则结构 | 白皮书语义 |
 |---|---|---|---|---|---|---|
+| q12 | 1.0× | 2.76M | 14.8GB | 7.8 | bidder × 10s fixed + close count（**全量输出**） | Processing Time Windows ✓ |
 | q17 | 1.6× | 5.77M | 5.7GB | 8.6 | sliding 10m + `b.bidder \| distinct \| count>=20` | 标准 distinct ✓ |
-| q4 | 2.3× | 1.48M | 22.8GB | 6.1 | bid 驱动 + 每 bid snapshot join auction 表 | 标准 join+均价 ✓ |
+| q4 | 2.3× | 5.66M | 9.8GB | — | bid 驱动 + fixed+close avg（外层 category avg 不可表达） | 标准 join+均价（部分对齐） |
 | q11 | 2.9× | 2.01M | 18.5GB | 11.3 | session 窗口（bidder 60s gap） | 标准 session ✓ |
+
+**q12（新，2026-08-21 语义对齐后）**：瓶颈在 **close 输出路径**（每窗口每 bidder
+一条，30m ≈ 1821 万条 EMIT）。profiling：emit 7.6s/批（67%）+ advance 2.1s（19%）；
+E2 计时定位 `execute_close_with_joins` 内 build 60% + ctx 35%。RSS 14.8GB 为
+端到端积压（EPS 2.76M < 输入 3M/s → 未 ack batch 积压 2.4GB + parse/解码缓冲），
+非泄漏。已优化（批量 emit + ctx 惰性字段）EPS 2.49M → 2.76M（+11%）；
+**列式 close 执行器**（跳过 OutputRecord/Event 中间层）预计 EPS → 3.5M+，
+能同时消除积压降 RSS（详见 SEMANTIC_ALIGNMENT.md §5.7.1）。
 
 **q12 已移出**（2026-08-21 再次对齐）：旧 q12（auction 键 + 10m + conv top3，1.2×/3.24M/10.6GB）
 与 Flink Q12（Processing Time Windows：bidder × 10s 窗口 count）**语义不对齐**，对比作废。
@@ -167,10 +180,11 @@ SEMANTIC_ALIGNMENT.md §5.7）。
 
 **优化方向**（按性价比排序，待实现/验证）：
 
-1. **q17 distinct → bitset**（最划算）：bidder 域受限（1..=1000），用 u128 位图去重——
+1. **q12 列式 close 执行器**（新，最大收益）：score/entity/yield 均常量或 match-key
+   字段的 close 直接从 `CloseOutput` 批量建列，跳过 OutputRecord + Event ctx 层
+   （E2：ctx+build 占 close 路径 ~95%），预期 EPS 2.76M → 3.5M+ 并消除积压降 RSS。
+2. **q17 distinct → bitset**（最划算）：bidder 域受限（1..=1000），用 u128 位图去重——
    O(1) 位操作、零哈希零分配，预期比 HashSet 快一个量级（NEXMark 数据特性红利）。
-2. **q12 top-N → 增量最小堆**：conv 阶段 size-3 最小堆（O(n log 3)）替代全量 sort，
-   或窗口内先局部 top-k 再合并。
 3. **q4 join 索引 → 直接寻址**：auction id 连续（1..=180 万），join 查找用 Vec 直接索引替代 HashMap。
 4. **q11 会话状态压缩**：RSS 18.5GB 说明会话实例膨胀，可优化实例表示与惰性过期。
 
