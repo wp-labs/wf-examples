@@ -1,35 +1,27 @@
 use "nexmark.wfs"
 
-// Q20：无序并存（`on event any`）——每 auction 的 bid 同时满足 count≥2 与 count≥3
-// 时触发（等价 count 到 3，但走 any 并行求值路径；对齐 Flink Q20 的无序/并行面，白皮书 3.20×）。
+// Q20 — Expand bid with auction（权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q20，扩展）
+// 权威 SQL：
+//   SELECT B.auction, B.bidder, B.price, ..., A.itemName, ..., A.seller, A.category, ...
+//   FROM bid B INNER JOIN auction A ON B.auction = A.id WHERE A.category = 10;
+// —— 每 bid 展开对应 auction 信息，仅保留 category=10 的（filter join）。
 //
-// 用 sliding `match<auction:10m>` + `on event any { b | count >= 2; b | count >= 3; }`：
-// 各 step 并行累计，全部满足即 fire。测试 **`on event any` 无序 step** 能力面。
-rule q20_any_count_3 {
+// wfusion 表达（2026-08-21 从「on event any 并行计数」能力面重写为权威语义，
+// 用 join 后 where）：
+// - `on each b`：每 bid 一行（对齐权威每行输出）；
+// - `join auction_events snapshot on b.auction == auction_events.id`：bid 驱动
+//   + auction 窗口快照查找（富化 A.category/itemName/...）；
+// - `where auction_events.category == 10`：join 后过滤（false/None 抑制，对齐
+//   INNER JOIN——auction 查不到也抑制）。
+// 输出基数 = category=10 的 bid 数（对齐权威）。展开字段受 sink 四列限制省略。
+//
+// 注：inline test 无法断言本规则（on each + join + where 需 WindowLookup）——
+// 由引擎级 where 测试 + oracle/引擎对拍验证。
+rule q20_expand_bid {
     events { b : bid_events }
-    match<auction:10m> {
-        on event any {
-            b | count >= 2;
-            b | count >= 3;
-        }
-    } -> score(20.0)
+    on each b -> score(10.0)
+    join auction_events snapshot on b.auction == auction_events.id
+    where auction_events.category == 10
     entity(digit, b.auction)
-    yield nexmark_alerts (id = b.auction, alert_type = "q20_any3", detail = "count >= 3 (any)", request_count = 1)
-    limits { max_memory = "8GB" }
-}
-
-test q20_hit for q20_any_count_3 {
-  input {
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-  }
-  expect { hits == 1; }
-}
-test q20_two_no_hit for q20_any_count_3 {
-  input {
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-  }
-  expect { hits == 0; }
+    yield nexmark_alerts (id = b.auction, alert_type = "q20_expand", detail = "bid + category-10 auction", request_count = 1)
 }

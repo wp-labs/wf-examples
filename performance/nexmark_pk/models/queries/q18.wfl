@@ -1,44 +1,49 @@
 use "nexmark.wfs"
 
-// Q18：`on event<accu>` 窗口内累积——每 auction 每累计 5 笔 bid 触发一次，fire 后
-// count 不清零、持续累积到窗口过期（对齐 Flink Q18 的复杂窗口/累积聚合面，白皮书 5.97×）。
+// Q18 — Find last bid（权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q18，扩展）
+// 权威 SQL：
+//   SELECT * FROM (SELECT *, ROW_NUMBER() OVER
+//     (PARTITION BY bidder, auction ORDER BY dateTime DESC) AS rank_number FROM bid)
+//   WHERE rank_number <= 1;
+// —— 每 (bidder, auction) 取最后一条 bid（按 dateTime 降序 dedup）。
 //
-// 用 sliding `match<auction:10m>` + `on event<accu> { b | count >= 5; }`：count 在第
-// 5/10/15/... 笔触发（running cumulative，fire 不 reset）。测试 **`on event<accu>`
-// 窗口内累积** 能力面（此前查询未覆盖）。
-rule q18_accumulate_fires {
+// wfusion 映射：`match<bidder,auction:30m:fixed>`（多键窗口）+ `and close` count，
+// 每 (bidder,auction) 收口输出一条 → **输出基数对齐**（每键一条 = 官方 dedup 结果数）。
+// ⚠ 近似：官方带出「最后一条 bid」的字段值（price/channel/url/...）；wfl 无 last-value
+// measure，本地输出键（auction/bidder）与计数，值语义为「窗口内聚合」而非「最后一条」。
+rule q18_last_bid {
     events { b : bid_events }
-    match<auction:10m> {
-        on event<accu> { b | count >= 5; }
+    match<bidder,auction:30m:fixed> {
+        on event { b | count >= 1; }
+        and close { n: b | count >= 1; }
     } -> score(15.0)
     entity(digit, b.auction)
-    yield nexmark_alerts (id = b.auction, alert_type = "q18_accu5", detail = "every 5th bid", request_count = 1)
-    limits { max_memory = "512MB" }
+    yield nexmark_alerts (
+        id = b.auction,
+        alert_type = "q18_last",
+        detail = fmt("bidder {}", b.bidder),
+        request_count = 1
+    )
+    limits { max_memory = "16GB" }
 }
 
-test q18_five for q18_accumulate_fires {
+test q18_pair for q18_last_bid {
   input {
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 5, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 5, price = 200, channel = "G", url = "u");
+    tick(31m);
   }
-  expect { hits == 1; }
+  // 同一 (bidder,auction) 对 → 收口 1 条（官方 dedup 也是 1 条）
+  expect { hits == 1; hit[0].entity_id == "1"; }
 }
-test q18_rearm for q18_accumulate_fires {
+
+test q18_two_pairs for q18_last_bid {
   input {
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 5, price = 100, channel = "G", url = "u");
+    row(b, auction = 2, bidder = 5, price = 100, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 6, price = 100, channel = "G", url = "u");
+    tick(31m);
   }
-  // on event<accu>：count 不清零，第 5 行首次 fire 后每行继续 fire（引擎/模拟器一致）
-  expect { hits == 6; }
+  // 3 个 (bidder,auction) 对 → 3 条
+  expect { hits == 3; }
 }

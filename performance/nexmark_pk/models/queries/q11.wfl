@@ -1,34 +1,49 @@
 use "nexmark.wfs"
 
-// Q11：用户会话——bid 流按 bidder 的**会话窗口**（对齐 Flink Q11「User Sessions」）。
+// Q11 — User Sessions（权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q11）
+// 权威 SQL：SELECT bidder, count(*) AS bid_count, SESSION_START/END(dateTime, 10s)
+//   FROM bid GROUP BY bidder, SESSION(dateTime, INTERVAL '10' SECOND);
+// —— 每会话输出该会话的 bid 数（会话 gap 10s）。
 //
-// 每个 bidder 按 60s 间隙聚合为会话；`on event { count >= 1 }` 在会话内首个 bid 触发。
-// 测试 **session 窗口**（WindowSpec::Session）在 bid 流上的状态机路径。
+// wfusion 表达：`match<bidder:session(10s)>` + `on event` + `and close`（AND 模式）：
+// on event 满足后仅标记，会话到期收口时 close 输出一条（n = 会话内 bid 计数，
+// detail 带出）。输出基数 = 会话数（对齐权威每会话一行）。
 //
-// 注意：bench 的 SHARD_KEYS 把 bid_events 按 auction 分片（Q2/Q4/Q5/Q7 需要），
-// 同一 bidder 的 bid 会跨 shard——会话计数是**每 shard** 的（确定性、可验证，但非
-// 全局 bidder 会话语义）。若要全局语义，需单独以 CONNECTIONS=1 / bidder 分片跑。
-rule q11_user_session {
+// 注意：bench 的 SHARD_KEYS 按 auction 分片时同一 bidder 跨分片 → 会话是每 shard
+// 的（全局语义须 CONNECTIONS=1 / bidder 分片跑）。
+rule q11_bidder_session {
     events { b : bid_events }
-    match<bidder:session(60s)> {
+    match<bidder:session(10s)> {
         on event { b | count >= 1; }
+        and close { n: b | count >= 1; }
     } -> score(10.0)
     entity(digit, b.bidder)
-    yield nexmark_alerts (id = b.bidder, alert_type = "q11_session", detail = "bidder session", request_count = 1)
+    yield nexmark_alerts (
+        id = b.bidder,
+        alert_type = "q11_session",
+        detail = fmt("{}", stat.value(final(n))),
+        request_count = 1
+    )
     limits { max_memory = "512MB" }
 }
 
-test q11_hit for q11_user_session {
+test q11_session_count for q11_bidder_session {
   input {
     row(b, auction = 1, bidder = 5, price = 100, channel = "G", url = "u");
+    row(b, auction = 2, bidder = 5, price = 200, channel = "G", url = "u");
+    tick(11s);
   }
-  expect { hits == 1; hit[0].entity_id == "5"; }
+  // 同一会话 2 笔 bid（gap 10s 内）→ 收口输出 1 条，count=2
+  expect { hits == 1; hit[0].entity_id == "5"; hit[0].field("detail") == "2"; }
 }
-test q11_session_gap for q11_user_session {
+
+test q11_two_sessions for q11_bidder_session {
   input {
     row(b, auction = 1, bidder = 5, price = 100, channel = "G", url = "u");
-    tick(61s);
-    row(b, auction = 2, bidder = 5, price = 100, channel = "G", url = "u");
+    tick(11s);
+    row(b, auction = 2, bidder = 5, price = 200, channel = "G", url = "u");
+    tick(11s);
   }
+  // 两个会话各自收口 → 2 条，各 count=1
   expect { hits == 2; }
 }

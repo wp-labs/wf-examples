@@ -1,10 +1,18 @@
 use "nexmark.wfs"
 
-// Q8：监控新用户——person 流的**会话窗口**（对齐 Flink Q8「Monitor New Users」）。
+// Q8 — Monitor New Users（权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q8）
+// 权威 SQL：person TUMBLE(10s) ⋈ auction TUMBLE(10s)
+//   ON P.id = A.seller AND P.starttime = A.starttime AND P.endtime = A.endtime
+// ——「10s 窗口内注册**且**创建了拍卖的人」（增量 join）。
 //
-// 每个 person id 按 60s 间隙聚合为会话；`on event { count >= 1 }` 在会话内首个 person
-// 事件触发（非 accu，fire 后 reset）。测试 wfusion 的 **session 窗口**（WindowSpec::Session）
-// + person 流状态机路径。
+// wfusion 表达：person 流按 60s 间隙聚合为会话；`on event { count >= 1 }` 在会话内首个
+// person 事件触发。测试 wfusion 的 **session 窗口**（WindowSpec::Session）。
+//
+// ⚠ 未对齐（引擎能力限制，详见 NEXMARK_AUTHORITATIVE_SEMANTICS.md Q8 对照）：
+//   - 无 auction join：join 富化发生在 fire 之后，且 snapshot join miss 不 drop，
+//     无法表达「必须创建过拍卖」的内连接过滤，也无法表达同窗（window-aligned）条件；
+//   - 窗口形状：权威 10s 固定桶 join，本套 60s 会话。
+//   本查询保留为 session 窗口能力面测试；权威语义待引擎支持 window-join。
 rule q8_monitor_new_user {
     events { p : person_events }
     match<id:session(60s)> {

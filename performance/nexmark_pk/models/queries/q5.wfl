@@ -1,224 +1,45 @@
 use "nexmark.wfs"
-rule q5_bidcount_10 {
+
+// Q5 — Hot Items（权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q5）
+// 权威 SQL：HOP(TABLE bid, DESCRIPTOR(dateTime), INTERVAL '2' SECOND, INTERVAL '10' SECOND)
+//   按 auction 计 bid 数，再 JOIN 各窗口最大 bid 数 → 每窗口输出 bid 数最多的 auction。
+// —— 最近 10s（每 2s 更新）内 bid 数最多的 auction（top-1 by count）。
+//
+// wfusion 表达：`match<auction:10s:fixed>`（固定 10s 桶，对齐权威 10s 窗口跨度）
+// + `and close` 每桶各 auction 的 count + `conv { sort(-n) | top(1) }` 每收口批取
+// count 最大一条（= 该 10s 桶最热 auction）。
+// ⚠ 近似：权威 HOP 每 2s 滑动更新（10s 窗口重叠）；本地 fixed 10s 桶不重叠、
+// conv 按收口批 top-1（批边界由水位推进决定），输出频率与窗口形状不同，但
+// 「每窗口 bid 数最多的 auction」语义对齐。
+rule q5_hottest_auction {
     events { b : bid_events }
-    match<auction:10m> {
-        on event { b | count >= 10; }
+    match<auction:10s:fixed> {
+        on event { b | count >= 1; }
+        and close { n: b | count >= 1; }
     } -> score(20.0)
     entity(digit, b.auction)
-    yield nexmark_alerts (id = b.auction, alert_type = "q5_count10", detail = ">=10 bids", request_count = 1)
+    yield nexmark_alerts (id = b.auction, alert_type = "q5_hot", detail = "top-1 auction by bid count", request_count = 1)
+    conv {
+        sort(-n) | top(1) ;
+    }
     limits { max_memory = "512MB" }
 }
 
-
-rule q5_bidcount_50 {
-    events { b : bid_events }
-    match<auction:10m> {
-        on event { b | count >= 50; }
-    } -> score(20.0)
-    entity(digit, b.auction)
-    yield nexmark_alerts (id = b.auction, alert_type = "q5_count50", detail = ">=50 bids", request_count = 1)
-    limits { max_memory = "512MB" }
-}
-
-
-rule q5_bidcount_100 {
-    events { b : bid_events }
-    match<auction:10m> {
-        on event { b | count >= 100; }
-    } -> score(20.0)
-    entity(digit, b.auction)
-    yield nexmark_alerts (id = b.auction, alert_type = "q5_count100", detail = ">=100 bids", request_count = 1)
-    limits { max_memory = "512MB" }
-}
-
-// ---- Q7 每 auction 10m 窗口最高出价（滑动窗口 MAX） ----
-
-test q5_ten_hits for q5_bidcount_10 {
+test q5_top1 for q5_hottest_auction {
   input {
     row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
     row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 2, bidder = 1, price = 100, channel = "G", url = "u");
+    tick(11s);
   }
-  expect { hits == 1; }
+  // 同一 10s 收口批：auction 1 count=2 > auction 2 count=1 → top-1 = auction 1
+  expect { hits == 1; hit[0].entity_id == "1"; }
 }
-test q5_nine_no_hit for q5_bidcount_10 {
+
+test q5_top1_single for q5_hottest_auction {
   input {
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 7, bidder = 1, price = 100, channel = "G", url = "u");
+    tick(11s);
   }
-  expect { hits == 0; }
-}
-test q5_fifty for q5_bidcount_50 {
-  input {
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-  }
-  expect { hits == 1; }
-}
-test q5_hundred for q5_bidcount_100 {
-  input {
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-  }
-  expect { hits == 1; }
+  expect { hits == 1; hit[0].entity_id == "7"; }
 }

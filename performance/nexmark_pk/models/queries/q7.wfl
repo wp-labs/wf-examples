@@ -1,51 +1,49 @@
 use "nexmark.wfs"
-rule q7_maxbid_200 {
+
+// Q7 — Highest Bid（权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q7）
+// 权威 SQL：TUMBLE(TABLE bid, DESCRIPTOR(dateTime), INTERVAL '10' SECOND) 按窗口
+//   MAX(price)，再 JOIN 价格==窗口最高价的 bid。
+// —— 每个 10s 窗口内全局最高价的 bid（跨 auction 的时段最高价）。
+//
+// wfusion 表达：`match<auction:10s:fixed>`（auction 键可并行）+ `and close`
+// 每 auction×10s 桶的 max(price) + `conv { sort(-m) | top(1) }` 每收口批取
+// max 最大的一条（= 该 10s 桶全局最高价）。max 是分配律聚合，按键求局部 max
+// 再批内取全局 max，语义等价；全局单实例（空键）版 30M 实测过慢已弃。
+// ⚠ 近似：权威 JOIN 输出所有价格==最高价的 bid（并列可能多条）；本地每桶输出
+// top-1 一条（conv 批内取 max 最大的 auction）。
+rule q7_highest_bid {
     events { b : bid_events }
-    match<auction:10m> {
-        on event { b.price | max >= 200; }
+    match<auction:10s:fixed> {
+        on event { b | count >= 1; }
+        and close { m: b.price | max >= 1; }
     } -> score(30.0)
     entity(digit, b.auction)
-    yield nexmark_alerts (id = b.auction, alert_type = "q7_max200", detail = "max bid >= 200", request_count = 1)
-    limits { max_memory = "512MB" }
+    yield nexmark_alerts (
+        id = b.auction,
+        alert_type = "q7_hi",
+        detail = fmt("max {}", stat.value(final(m))),
+        request_count = 1
+    )
+    conv {
+        sort(-m) | top(1) ;
+    }
+    limits { max_memory = "8GB" }
 }
 
-
-rule q7_maxbid_500 {
-    events { b : bid_events }
-    match<auction:10m> {
-        on event { b.price | max >= 500; }
-    } -> score(30.0)
-    entity(digit, b.auction)
-    yield nexmark_alerts (id = b.auction, alert_type = "q7_max500", detail = "max bid >= 500", request_count = 1)
-    limits { max_memory = "512MB" }
-}
-
-
-rule q7_maxbid_1000 {
-    events { b : bid_events }
-    match<auction:10m> {
-        on event { b.price | max >= 1000; }
-    } -> score(30.0)
-    entity(digit, b.auction)
-    yield nexmark_alerts (id = b.auction, alert_type = "q7_max1000", detail = "max bid >= 1000", request_count = 1)
-    limits { max_memory = "512MB" }
-}
-
-test q7_max_200 for q7_maxbid_200 {
+test q7_highest for q7_highest_bid {
   input {
-    row(b, auction = 1, bidder = 1, price = 200, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 2, bidder = 1, price = 500, channel = "G", url = "u");
+    tick(11s);
   }
-  expect { hits == 1; }
+  // 同一 10s 桶收口：auction 2 max=500 > auction 1 max=100 → top-1 = auction 2
+  expect { hits == 1; hit[0].entity_id == "2"; hit[0].field("detail") == "max 500"; }
 }
-test q7_max_500 for q7_maxbid_500 {
+
+test q7_low_price for q7_highest_bid {
   input {
-    row(b, auction = 1, bidder = 1, price = 500, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 10, channel = "G", url = "u");
+    tick(11s);
   }
-  expect { hits == 1; }
-}
-test q7_max_1000 for q7_maxbid_1000 {
-  input {
-    row(b, auction = 1, bidder = 1, price = 1000, channel = "G", url = "u");
-  }
-  expect { hits == 1; }
+  expect { hits == 1; hit[0].field("detail") == "max 10"; }
 }

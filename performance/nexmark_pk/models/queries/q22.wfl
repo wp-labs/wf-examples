@@ -1,8 +1,7 @@
 use "nexmark.wfs"
 
-// Q22：Get URL Directories（Flink 官方 q22，nexmark-flink 扩展查询，白皮书 3.04×）。
-//
-// 官方实现（nexmark-flink/src/main/resources/queries/q22.sql）：
+// Q22 — Get URL Directories（权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q22，扩展）
+// 权威 SQL：
 //   SELECT auction, bidder, price, channel,
 //          SPLIT_INDEX(url, '/', 3) as dir1,
 //          SPLIT_INDEX(url, '/', 4) as dir2,

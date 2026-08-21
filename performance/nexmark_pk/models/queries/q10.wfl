@@ -1,12 +1,25 @@
 use "nexmark.wfs"
 
-// Q10：任意选择——按确定性条件取 bid 子集（对齐 Flink Q10「Arbitrary Selection」）。
+// Q10 — Log to File System（权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q10）
+// 权威 SQL：SELECT auction, bidder, price, dateTime, extra, DATE_FORMAT(dateTime,'yyyy-MM-dd'),
+//             DATE_FORMAT(dateTime,'HH:mm') FROM bid;
+// —— 全量 bid 按时间分区落盘（每 bid 一行，dt/hm 分区列）。
 //
-// `b.auction % 7 == 0` 选出一个确定性 ~1/7 子集，走 on-each 无状态路径（无实例表，
-// 每选中 bid 输出一条）。测试 **on-each + bind filter**（stateless subset）能力面。
-rule q10_arbitrary_selection {
-    events { b : bid_events && b.auction % 7 == 0 }
+// wfusion 表达：`on each` 全量 bid 每行输出（2026-08-21 从「auction%7 子集」
+// 能力面重写——旧版只处理 1/7 事件，与权威「全量落盘」工作负载差 ~7×）。
+// dt/hm 分区列在本地 sink 四列中省略（数据时间轴 30m 内恒同一天，分区信息
+// 无查询语义；EMIT 基数 = 全部 bid 对齐权威）。
+rule q10_log_all {
+    events { b : bid_events }
     on each b -> score(5.0)
     entity(digit, b.auction)
-    yield nexmark_alerts (id = b.auction, alert_type = "q10_arbitrary", detail = "selected bid", request_count = 1)
+    yield nexmark_alerts (id = b.auction, alert_type = "q10_log", detail = "log bid", request_count = 1)
+}
+
+test q10_all for q10_log_all {
+  input {
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 2, bidder = 1, price = 100, channel = "G", url = "u");
+  }
+  expect { hits == 2; }
 }

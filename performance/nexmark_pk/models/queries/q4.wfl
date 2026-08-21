@@ -1,15 +1,14 @@
 use "nexmark.wfs"
 
-// Q4：按 category 分组的固定 10m 窗口均价（join-then-key, Path A）。
-//
-// 官方实现（nexmark/nexmark nexmark-flink/src/main/resources/queries/q4.sql）：
+// Q4 — Average Price for a Category（权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q4）
+// 权威 SQL（两层聚合）：
 //   SELECT Q.category, AVG(Q.final)
 //   FROM (SELECT MAX(B.price) AS final, A.category
 //         FROM auction A, bid B
 //         WHERE A.id = B.auction AND B.dateTime BETWEEN A.dateTime AND A.expires
 //         GROUP BY A.id, A.category) Q
-//   GROUP BY Q.category
-// —— 内层每 auction 胜出价 max，外层按 category 求 avg（两级聚合）。
+//   GROUP BY Q.category;
+// —— 内层每 auction 生命周期内胜出价 max，外层按 category 求 avg（avg-of-max）。
 //
 // wfusion 能力面（join 字段作窗口键）：`match<category:10m:fixed>` 的键
 // `category` 不在驱动事件（bid）上，而是 auction 的 join 侧字段——引擎在事件

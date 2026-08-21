@@ -1,37 +1,32 @@
 use "nexmark.wfs"
 
-// 对齐 Flink Q3：SELECT P.name, P.city, P.state, A.id
-//              FROM Auction A, Person P
-//              WHERE A.seller = P.id AND A.category = 10
+// Q3 — Local Item Suggestion（权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q3）
+// 权威 SQL：
+//   SELECT P.name, P.city, P.state, A.id
+//   FROM auction A INNER JOIN person P ON A.seller = P.id
+//   WHERE A.category = 10 AND (P.state = 'OR' OR P.state = 'ID' OR P.state = 'CA');
+// —— 谁在 OR/ID/CA 州、category=10 下卖东西（增量 join + 过滤）。
 //
-// 语义对齐点（2026-08-21）：
-// - 过滤 `A.category = 10`：标准 Q3 常量过滤，只让 1/26 的 auction 驱动 join+emit
-//   （此前无过滤，工作负载偏轻、与白皮书 Q3 不可比）；
-// - join `A.seller = P.id`：auction 驱动 + person 窗口快照查找（NEXMark 数据所有
-//   seller 都存在 → join 必命中，EMIT = 命中 category=10 的 auction 数）。
-//   join 命中后上下文含 person 字段（person_events.name/city/state，见引擎
-//   join 富化语义），此处 alert 携带 auction id + seller 即可（RPS 口径同白皮书）。
+// wfusion 表达（2026-08-21 补齐州过滤，用 join 后 where）：
+// - `A.category = 10`：bind filter 下推（只让 1/5 category=10 的 auction 驱动）；
+// - `A.seller = P.id`：auction 驱动 + person 窗口 snapshot join（NEXMark 数据
+//   seller 必存在 → join 必命中，富化 P.name/city/state）；
+// - `where person_events.state in ("OR","ID","CA")`：**join 后过滤**（新语法，
+//   在全部 join 富化后、alert 构建前求值；false/None 抑制输出，对齐 INNER
+//   JOIN 丢行——join miss 时 state 缺失也抑制）。
+// 输出 = 满足 category=10 ∧ 卖家州∈{OR,ID,CA} 的 auction 数（对齐权威）。
+//
+// 注：inline test 无法断言本规则（harness 无 WindowLookup，join 全 miss →
+// where 全抑制，hits==0 会假通过）——由引擎级 where 测试 + oracle/引擎
+// 对拍验证。
 rule q3_auction_seller {
     events { a : auction_events && a.category == 10 }
     match<id:10m> {
         on event { a | count >= 1; }
     } -> score(1.0)
     join person_events snapshot on a.seller == person_events.id
+    where person_events.state in ("OR", "ID", "CA")
     entity(digit, a.id)
     yield nexmark_alerts (id = a.id, alert_type = "q3", detail = a.seller, request_count = 1)
     limits { max_memory = "512MB" }
-}
-
-test q3_hit for q3_auction_seller {
-  input {
-    row(a, id = 1, seller = 100, itemName = "i", description = "d", initialBid = 10, reserve = 20, expires = 1000, category = 10, extra = "");
-  }
-  expect { hits == 1; hit[0].entity_id == "1"; }
-}
-
-test q3_category_filter for q3_auction_seller {
-  input {
-    row(a, id = 1, seller = 100, itemName = "i", description = "d", initialBid = 10, reserve = 20, expires = 1000, category = 3, extra = "");
-  }
-  expect { hits == 0; }
 }

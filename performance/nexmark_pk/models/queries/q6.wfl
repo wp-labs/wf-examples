@@ -1,23 +1,18 @@
 use "nexmark.wfs"
 
-// Q6：按 seller 分组的 10m 窗口**均价**（join-then-key, Path A，标准 Q6 面）。
-//
-// 官方 Q6「Average Selling Price by Seller」按卖家聚合均价：
-//   SELECT A.seller, AVG(B.price)
-//   FROM auction A, bid B
-//   WHERE A.id = B.auction AND B.dateTime BETWEEN A.dateTime AND A.expires
-//   GROUP BY A.seller, HOP(B.dateTime, 10s, 10m)
+// Q6 — Average Selling Price by Seller（权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q6）
+// 权威 SQL：ROW_NUMBER() OVER (PARTITION BY A.id, A.seller ORDER BY B.price DESC) 取每
+//   auction 胜出价，再 AVG(...) OVER (PARTITION BY seller ORDER BY dateTime
+//   ROWS BETWEEN 10 PRECEDING AND CURRENT ROW)——每 seller 最近 10 笔成交的
+//   胜出价均值（官方注释：OVER WINDOW 尚不支持 retractions，SQL 未落地）。
 //
 // wfusion 能力面（join 字段作窗口键）：`match<seller:10m>` 的键 `seller` 不在
 // 驱动事件（bid）上，而是 auction 的 join 侧字段——引擎先 snapshot join
 // （b.auction == auction_events.id）拿到 seller，再按该键分组（join-then-key）。
-// 每 seller 的滑动 10m 窗口内 avg(b.price) >= 200 时 EMIT（on-event avg 面，
-// 与旧 auction 键 q6 同构，仅键换成 seller）。
+// 每 seller 的滑动 10m 窗口内 avg(b.price) >= 200 时 EMIT。
 //
-// 语义说明（诚实标注，详见 SEMANTIC_ALIGNMENT.md §5.6）：
-// - 官方为固定 hop 窗口聚合；本面用滑动 10m + on-event avg 近似。
-// - 验证锚点：oracle（真实规则引擎）与引擎 replay 对拍计数。内联 test 不维护
-//   join 窗口状态（join-then-key 全部 miss），故不使用。
+// ⚠ 近似：聚合面（全部 bid 价均值 vs 胜出价均值）、窗口形状（10m 滑动 vs 最近
+// 10 笔成交）不同；仅「按 seller 分组求均值」对齐。
 rule q6_avg_price_by_seller {
     events { b : bid_events }
     match<seller:10m> {

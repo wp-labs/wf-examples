@@ -1,8 +1,7 @@
 use "nexmark.wfs"
 
-// Q21：Add channel id（Flink 官方 q21，nexmark-flink 扩展查询，白皮书 3.20×）。
-//
-// 官方实现（nexmark-flink/src/main/resources/queries/q21.sql）：
+// Q21 — Add channel id（权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q21，扩展）
+// 权威 SQL：
 //   SELECT auction, bidder, price, channel,
 //          CASE
 //            WHEN lower(channel) = 'apple'  THEN '0'

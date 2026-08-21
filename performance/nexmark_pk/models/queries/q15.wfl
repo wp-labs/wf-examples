@@ -1,37 +1,66 @@
 use "nexmark.wfs"
 
-// Q15：过滤 + 滑窗计数——高价 bid（price > 100）在 10m 窗口内 ≥ 5 的 auction。
+// Q15 — Bidding Statistics Report（权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q15，扩展）
+// 权威 SQL：
+//   SELECT DATE_FORMAT(dateTime, 'yyyy-MM-dd') AS day,
+//          count(*), count(*) FILTER (price<1e4), ... ,
+//          count(distinct bidder), count(distinct bidder) FILTER (...), ...,
+//          count(distinct auction), ...  （12 列统计）
+//   FROM bid GROUP BY day;
+// —— 按天分组输出 bids/bidders/auctions 的总量与三价格档计数（30m 数据
+//   BASE_NS=2026-01-01T00:00 → 恰 1 天，GROUP BY day 退化为全局一行）。
 //
-// 对齐 Flink Q15 的「过滤 + 窗口聚合」面（中等复杂度查询，白皮书 4.30×）。
-// 用 sliding `match<auction:10m>` + bind filter（`b.price > 100`）+ count 阈值，
-// fire 后实例 reset。测试 **bind filter + 滑窗计数** 组合能力面。
-rule q15_high_bid_count_5 {
-    events { b : bid_events && b.price > 100 }
-    match<auction:10m> {
-        on event { b | count >= 5; }
-    } -> score(25.0)
-    entity(digit, b.auction)
-    yield nexmark_alerts (id = b.auction, alert_type = "q15_hi5", detail = ">=5 high bids", request_count = 1)
-    limits { max_memory = "512MB" }
+// wfusion 映射：`match<:30m:fixed>`（空键全局窗口，30m 数据 1 桶）+ `and close`
+// 12 个 measure（guard 分价格档 + distinct 变换），收口输出一行统计。
+// 输出基数 = 桶数（1 行），对齐官方每 day 一行。
+//
+// ⚠ 性能待优化（2026-08-21 实测）：全局单实例（空键）+ 9 个 distinct 集合
+// （bidder/auction × 4 档）无法并行，30M 引擎端 >10min 未跑通（100k oracle
+// 2.3s → 30M 预计 ~10min）。语义正确（inline test 通过）；性能需引擎支持
+// 全局聚合并行化或 distinct 集合优化后再落地 30M 基准（当前 30M 不跑该查询）。
+rule q15_bidding_stats {
+    events { b : bid_events }
+    match<:30m:fixed> {
+        on event { b | count >= 1; }
+        and close {
+            total: b | count >= 1;
+            r1: b && b.price < 10000 | count >= 1;
+            r2: b && b.price >= 10000 && b.price < 1000000 | count >= 1;
+            r3: b && b.price >= 1000000 | count >= 1;
+            total_bidder: b.bidder | distinct | count >= 1;
+            r1_bidder: b.bidder && b.price < 10000 | distinct | count >= 1;
+            r2_bidder: b.bidder && b.price >= 10000 && b.price < 1000000 | distinct | count >= 1;
+            r3_bidder: b.bidder && b.price >= 1000000 | distinct | count >= 1;
+            total_auction: b.auction | distinct | count >= 1;
+            r1_auction: b.auction && b.price < 10000 | distinct | count >= 1;
+            r2_auction: b.auction && b.price >= 10000 && b.price < 1000000 | distinct | count >= 1;
+            r3_auction: b.auction && b.price >= 1000000 | distinct | count >= 1;
+        }
+    } -> score(10.0)
+    entity(digit, 1)
+    yield nexmark_alerts (
+        id = 1,
+        alert_type = "q15_stats",
+        detail = fmt("{} {} {} {} {} {} {} {} {} {} {} {}",
+            stat.value(final(total)), stat.value(final(r1)), stat.value(final(r2)), stat.value(final(r3)),
+            stat.value(final(total_bidder)), stat.value(final(r1_bidder)), stat.value(final(r2_bidder)), stat.value(final(r3_bidder)),
+            stat.value(final(total_auction)), stat.value(final(r1_auction)), stat.value(final(r2_auction)), stat.value(final(r3_auction))),
+        request_count = 1
+    )
+    limits { max_memory = "8GB" }
 }
 
-test q15_hit for q15_high_bid_count_5 {
+test q15_stats for q15_bidding_stats {
   input {
-    row(b, auction = 1, bidder = 1, price = 200, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 200, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 200, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 200, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 200, channel = "G", url = "u");
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+    row(b, auction = 2, bidder = 1, price = 50000, channel = "G", url = "u");
+    row(b, auction = 3, bidder = 2, price = 2000000, channel = "G", url = "u");
+    tick(31m);
   }
-  expect { hits == 1; }
-}
-test q15_filter_no_hit for q15_high_bid_count_5 {
-  input {
-    row(b, auction = 1, bidder = 1, price = 50, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 50, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 50, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 50, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 50, channel = "G", url = "u");
+  // 1 桶收口：total=3, r1=1, r2=1, r3=1, bidder distinct=2, r1_bidder=1, r2_bidder=1,
+  // r3_bidder=1, auction distinct=3, r1_auction=1, r2_auction=1, r3_auction=1
+  expect {
+    hits == 1;
+    hit[0].field("detail") == "3 1 1 1 2 1 1 1 3 1 1 1";
   }
-  expect { hits == 0; }
 }

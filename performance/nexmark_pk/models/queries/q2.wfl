@@ -1,14 +1,16 @@
 use "nexmark.wfs"
 
-// 对齐 Flink Q2：SELECT auction FROM bid WHERE MOD(auction,123)=0（选中 ~0.81% bids）
+// Q2 — Selection（权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q2）
+// 权威 SQL：SELECT auction, price FROM bid WHERE MOD(auction, 123) = 0;
+// —— 每满足 MOD(auction,123)=0 的 bid 输出一行（per-bid，选中 ~0.81%）。
+//
+// wfusion 表达：`on each` + bind filter 下推（与 Flink WHERE 同款，下游只见
+// 过滤后子集）。无状态路径，每选中 bid 输出一条。
 rule q2_mod_123 {
     events { b : bid_events && b.auction % 123 == 0 }
-    match<auction:10m> {
-        on event { b | count >= 1; }
-    } -> score(5.0)
+    on each b -> score(5.0)
     entity(digit, b.auction)
     yield nexmark_alerts (id = b.auction, alert_type = "q2_mod123", detail = "auction % 123 == 0", request_count = 1)
-    limits { max_memory = "512MB" }
 }
 
 test q2_mod123_hit for q2_mod_123 {

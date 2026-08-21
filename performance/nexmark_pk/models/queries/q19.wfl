@@ -1,11 +1,15 @@
 use "nexmark.wfs"
 
-// Q19：有序序列（`on event seq`）——每 auction 连续 2 笔 bid、第 2 笔在第 1 笔 60s 内
-// 到达则触发（对齐 Flink Q19 的序列/事件时序面，白皮书 6.16×）。
+// Q19 — Auction TOP-10 Price（权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q19，扩展）
+// 权威 SQL：
+//   SELECT * FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY auction ORDER BY price DESC)
+//                  AS rank_number FROM bid) WHERE rank_number <= 10;
+// —— 每 auction 价格最高的 10 个 bid（per-key TOP-N）。
 //
-// 用 sliding `match<auction:10m>` + `on event seq { has b; has b within 60s; }`：
-// 同一 source 的两步有序（第 2 步 within 60s）。测试 **`on event seq` 有序序列**
-// 能力面（此前查询未覆盖）。
+// ⚠ 未实现（引擎能力待补）：wfusion 的 conv top-N 是「收口批全局 top-N」，无
+// per-key 分组（每 auction 各自 top-10 需要 conv 按键分组或 ROW_NUMBER 算子）。
+// 下方规则保留为**能力面测试**（cap：有序序列 on event seq 连续 2 bid），
+// 与权威 q19 语义无关；权威语义待引擎支持 per-key TopN 后重写。
 rule q19_seq_two_bids {
     events { b : bid_events }
     match<auction:10m> {

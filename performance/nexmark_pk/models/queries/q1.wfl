@@ -1,19 +1,28 @@
 use "nexmark.wfs"
 
-// 无状态 Q1：bid 投影（对齐 Flink Q1 的 stateless projection 语义）。
+// Q1 — Currency conversion（权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q1）
+// 权威 SQL：SELECT auction, bidder, 0.908 * price AS price, dateTime, extra FROM bid;
+// —— 每 bid 输出一行，价格美元→欧元换算（0.908）。无状态纯投影。
 //
-// 用 on each 路径：无 match 实例表、无状态机——每 bid 独立评估输出一条
-// 告警（= Flink 每 bid 输出一行到 blackhole）。
-//
-// 背景：keyed 版本（match<auction:10m> + count>=1）在 100M 规模下为 6M 个
-// auction 各建一个状态机实例，实例表涨破 CPU 缓存后吞吐从 ~6.5M/s 崩到
-// ~0.9M/s 稳态（2026-08-15 实测曲线）；而 Flink Q1 零 key 状态。on each
-// 才是与 Flink Q1 对等的工作负载。
+// wfusion 表达：`on each`（每 bid 一行，无实例表无状态机）。换算表达式放
+// score（`score(0.908 * b.price)`）——每事件真实计算 0.908×price；不放入
+// detail 字符串化（fmt 曾致 EPS 减半 + RSS 14GB，是本地特有负担，Flink 输出
+// DECIMAL 到 blackhole 不字符串化）。
 rule q1_bid_passthrough {
     events { b : bid_events }
-    on each b -> score(1.0)
+    on each b -> score(0.908 * b.price)
     entity(digit, b.auction)
     yield nexmark_alerts (id = b.auction, alert_type = "q1_passthrough", detail = "bid", request_count = 1)
 }
 
-// ---- Q2 按 auction id 过滤（stateless filter 族） ----
+test q1_passthrough for q1_bid_passthrough {
+    input {
+        row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
+        row(b, auction = 2, bidder = 2, price = 200, channel = "G", url = "u");
+    }
+    expect {
+        hits == 2;
+        hit[0].entity_id == "1";
+        hit[1].entity_id == "2";
+    }
+}

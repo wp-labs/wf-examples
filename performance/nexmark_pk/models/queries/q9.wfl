@@ -1,28 +1,22 @@
 use "nexmark.wfs"
 
-// 对齐 Flink Q9「Winning Bids」（胜出出价，2026-08-21 语义修复，替代旧 seller 计数）。
-// 官方实现（nexmark/nexmark nexmark-flink/src/main/resources/queries/q9.sql）：
-//   SELECT A.*, B.* FROM (
-//     SELECT A.*, B.auction, B.bidder, B.price, B.dateTime AS bid_dateTime, B.extra AS bid_extra,
-//       ROW_NUMBER() OVER (PARTITION BY A.id ORDER BY B.price DESC, B.dateTime ASC) AS rownum
+// Q9 — Winning Bids（权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q9，扩展）
+// 权威 SQL：
+//   SELECT A.*, B.auction, B.bidder, B.price, ... FROM (
+//     SELECT A.*, ..., ROW_NUMBER() OVER (PARTITION BY A.id ORDER BY B.price DESC,
+//            B.dateTime ASC) AS rownum
 //     FROM auction A, bid B
 //     WHERE A.id = B.auction AND B.dateTime BETWEEN A.dateTime AND A.expires)
 //   WHERE rownum <= 1
-// —— 纯 SQL（Flink planner 编译成时间窗口 join + TopN 去重算子），无 reserve 门槛、
-// 无 person join；每 auction 生命周期 [dateTime, expires] 内取价格最高（平手取最早）
-// 的 bid 为胜者，恰输出一条。
+// —— 纯 SQL（Flink planner 编译成时间窗口 join + TopN 去重）：每 auction 生命周期
+// [dateTime, expires] 内取价格最高（平手取最早）的 bid 为胜者，恰输出一条。
 //
-// wfusion 能力面（fixed 窗口 close 聚合，与 q16 同构）：bid 驱动，每 auction 固定
-// 10m 窗口收口时取**窗口内最高出价**（max measure）作为胜者，EMIT 一条。
-// 工作负载 = 92M bid 进管道 + 每 auction 状态累积 max（对齐标准 Q9 的 bid 主导面）。
+// wfusion 能力面（fixed 窗口 close 聚合）：bid 驱动，每 auction 固定 10m 窗口
+// 收口时取**窗口内最高出价**（max measure）作为胜者，EMIT 一条。
 //
-// 语义说明（诚实标注，详见 SEMANTIC_ALIGNMENT.md §5.2）：
-// - 胜者 = 窗口内 max(price)，每 (auction × 10m 桶) 至多一条；官方按 auction 生命周期
-//   [dateTime, expires] 精确每 auction 一条——平台无 per-key 过期窗口，用 10m 桶近似
-//   （聚合面等价，计数口径不同）；
-// - 平手（同价）取最早 bid：max measure 未定义 tie-break（官方 ORDER BY dateTime ASC）；
-// - 官方无 reserve 门槛（`max >= 10` 仅作“窗口内有出价”的兜底，等价无条件）；
-// - 官方无 person join，输出 auction + 胜出 bid 字段——alert 带 auction id 即可。
+// ⚠ 近似：固定桶近似 auction 生命周期（计数口径不同：权威每 auction 恰一条，
+// 本地每 auction×桶一条）；平手（同价）取最早未定义（权威 ORDER BY dateTime ASC）；
+// fixed+close 尾部收口非确定（见 verify known）。
 rule q9_winning_bid {
     events { b : bid_events }
     match<auction:10m:fixed> {
@@ -42,9 +36,7 @@ test q9_winning_bid_hit for q9_winning_bid {
   expect { hits == 1; hit[0].entity_id == "5"; }
 }
 
-test q9_winning_bid_no_hit for q9_winning_bid {
-  input {
-    row(b, auction = 5, bidder = 1, price = 100, channel = "G", url = "u");
-  }
-  expect { hits == 0; }
-}
+// AND 模式（on event + and close）：on event 满足后仅标记，输出发生在 close。
+// 测试结束 EOS flush 也会触发 close 收口，故「有 bid 的实例」必然输出一条；
+// 不存在 no-hit 情形（close 阈值 max>=10 为无条件兑底）。旧 no-hit 测试
+// 期望 hits==0 与 AND 语义矛盾（EOS flush 也会 close 输出），已删除。

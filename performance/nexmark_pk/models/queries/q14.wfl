@@ -1,25 +1,61 @@
 use "nexmark.wfs"
 
-// Q14：两段式 Top-N——每固定 10m 窗口按 seller 的 auction 数取**前 10**（对齐 Flink Q14 的
-// 两级聚合 Top-N 面：先窗口聚合，再跨 key 排序取 Top-N）。
+// Q14 — Calculation（权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q14，扩展）
+// 权威 SQL：
+//   SELECT auction, bidder, 0.908*price AS price,
+//          CASE WHEN HOUR(dateTime) >= 8 AND HOUR(dateTime) <= 18 THEN 'dayTime'
+//               WHEN HOUR(dateTime) <= 6 OR HOUR(dateTime) >= 20 THEN 'nightTime'
+//               ELSE 'otherTime' END AS bidTimeType,
+//          extra, count_char(extra, 'c') AS c_counts
+//   FROM bid WHERE 0.908*price > 1000000 AND 0.908*price < 50000000;
+// —— 每满足价格区间的 bid 输出一行（货币换算 + 时间分型 CASE + UDF）。
 //
-// 第一段：auction 流按 seller 固定窗口计数；第二段：conv 按计数降序排序保留 Top-10。
-// 每个窗口输出 ≤10 条告警。测试 **conv top-N（更大 N）+ 第二窗口键（seller）**能力面。
-//
-// 注意：bench 的 SHARD_KEYS 把 auction_events 按 id 分片（Q3/Q4 需要），同一 seller 的
-// auction 跨 shard——但 conv 阶段（ConvStageTask）会把各分片的 raw closes 合并后再做
-// 全局 top-N（barrier 等齐水位 + apply_conv over merged batch），所以 Top-N 是**全局**
-// seller 语义，不受分片影响。
-rule q14_top_10_sellers {
-    events { a : auction_events }
-    match<seller:10m:fixed> {
-        on event { a | count >= 1; }
-        and close { n: a | count >= 1; }
-    } -> score(20.0)
-    entity(digit, a.seller)
-    yield nexmark_alerts (id = a.seller, alert_type = "q14_top10", detail = "top seller", request_count = 1)
-    conv {
-        sort(-n) | top(10) ;
-    }
-    limits { max_memory = "512MB" }
+// wfusion 映射（on each 每行输出，2026-08-21）：
+// - bind filter 下推价格区间（0.908*price ∈ (1e6, 5e7)）；
+// - `strftime(b.dateTime, "%H")` 取小时（UTC 数据轴 00:xx → 恒 nightTime，
+//   与官方 CASE 语义一致地按小时分型，官方时间轴同源）；
+// - `count_char(extra, 'c')` = Flink q14 UDF 同义（wfl 新增函数）。
+// 输出基数 = 满足价格区间的 bid 数（对齐官方每行输出）。
+rule q14_calculation {
+    events { b : bid_events && 0.908 * b.price > 1000000 && 0.908 * b.price < 50000000 }
+    on each b -> score(5.0)
+    entity(digit, b.auction)
+    yield nexmark_alerts (
+        id = b.auction,
+        alert_type = "q14_calc",
+        detail = fmt("{} c={}",
+            if strftime(b.dateTime, "%H") in ("00", "01", "02", "03", "04", "05", "06",
+                                                "20", "21", "22", "23")
+                then "nightTime"
+            else if strftime(b.dateTime, "%H") in ("08", "09", "10", "11", "12", "13",
+                                                     "14", "15", "16", "17", "18")
+                then "dayTime"
+            else "otherTime",
+            count_char(b.extra, "c")),
+        request_count = 1
+    )
+}
+
+test q14_price_hit for q14_calculation {
+  input {
+    row(b, auction = 1, bidder = 1, price = 5000000, channel = "G", url = "u", extra = "abaccc");
+  }
+  expect { hits == 1; hit[0].entity_id == "1"; }
+}
+
+test q14_price_below for q14_calculation {
+  input {
+    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u", extra = "");
+  }
+  expect { hits == 0; }
+}
+
+test q14_count_char for q14_calculation {
+  input {
+    row(b, auction = 2, bidder = 2, price = 5000000, channel = "G", url = "u", extra = "abaccc", dateTime = 0);
+  }
+  expect {
+    hits == 1;
+    hit[0].field("detail") == "nightTime c=3";
+  }
 }
