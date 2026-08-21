@@ -26,8 +26,13 @@ data/                    # 运行产物（gitignore）：帧文件、bench 结�
 | auction_events | 6% | 30M 总量 = 1.8M auction |
 | bid_events | 92% | 30M 总量 = 27.6M bid |
 
-事件时间 ~30 分钟，hot 分布（50% hot auction / 25% hot bidder / 25% hot seller）。
+事件时间 ~30 分钟（线性映射，严格递增，等价 Flink `outOfOrderGroupSize=1`）；热点：
+50% hot auction（出价 [100,500]）/ 50% cold（[10,150]），seller 与 bidder 各自
+50% 走最近 15s 热窗、50% 走最近 60s 冷窗。
 **同一 count + seed 的生成结果字节级确定**（`wfgen gen-nexmark`，确定性已验证）。
+与 Flink 官方定义（`nexmark/nexmark`）的**逐项符合性对照（含刻意偏离项及影响）**
+见 [`NEXMARK_CONFORMANCE.md`](./NEXMARK_CONFORMANCE.md)；`gen-nexmark --check` 与
+`verify-nexmark` 会在报告尾部自动输出符合性摘要。
 
 ## 查询：与 Flink Nexmark 测试集的逻辑匹配度
 
