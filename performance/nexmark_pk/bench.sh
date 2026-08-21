@@ -292,7 +292,26 @@ start_daemon() {
   rm -f data/metrics.ndjson data/wfusion.log data/daemon.log data/stream.log
   "$WFUSION" daemon --config /tmp/bench_conf.toml --work-dir . > data/daemon.log 2>&1 &
   local D=$!
-  for i in $(seq 1 40); do nc -z 127.0.0.1 $PORT 2>/dev/null && break; sleep 0.2; done
+  local i
+  for i in $(seq 1 40); do
+    # daemon 进程已退出 → 启动失败（配置/规则文件解析错误等）。
+    # 不加载坏文件就应明确失败退出，而不是等一个永远不会监听的端口。
+    # 注意：本函数经 `$(start_daemon)` 命令替换在子 shell 执行，`exit` 不会
+    # 传播到主脚本——必须 `return 1`；且 bash 的 `local D=$(...) || exit 1`
+    # 会吞掉命令替换退出码，调用方须拆开写：`local D; D=$(...) || exit 1`。
+    if ! kill -0 "$D" 2>/dev/null; then
+      echo "    错误: daemon 启动失败（进程已退出）——检查配置/规则文件，daemon.log 尾部：" >&2
+      tail -20 data/daemon.log >&2
+      return 1
+    fi
+    nc -z 127.0.0.1 "$PORT" 2>/dev/null && break
+    sleep 0.2
+  done
+  if ! nc -z 127.0.0.1 "$PORT" 2>/dev/null; then
+    echo "    错误: daemon $D 启动超时（8s 端口 $PORT 未监听）——daemon.log 尾部：" >&2
+    tail -20 data/daemon.log >&2
+    return 1
+  fi
   echo "$D"
 }
 
@@ -390,7 +409,8 @@ if [ "$FEED" = "replay" ] && [ ! -s "$FRAMES" ]; then
     exit 1
   }
   write_conf q1 replay
-  local_dummy=$(start_daemon)
+  local local_dummy
+  local_dummy=$(start_daemon) || exit 1
   "$WFGEN" dump-frames --scenario scenarios/nexmark.wfg --input data/burst_bench.jsonl \
     --ws models/schemas/nexmark.wfs --addr 127.0.0.1:$PORT --output "$FRAMES" --chunk 1000000 \
     --max-frame-bytes "$MAX_FRAME_BYTES" --max-frame-rows "$MAX_FRAME_ROWS" > /dev/null 2>&1
@@ -414,7 +434,8 @@ run_replay_one() {
   local Q="$1" OUT_TAG="${2:-replay}"
   local OUT="data/bench_${Q}_${OUT_TAG}.txt"
   write_conf "$Q" replay
-  local D=$(start_daemon)
+  local D
+  D=$(start_daemon) || exit 1
   start_rss "$D"; local SP=$!
 
   local T0=$("$PY" -c 'import time; print(time.time())')
@@ -495,7 +516,8 @@ run_stream_one() {
   local Q="$1"
   local OUT="data/bench_${Q}_stream.txt"
   write_conf "$Q" stream
-  local D=$(start_daemon)
+  local D
+  D=$(start_daemon) || exit 1
   start_rss "$D"; local SP=$!
 
   local T0=$("$PY" -c 'import time; print(time.time())')
