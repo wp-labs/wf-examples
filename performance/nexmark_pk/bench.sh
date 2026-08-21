@@ -125,6 +125,13 @@ fi
 PY="${PYTHON:-python3}"
 PORT=9800
 
+# 千分位显示：macOS bash 3.2 无 printf %'d，走 python；非数字原样返回（如 n/a）
+comma() { "$PY" -c '
+import sys
+v = sys.argv[1]
+try: print(f"{int(float(v)):,}")
+except Exception: print(v)' "$1" 2>/dev/null || echo "$1"; }
+
 # ---- 校验 ----
 case "$TOTAL" in
   10m) TOTAL_N=10000000;; 30m) TOTAL_N=30000000;; 100m) TOTAL_N=100000000;;
@@ -142,7 +149,7 @@ esac
 
 mkdir -p data
 CORES=$(sysctl -n hw.ncpu 2>/dev/null || echo "?")
-echo "== bench: query=$QUERY feed=$FEED total=$TOTAL_N rate=$RATE slice_ms=$SLICE_MS cores=$CORES =="
+echo "== bench: query=$QUERY feed=$FEED total=$(comma "$TOTAL_N") rate=$(comma "$RATE") slice_ms=$SLICE_MS cores=$CORES =="
 
 # 等 daemon 释放端口（kill 后优雅关闭可能慢，尤其高内存 daemon）。否则下一个
 # daemon bind 9800 失败 → accept 任务退出 → source 通道永久关闭（"connection
@@ -266,8 +273,8 @@ stat_samples() {
 # 并行度默认取 conf/wfusion.toml；-p/-r flag 或环境变量覆盖。
 write_conf() {
   local Q="$1" M="$2"
-  PARSE_V_EFF="${PARSE:-$(sed -n 's/^parse_parallelism = //p' conf/wfusion.toml | head -1)}"
-  RULE_V_EFF="${RULE:-$(sed -n 's/^rule_parallelism = //p' conf/wfusion.toml | head -1)}"
+  PARSE_V_EFF="${PARSE:-$(sed -n 's/^parse_parallelism = *//p' conf/wfusion.toml | head -1)}"
+  RULE_V_EFF="${RULE:-$(sed -n 's/^rule_parallelism = *//p' conf/wfusion.toml | head -1)}"
   sed -e "s|^rules = .*|rules = \"models/queries/$Q.wfl\"|" \
       -e "s|^parse_parallelism = .*|parse_parallelism = ${PARSE_V_EFF}|" \
       -e "s|^rule_parallelism = .*|rule_parallelism = ${RULE_V_EFF}|" \
@@ -352,12 +359,12 @@ report_result() {
   # 同一配置的 EPS 随后台干扰在 43↔55M 间摆动（见 q1-throughput-bisection.md §9），
   # 结果行不带负载上下文无法解释相位差异。
   local LD; LD=$(sysctl -n vm.loadavg 2>/dev/null | awk '{printf "%.1f", $2}')
-  local CTX="p=${PARSE_V_EFF} r=${RULE_V_EFF} c=${CONNECTIONS}${SHARD_KEYS:+" s=${SHARD_KEYS%%:*}"} frame_mb=$((MAX_FRAME_BYTES/1048576)) load=${LD:-n/a} $(date +%m-%d_%H:%M:%S)"
-  { echo "$BODY $CTX"; echo "-- correctness --"; correctness_summary; } >> "$OUT"
+  local CTX="p=${PARSE_V_EFF} r=${RULE_V_EFF} c=${CONNECTIONS}${SHARD_KEYS:+" s=${SHARD_KEYS%%:*}"} frame_mb=$((MAX_FRAME_BYTES/1048576)) load=${LD:-n/a} · $(date +%m-%d_%H:%M:%S)"
+  { echo "$BODY · $CTX"; echo "-- correctness --"; correctness_summary; } >> "$OUT"
   # SUMMARY 行回显到 stdout（EMIT 行只进文件）
   local SUM
   SUM=$(grep '^SUMMARY' "$OUT" | tail -1 | cut -d' ' -f2-)
-  echo "$BODY [$SUM] $CTX"
+  echo "$BODY · [$SUM] $CTX"
   case "$SUM" in
     clean) ;;
     *) echo "    ⚠ 正确性计数器非零，本跑批作废: $SUM" >&2 ;;
@@ -371,9 +378,16 @@ if [ "$MAX_FRAME_BYTES" = "8388608" ]; then
 else
   FRAMES=data/bench_${TOTAL}_mb${MAX_FRAME_BYTES}_${DATA_VER}.frames
 fi
-if [ "$FEED" = "replay" ] && [ ! -f "$FRAMES" ]; then
-  echo "==> 预编码帧（gen-nexmark ${TOTAL_N} → dump-frames, max_frame_bytes=${MAX_FRAME_BYTES}）"
-  "$WFGEN" gen-nexmark "$TOTAL_N" > data/burst_bench.jsonl
+if [ "$FEED" = "replay" ] && [ ! -s "$FRAMES" ]; then
+  echo "==> 预编码帧：gen-nexmark $(comma "$TOTAL_N") --check → dump-frames（frame $((MAX_FRAME_BYTES/1048576))MiB）"
+  # 帧缓存必须非空（-s）：上次失败/中断可能留下 0 字节或截断文件，存在不等于有效，
+  # 否则会跳过生成→ send-arrow 推空帧→空等 MAX_SEC（之前 30m 空等 15 分钟无输出）。
+  rm -f "$FRAMES"
+  "$WFGEN" gen-nexmark "$TOTAL_N" --check > data/burst_bench.jsonl || {
+    echo "    错误: gen-nexmark 失败（确认 wfgen 含 --check：$WFGEN）" >&2
+    rm -f data/burst_bench.jsonl
+    exit 1
+  }
   write_conf q1 replay
   local_dummy=$(start_daemon)
   "$WFGEN" dump-frames --scenario scenarios/nexmark.wfg --input data/burst_bench.jsonl \
@@ -383,7 +397,16 @@ if [ "$FEED" = "replay" ] && [ ! -f "$FRAMES" ]; then
   # 孤儿继续烧 CPU 会污染本轮首跑测量
   kill_daemon "$local_dummy"; wait_port_free
   rm -f data/burst_bench.jsonl
-  echo "   frames: $FRAMES ($(du -h "$FRAMES" | cut -f1))"
+  # 产出的帧仍为空 → 上一步静默失败（无 set -e），删掉坏缓存并显式退出，
+  # 避免带着 0 字节缓存继续跑出"假结果/空等"。
+  if [ ! -s "$FRAMES" ]; then
+    echo "    错误: dump-frames 产物为空，已删除坏缓存（可重试）" >&2
+    rm -f "$FRAMES"
+    exit 1
+  fi
+  # ${FRAMES} 花括号必须：macOS bash 3.2 会把 `$VAR（` 的全角括号字节并入变量名
+  # （set -u 下报 `FRAMES�: unbound variable`，实测复现），`${FRAMES}（` 才正确。
+  echo "  frames: ${FRAMES}（$(du -h "$FRAMES" | cut -f1)）"
 fi
 
 run_replay_one() {
@@ -404,7 +427,7 @@ run_replay_one() {
     local SHARD_FILES=""
     local i
     for i in $(seq 0 $(( CONNECTIONS - 1 ))); do
-      [ -f "${SHARD_PREFIX}.s${i}.frames" ] || { SHARD_FILES=""; break; }
+      [ -s "${SHARD_PREFIX}.s${i}.frames" ] || { SHARD_FILES=""; break; }
       SHARD_FILES="${SHARD_FILES:+$SHARD_FILES,}${SHARD_PREFIX}.s${i}.frames"
     done
     if [ -z "$SHARD_FILES" ]; then
@@ -442,6 +465,10 @@ run_replay_one() {
       T2=$("$PY" -c 'import time; print(time.time())')
       break
     fi
+    # 长等待期每 10s 报一次进度，避免全程静默看起来像挂死
+    if [ $(( j % 100 )) -eq 0 ]; then
+      echo "  ingest: $(comma "${APP:-0}")/$(comma "$TOTAL_N") ack_lag=${DRAINED:-1}（等待引擎消化，超时上限 ${MAX_SEC}s）"
+    fi
     sleep 0.1
   done
   # 追平后 kill 客户端：CONNECTIONS>1 时客户端会推 CONNECTIONS×TOTAL 事件，
@@ -459,7 +486,7 @@ run_replay_one() {
   : > "$OUT"   # 预清空，防追加残留上一轮
   local TO=""; [ "$TIMEOUT" = 1 ] && TO=" ⚠TIMEOUT(appended未追平,EPS=实际速率)"
   report_result "$Q" replay "$OUT" \
-    "$Q/replay: EPS=$EPS RSS_peak=${PEAK}MB cpu_avg=${CPU_AVG}% cpu_max=${CPU_MAX}% evict=$EV appended=$APP/$TOTAL_N$TO"
+    "$Q/replay: EPS=$(comma "$EPS") · RSS_peak=$(comma "$PEAK")MB · CPU ${CPU_AVG}%avg/${CPU_MAX}%max · evict=$EV · appended=$(comma "$APP")/$(comma "$TOTAL_N")$TO"
 }
 
 # ---- feed=stream：wfgen stream 实时生成（事件时间推进） ----
@@ -490,6 +517,10 @@ run_stream_one() {
       T2=$("$PY" -c 'import time; print(time.time())')
       break
     fi
+    # 长等待期每 10s 报一次进度，避免全程静默看起来像挂死
+    if [ $(( j % 20 )) -eq 0 ]; then
+      echo "  ingest: $(comma "${APP:-0}")/$(comma "$TOTAL_N") ack_lag=${DRAINED:-1}（等待引擎消化，超时上限 ${MAX_SEC}s）"
+    fi
     sleep 0.5
   done
   if [ "$T2" = 0 ]; then T2=$("$PY" -c 'import time; print(time.time())'); TIMEOUT=1; fi
@@ -503,7 +534,7 @@ run_stream_one() {
   : > "$OUT"
   local TO=""; [ "$TIMEOUT" = 1 ] && TO=" ⚠TIMEOUT(未追平,引擎撑不住目标速率或超时)"
   report_result "$Q" stream "$OUT" \
-    "$Q/stream: EPS=$EPS RSS_peak=${PEAK}MB cpu_avg=${CPU_AVG}% cpu_max=${CPU_MAX}% evict=$EV appended=$APP/$TOTAL_N target_rate=$RATE$TO"
+    "$Q/stream: EPS=$(comma "$EPS") · RSS_peak=$(comma "$PEAK")MB · CPU ${CPU_AVG}%avg/${CPU_MAX}%max · evict=$EV · appended=$(comma "$APP")/$(comma "$TOTAL_N") · target_rate=$(comma "$RATE")$TO"
 }
 
 # ---- 预热轮（WARMUP=1）：stash 重建后首跑系统性偏低（曾三次复现），须剔除 ----
@@ -522,52 +553,21 @@ for Q in "${QUERIES[@]}"; do
 done
 echo "== done: 结果在 data/bench_*_${FEED}.txt =="
 
-# ---- --verify：用 wfgen verify-nexmark ground truth 对拍 EMIT ----------------
-# 映射引擎 EMIT 规则名 → verify-nexmark 输出 key。q16/q21 是已知边界
-# （模拟器给理想/朴素值，引擎按设计不同——见 wfgen 文档），q1/q11/q12/
-# q14/q22 无模拟器（未建模），仅作 clean/确定性验证。
+# ---- --verify：用 wfgen verify-nexmark（真实 WFL 规则引擎 ground truth）对拍 EMIT ----
+# verify-nexmark 用 wf_engine 规则引擎处理与引擎同一份数据、同一套 .wfl 规则，
+# 产出各规则应 EMIT 计数；--engine-emit 读引擎实际 EMIT，在 wfgen 内用
+# git-diff 同款分层方法（L1 哈希快扫判同 → L2 Myers/降级 → L3 明细，similar
+# crate）逐规则对拍，退出码 0=一致 / 1=有差异（q21 anti-join 已知差异不判失败）。
+# 性能：真实规则引擎逐事件 × 规则数，10m≈80s / 30m≈5-15min（负载相关）；
+# 单查询 --verify 传 --query 只验证该查询的规则（26 → 1 个文件）。
 if [ "$VERIFY" = "1" ] && [ "$FEED" = "replay" ]; then
-  echo "== verify: wfgen verify-nexmark ${TOTAL_N} 对拍 EMIT =="
-  "$WFGEN" verify-nexmark "$TOTAL_N" > /tmp/bench_gt_verify.json 2>/dev/null
-  "$PY" - /tmp/bench_gt_verify.json <<'VERIFYEOF'
-import json, re, sys, glob
-gt = json.load(open(sys.argv[1]))
-M = {
- "q2_mod_123":"q2_mod123", "q3_auction_seller":"q3_auction_seller",
- "q4_real_avg_100":"q4_real_avg_100", "q5_bidcount_10":"q5_bidcount_10",
- "q5_bidcount_50":"q5_bidcount_50", "q5_bidcount_100":"q5_bidcount_100",
- "q6_avg_price_200":"q6_avg_price_200", "q7_maxbid_200":"q7_maxbid_200",
- "q7_maxbid_500":"q7_maxbid_500", "q7_maxbid_1000":"q7_maxbid_1000",
- "q8_monitor_new_user":"q8_monitor_new_user", "q10_arbitrary_selection":"q10_arbitrary_selection",
- "q13_bid_person_join":"q13_bid_person_join", "q15_high_bid_count_5":"q15_high_bid_count_5",
- "q16_sum_price_1000":"q16_sum_price_1000", "q17_distinct_bidders_20":"q17_distinct_bidders_20",
- "q18_accumulate_fires":"q18_accumulate_fires", "q19_seq_two_bids":"q19_seq_two_bids",
- "q20_any_count_3":"q20_any_count_3", "q21_anti_person":"q21_anti_person",
- "q9_seller_count":"q3_auction_seller",
-}
-# 模拟器不精确（理想/朴素值），引擎按设计不同——不算回归失败
-KNOWN = {"q16_sum_price_1000", "q21_anti_person"}
-emitted = {}
-for path in glob.glob("data/bench_*_replay.txt"):
-    for line in open(path):
-        m = re.match(r"EMIT (\S+) (\d+)", line)
-        if m:
-            emitted[m.group(1)] = int(m.group(2))
-n_match = n_diff = n_skip = 0
-for rule, key in sorted(M.items()):
-    if rule not in emitted:
-        n_skip += 1; print(f"  {rule:<26} 无引擎 EMIT（未跑/无输出）"); continue
-    if key not in gt:
-        n_skip += 1; print(f"  {rule:<26} 无 ground truth"); continue
-    ev, gv = emitted[rule], gt[key]
-    if ev == gv:
-        n_match += 1; print(f"  {rule:<26} {ev:>12} == {gv:>12}  ✅")
-    elif rule in KNOWN:
-        n_match += 1; print(f"  {rule:<26} {ev:>12} != {gv:>12}  ⚠ 已知边界（模拟器理想/朴素值）")
-    elif abs(ev - gv) <= 50 or abs(ev - gv) <= max(gv, 1) * 0.005:
-        n_match += 1; print(f"  {rule:<26} {ev:>12} ≈ {gv:>12}  ✅（已知波动带 ±0.5%）")
-    else:
-        n_diff += 1; print(f"  {rule:<26} {ev:>12} != {gv:>12}  ❌")
-print(f"== verify 结果: {n_match} 匹配, {n_diff} 差异, {n_skip} 跳过 ==")
-VERIFYEOF
+  # stderr 保留（进度条走 stderr；stdout 是 JSON + diff 报告）
+  VERIFY_SCOPE=""
+  [ "$QUERY" != "all" ] && VERIFY_SCOPE="--query $QUERY"
+  echo "== verify: wfgen verify-nexmark ${TOTAL_N}（真实规则引擎${VERIFY_SCOPE:+ $VERIFY_SCOPE}）对拍 EMIT =="
+  if "$WFGEN" verify-nexmark "$TOTAL_N" $VERIFY_SCOPE --engine-emit data; then
+    echo "== verify: 全部一致 ✅ =="
+  else
+    echo "== verify: 存在差异 ❌（见上方 diff 明细）=="
+  fi
 fi

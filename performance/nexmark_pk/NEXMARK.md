@@ -72,7 +72,7 @@ session / distinct / conv top-N / `on event<accu>` / seq / any —— 主要 DSL
 
 ## 3. 数据有什么要求
 
-NEXMark 标准数据的要求，本实现（`scripts/gen_nexmark.py` + `wfgen gen-nexmark`）全部满足：
+NEXMark 标准数据的要求，本实现（`wfgen gen-nexmark`）全部满足：
 
 1. **三流结构**：person/auction/bid 各字段与 NEXMark 事件模型一致（见 `models/schemas/nexmark.wfs`），
    事件时间字段为 `dateTime`（Timestamp）。
@@ -122,17 +122,19 @@ NEXMark 标准数据的要求，本实现（`scripts/gen_nexmark.py` + `wfgen ge
 
 ### 5.1 确定性 ground truth（权威标准）
 
-`scripts/verify_ground_truth.py` 用 Python **独立重放同一份确定性数据**，精确镜像引擎
-match 语义，逐规则算出期望 `emitted_total`：
+`wfgen verify-nexmark` 用**真实 WFL 规则引擎**（wf_engine，经 oracle 管线）处理与
+引擎同一份确定性数据、同一套 .wfl 规则，逐规则算出期望 `emitted_total`（规则名即
+引擎 EMIT 名，identity 对拍）：
 
-- 每个规则独立 MatchEngine（独立实例表/过期堆/pending-expiry 去重集）。
-- 滑动窗口 `match<key:10m>` 过期语义（`created_at + 600s <= watermark`）。
-- `push_expiry_candidate` **按 key 去重**（pending set）——28k 探针逐 alert 对拍
-  **2,679/2,679 全量精确吻合**（含 fire 时刻）验证过的引擎细节。
-- `on event`（非 accu）：fire 后实例 **reset**（count/max 清空，created_at = fire 时刻）。
-- snapshot join **miss 不 drop 事件**（只富化不丢）。
+- 与 `gen-nexmark` 相同的 30s 桶序喂入——与引擎 daemon 收到的帧序一致，窗口过期
+  语义对拍才成立（每规则独立 CepStateMachine + RuleExecutor）。
+- 覆盖全部 26 条规则（含旧模拟器未建模的 q1 on-each / q11/q12/q14/q22）。
+- **已知差异 q21（anti join）**：oracle 不评估 join 窗口状态（历史限制），标 ⚠
+  不判失败；其余规则与引擎 EMIT 精确相等（实测 q13=9,200,000 == 引擎 10m 对拍）。
+- 对拍在 wfgen 内完成（`--engine-emit data`）：git-diff 同款分层（L1 哈希 →
+  L2 Myers/降级 → L3 明细），退出码 0=一致 / 1=有差异。
 
-**30M（seed=1）期望值**（`verify_ground_truth.py`；30M 权威 + 10m 对拍）：
+**30M（seed=1）期望值**（`wfgen verify-nexmark`；30M 权威 + 10m 对拍）：
 
 | 规则 | 30M 期望 | 引擎实测 | 结果 |
 |---|---|---|---|
@@ -186,10 +188,12 @@ match 语义，逐规则算出期望 `emitted_total`：
 - **新旧二进制回归**：Q2/Q3/Q7/Q9 必须逐位一致；Q4/Q5 在**既存波动带**内（区间重叠
   而非单值相等，见 TEST_PLAN §8）。
 
-### 5.4 逐 alert 对拍（深验）
+### 5.4 深验（当前）
 
-28k 事件探针：引擎 `alerts.ndjson` vs 模拟器期望**逐 alert 全量吻合**（含 fire 时刻），
-作为语义锁死的最终标准（`scripts/q5_diff_v2.py`）。
+`bench.sh <q> replay 30m --verify`：`wfgen verify-nexmark --engine-emit data` 用真实
+规则引擎逐规则对拍引擎 EMIT（git-diff 同款分层：L1 哈希 → L2 Myers/降级 → L3 明细），
+退出码 0=一致 / 1=有差异（q21 已知差异 ⚠ 不判失败）。逐 alert 明细对拍
+（旧 28k 探针 `alerts.ndjson` 方案）随引擎 sink 改造已不再产生该文件，由计数级对拍替代。
 
 ### 5.5 已知波动（正确性的诚实边界）
 

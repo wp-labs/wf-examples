@@ -27,8 +27,7 @@ data/                    # 运行产物（gitignore）：帧文件、bench 结�
 | bid_events | 92% | 30M 总量 = 27.6M bid |
 
 事件时间 ~30 分钟，hot 分布（50% hot auction / 25% hot bidder / 25% hot seller）。
-**同一 count + seed 的生成结果字节级确定**（确定性已验证，脚本可重复复现）。
-`scripts/gen_nexmark.py` 保留为算法参考实现。
+**同一 count + seed 的生成结果字节级确定**（`wfgen gen-nexmark`，确定性已验证）。
 
 ## 查询：与 Flink Nexmark 测试集的逻辑匹配度
 
@@ -52,9 +51,9 @@ Flink 参照系 = [Alibaba Nexmark 白皮书](https://help.aliyun.com/en/flink/r
 
 ### 正确性验证（30M replay，seed=1）
 
-期望值由确定性模拟器 `scripts/verify_ground_truth.py` 独立推算（Python 重放 JSONL，精确镜像
-引擎 match 语义，含 pending_expiry 每 key 单条目去重、fire/reset 保留实例 created_at=fire
-时间等细节）：
+期望值由 `wfgen verify-nexmark`（真实 WFL 规则引擎）对同一份确定性数据逐规则算出：
+`bench.sh <q> replay 30m --verify` 在 wfgen 内与引擎实际 EMIT 计数对拍
+（git-diff 同款分层：L1 哈希 → L2 Myers → L3 明细，退出码 0=一致 / 1=有差异）。
 
 | 规则 | 期望 | 引擎实测 | 结果 |
 |---|---|---|---|
@@ -74,8 +73,8 @@ Flink 参照系 = [Alibaba Nexmark 白皮书](https://help.aliyun.com/en/flink/r
 > 事件）；q8/q11 会话窗口（`session(gap)`）。**q11 的会话在 bench 按 auction 分片下是 per-shard**
 > （同一 bidder 的 bid 跨 shard，会话被切碎；要全局会话语义须 `CONNECTIONS=1` 或按 bidder 分片）；
 > **q12/q14 的 conv top-N 是全局的**（conv 阶段跨分片合并后做 top-N，`CONNECTIONS=4` 即全局）。
-> `verify_ground_truth.py` 单机模拟覆盖 q6/q8/q10/q13，**不覆盖 q11（per-shard）与 q12/q14
-> （fixed 窗口 close+conv 未模拟）**——q11 全局语义以 `CONNECTIONS=1` 验证，q12/q14 以 30M
+> `wfgen verify-nexmark` 覆盖全部规则；**已知差异 q21（anti join）**——oracle 不评估 join 窗口
+> 状态，标 ⚠ 不判失败；q11 全局语义以 `CONNECTIONS=1` 验证，q12/q14 以 30M
 > 端到端确定性 + `[clean]` 为准。
 
 28k 事件探针逐 alert 对拍 **2,679/2,679 全量精确吻合**（含 fire 时刻）。q1 为无状态路径
@@ -129,11 +128,9 @@ MAX_FRAME_BYTES=1048576 ./bench.sh all replay 30m    # 指定帧 cap（默认 8M
 
 | 脚本 | 用途 |
 |---|---|
-| `verify_ground_truth.py` | 确定性 ground truth 模拟器（stdin JSONL → Q2-Q9 期望 emitted 数），语义依据见文件头 |
+| `wfgen verify-nexmark [--query qN] [--engine-emit data]` | 真实规则引擎 ground truth + 引擎 EMIT 对拍（git-diff 同款分层） |
 | `extract_emitted.py` | metrics.ndjson → emitted/append/正确性计数器汇总 |
-| `q5_diff_v2.py` | 引擎 alerts.ndjson 逐 alert 对拍（回归验证入口） |
-| `q5_trace_auc.py` | 单 auction 逐事件 trace（分歧定位） |
-| `gen_nexmark.py` | 生成算法参考实现 |
+| `read_metrics.py` | metrics NDJSON 指定 stage/name/label 最新值查询 |
 
 ## 前提
 

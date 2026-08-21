@@ -9,7 +9,7 @@
 | 层 | 工具 | 验证什么 | 耗时 |
 |---|---|---|---|
 | 微基准 | `cargo test --release -p wf-engine columnar_bench`（`#[ignore]`） | 列式读/emit/建 set/缓存的逐操作耗时 | ~1 min |
-| 端到端正确性 | `bench.sh <q> replay 30m` + `verify_ground_truth.py` + `[clean]` + EMIT | 输出与确定性 ground truth 一致 | ~10 min/批 |
+| 端到端正确性 | `bench.sh <q> replay 30m --verify`（wfgen verify-nexmark --engine-emit，真实规则引擎对拍 EMIT） + `[clean]` | 输出与规则引擎 ground truth 一致 | ~10-20 min/批 |
 | 端到端吞吐 | `bench.sh all replay 10m/30m/100m` | EPS + RSS_peak，A/B 对比 | 10m ~7 min；30m ~20 min |
 | 端到端长稳 | `bench.sh <q> stream <total>`（按 RATE 实时注入） | 真实时间窗口语义 + 长时内存有界/无泄漏（**非性能口径**，客户端编码受限 ~760k/s） | 视时长 |
 | 回归对比 | 新旧 wfusion 二进制同参数各跑一遍 | EMIT 一致 + EPS/RSS 变化 | 视规模 |
@@ -59,8 +59,9 @@ cargo test --release -p wf-engine columnar_bench -- --ignored --nocapture
 
 ## 3. 端到端正确性（30M 规模，seed=1）
 
-ground truth 由 `verify_ground_truth.py` 的 Rust 移植生成（`wfgen verify-nexmark`，
-同一 rng 序列、同一桶序，10M ~33s / 30M ~2min，输出与 Python 版逐位一致）。
+ground truth 由 `wfgen verify-nexmark` 用**真实 WFL 规则引擎**生成（与引擎同一份数据、
+同一套 .wfl 规则；10M ~80s / 30M ~5-15min，负载相关；单查询加 `--query qN` 只验证
+该查询规则）。对拍在 wfgen 内完成（`--engine-emit data`，git-diff 同款分层）。
 
 ```bash
 # 1) 生成 30M ground truth（模拟器，替代 Python 版）
@@ -82,7 +83,7 @@ done
 | `appended` | 30M/30M（或 100M/100M） |
 | EMIT 期望（30M seed=1，来自 README） | q2=224,289 · q3=1,800,000 · q4=27,600,000 · q5=1,712,532(±62 墙钟) · q7=10,350,961/34,578/0 · q9=1,800,000 |
 | EMIT 与 v1 数据 | v2 排序数据**事件集合不变**（rng 序列/字段一致，仅输出顺序不同），计数类 EMIT 应一致；时序相关（q16/q21）以多轮确定性 + clean 验证 |
-| 逐 alert 对拍（可选，深验） | `python3 scripts/q5_diff_v2.py` 28k 探针全量吻合 |
+| 规则引擎对拍（深验） | `bench.sh <q> replay 30m --verify`：wfgen verify-nexmark --engine-emit data，真实规则引擎逐规则对拍（q21 已知差异 ⚠ 除外） |
 
 > 30M 全量 ground truth 是权威；10m/100m 只做 EMIT 比例侧证 + 新旧一致（见 §6）。
 
