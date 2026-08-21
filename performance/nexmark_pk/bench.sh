@@ -79,7 +79,12 @@ fi
 
 QUERY="${1:-all}"
 FEED="${2:-replay}"
-TOTAL="${3:-100m}"
+# 数据量：默认 100m；PROFILE 模式（插桩性能下降）默认 10m。
+if [ "${PROFILE:-0}" = "1" ] && [ -z "${3:-}" ]; then
+  TOTAL=10m
+else
+  TOTAL="${3:-100m}"
+fi
 # --verify：跑批后用 `wfgen verify-nexmark` ground truth 对拍 EMIT（回归验证）。
 # 作为任意位置参数（如 `./bench.sh all replay 30m --verify`）或 VERIFY=1。
 VERIFY="${VERIFY:-0}"
@@ -103,6 +108,13 @@ CONNECTIONS="${CONNECTIONS:-1}"
 # 帧/分片缓存必须带版本号，否则旧口径缓存被静默复用（时间驱逐失效、窗口持全量、
 # RSS 20GB+ 的根因）。换 DATA_VER 即强制重新生成对应版本缓存。
 DATA_VER="${DATA_VER:-v5}"
+# PROFILE=1：instrument-coverage 插桩跑批——真实运行时**行级覆盖数据**。
+# 与微基准覆盖（wp-reactor/scripts/profile-cov.sh 的 bench.json）对比，差集 = 需补
+# test bench 的路径；指标（EPS/RSS/CPU）与预期值（OSS_VVR_BASELINE.md）对比定位优化。
+# 用法：PROFILE=1 ./bench.sh q1 replay 10m（默认 10M 数据量）
+PROFILE="${PROFILE:-0}"
+PROFILE_DIR="${PROFILE_DIR:-data/profile}"
+LLVM_TOOLS="${LLVM_TOOLS:-$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/aarch64-apple-darwin/bin}"
 # 键闭包分片键：默认空 = 单连接整文件推（时间有序 → 时间驱逐生效）。
 # CONNECTIONS>1 时配三流各自按键分，走生成时 shard-frames（同 key 同连接）。
 SHARD_KEYS="${SHARD_KEYS:-}"
@@ -126,6 +138,24 @@ if [ -z "$WFGEN" ]; then WFGEN="$(command -v wfgen 2>/dev/null || true)"; fi
 if [ -z "$WFUSION" ] || [ -z "$WFGEN" ]; then
   echo "错误: 找不到 wfusion/wfgen 二进制（设置 REPO/WFUSION/WFGEN，或加入 PATH）" >&2
   exit 1
+fi
+
+# ---- PROFILE 模式：插桩构建 + LLVM_PROFILE_FILE（真实运行行级计数） ----
+if [ "$PROFILE" = "1" ]; then
+  PROF_COV_DIR="$(pwd)/$PROFILE_DIR/cov-build"
+  PROF_PGO="$(pwd)/$PROFILE_DIR/pgo"
+  mkdir -p "$PROF_PGO"
+  echo "==> profile: instrument-coverage 插桩构建（隔离 ${PROF_COV_DIR}）"
+  if ! (cd "$REPO" && RUSTFLAGS="-Cinstrument-coverage -Cdebuginfo=1" \
+      CARGO_TARGET_DIR="$PROF_COV_DIR" cargo build --release -p wfusion -p wfgen 2>&1 | tail -1); then
+    echo "    ⚠ 插桩构建失败（PROFILE=1 需要 rustc 支持 instrument-coverage）；回退正常二进制" >&2
+  elif [ -x "$PROF_COV_DIR/release/wfusion" ]; then
+    WFUSION="$PROF_COV_DIR/release/wfusion"
+    WFGEN="$PROF_COV_DIR/release/wfgen"
+    rm -f "$PROF_PGO"/*.profraw
+    export LLVM_PROFILE_FILE="$PROF_PGO/run_%p.profraw"
+    echo "==> profile: 使用插桩二进制，profraw → $PROF_PGO"
+  fi
 fi
 PY="${PYTHON:-python3}"
 PORT=9800
@@ -579,6 +609,21 @@ for Q in "${QUERIES[@]}"; do
   fi
 done
 echo "== done: 结果在 data/bench_*_${FEED}.txt =="
+
+# ---- PROFILE 模式：合并 profraw + 行级覆盖报告（真实运行热路径） ----
+if [ "$PROFILE" = "1" ]; then
+  PROF_PGO="$(pwd)/$PROFILE_DIR/pgo"
+  if ls "$PROF_PGO"/*.profraw >/dev/null 2>&1; then
+    "$LLVM_TOOLS/llvm-profdata" merge -o "$PROFILE_DIR/runtime.profdata" "$PROF_PGO"/*.profraw
+    "$LLVM_TOOLS/llvm-cov" export --instr-profile="$PROFILE_DIR/runtime.profdata" \
+      --object "$WFUSION" > "$PROFILE_DIR/runtime.json" 2>/dev/null
+    echo "==> profile: 覆盖数据在 $PROFILE_DIR/{runtime.profdata,runtime.json}"
+    echo "    与微基准覆盖对比（wp-reactor/scripts/profile-cov.sh bench.json）："
+    echo "    差集 = 真实运行执行但微基准未覆盖 → 需补 test bench 的路径"
+  else
+    echo "==> profile: 无 profraw（插桩二进制未生效？），跳过合并" >&2
+  fi
+fi
 
 # ---- --verify：用 wfgen verify-nexmark（真实 WFL 规则引擎 ground truth）对拍 EMIT ----
 # verify-nexmark 用 wf_engine 规则引擎处理与引擎同一份数据、同一套 .wfl 规则，
