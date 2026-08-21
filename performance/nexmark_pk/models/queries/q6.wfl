@@ -1,31 +1,30 @@
 use "nexmark.wfs"
 
-// Q6：按 auction 的 10m 窗口**均价**（对齐 Flink Q6 的窗口 avg 聚合面）。
+// Q6：按 seller 分组的 10m 窗口**均价**（join-then-key, Path A，标准 Q6 面）。
 //
-// 标准 Q6「Average Selling Price by Seller」按卖家聚合均价；本实现因窗口键必须来自
-// 原始事件（卖家来自 join，属 emit 后数据），按 **auction** 聚合（bid 自带 auction 键），
-// 语义对齐面是「窗口内 avg measure + 状态机」——测试 avg 聚合路径。
-rule q6_avg_price_200 {
+// 官方 Q6「Average Selling Price by Seller」按卖家聚合均价：
+//   SELECT A.seller, AVG(B.price)
+//   FROM auction A, bid B
+//   WHERE A.id = B.auction AND B.dateTime BETWEEN A.dateTime AND A.expires
+//   GROUP BY A.seller, HOP(B.dateTime, 10s, 10m)
+//
+// wfusion 能力面（join 字段作窗口键）：`match<seller:10m>` 的键 `seller` 不在
+// 驱动事件（bid）上，而是 auction 的 join 侧字段——引擎先 snapshot join
+// （b.auction == auction_events.id）拿到 seller，再按该键分组（join-then-key）。
+// 每 seller 的滑动 10m 窗口内 avg(b.price) >= 200 时 EMIT（on-event avg 面，
+// 与旧 auction 键 q6 同构，仅键换成 seller）。
+//
+// 语义说明（诚实标注，详见 SEMANTIC_ALIGNMENT.md §5.6）：
+// - 官方为固定 hop 窗口聚合；本面用滑动 10m + on-event avg 近似。
+// - 验证锚点：oracle（真实规则引擎）与引擎 replay 对拍计数。内联 test 不维护
+//   join 窗口状态（join-then-key 全部 miss），故不使用。
+rule q6_avg_price_by_seller {
     events { b : bid_events }
-    match<auction:10m> {
+    match<seller:10m> {
         on event { b.price | avg >= 200; }
     } -> score(20.0)
+    join auction_events snapshot on b.auction == auction_events.id
     entity(digit, b.auction)
     yield nexmark_alerts (id = b.auction, alert_type = "q6_avg200", detail = "avg bid >= 200", request_count = 1)
     limits { max_memory = "512MB" }
-}
-
-test q6_avg_hit for q6_avg_price_200 {
-  input {
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 300, channel = "G", url = "u");
-  }
-  expect { hits == 1; }
-}
-test q6_avg_no_hit for q6_avg_price_200 {
-  input {
-    row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 1, price = 150, channel = "G", url = "u");
-  }
-  expect { hits == 0; }
 }

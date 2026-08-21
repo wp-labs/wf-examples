@@ -1,9 +1,18 @@
 use "nexmark.wfs"
 
-// 对齐 Flink Q3：SELECT name, city, state, id FROM person, auction WHERE person.id = auction.seller
-// auction 驱动，hash join person 表（seller == person.id）拿卖家信息。
+// 对齐 Flink Q3：SELECT P.name, P.city, P.state, A.id
+//              FROM Auction A, Person P
+//              WHERE A.seller = P.id AND A.category = 10
+//
+// 语义对齐点（2026-08-21）：
+// - 过滤 `A.category = 10`：标准 Q3 常量过滤，只让 1/26 的 auction 驱动 join+emit
+//   （此前无过滤，工作负载偏轻、与白皮书 Q3 不可比）；
+// - join `A.seller = P.id`：auction 驱动 + person 窗口快照查找（NEXMark 数据所有
+//   seller 都存在 → join 必命中，EMIT = 命中 category=10 的 auction 数）。
+//   join 命中后上下文含 person 字段（person_events.name/city/state，见引擎
+//   join 富化语义），此处 alert 携带 auction id + seller 即可（RPS 口径同白皮书）。
 rule q3_auction_seller {
-    events { a : auction_events }
+    events { a : auction_events && a.category == 10 }
     match<id:10m> {
         on event { a | count >= 1; }
     } -> score(1.0)
@@ -15,7 +24,14 @@ rule q3_auction_seller {
 
 test q3_hit for q3_auction_seller {
   input {
-    row(a, id = 1, seller = 100, itemName = "i", description = "d", initialBid = 10, reserve = 20, expires = 1000, category = 1, extra = "");
+    row(a, id = 1, seller = 100, itemName = "i", description = "d", initialBid = 10, reserve = 20, expires = 1000, category = 10, extra = "");
   }
   expect { hits == 1; hit[0].entity_id == "1"; }
+}
+
+test q3_category_filter for q3_auction_seller {
+  input {
+    row(a, id = 1, seller = 100, itemName = "i", description = "d", initialBid = 10, reserve = 20, expires = 1000, category = 3, extra = "");
+  }
+  expect { hits == 0; }
 }

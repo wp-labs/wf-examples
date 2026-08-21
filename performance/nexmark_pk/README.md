@@ -40,14 +40,14 @@ Flink 参照系 = [Alibaba Nexmark 白皮书](https://help.aliyun.com/en/flink/r
 | Q1 | 无状态投影：每 bid 输出一行 | `on each` 每 bid 一条告警（无 match 状态机——keyed 版会让 6M 实例表击穿 CPU 缓存，非对等工作负载） | **精确**（工作负载等价，输出 schema 不同） |
 | Q2 | `WHERE MOD(auction,123)=0` 过滤 | `events { b && b.auction % 123 == 0 }` + count≥1 fire | **精确**（谓词同构，选中 ~0.81% bids） |
 | Q3 | person⋈auction（seller=id）投影卖家信息 | auction 驱动 + `join person_events snapshot`，count≥1 每 auction 一条 | **精确**（join 语义同构；输出 seller id 而非 name/city/state 投影） |
-| Q4 | bid⋈auction 后按 category 均价 | bid 驱动 + `join auction_events snapshot`（92M bids 进管道）+ 窗口 count | **工作负载等价**（join + 窗口聚合成本同构；聚合面是 count 而非 category 均价——**输出语义近似**） |
+| Q4 | bid⋈auction 后按 category 均价（两层：每 auction max → category avg） | bid 驱动 + `match<auction:10m:fixed>` + `and close { b.price \| avg }`（每 auction 窗口均价） | **部分精确**（avg 聚合面；外层 category avg 平台不可表达，见 SEMANTIC_ALIGNMENT §5.3） |
 | Q5 | 滑窗计数面（Top-N 的 counting 面） | `match<auction:10m>` count≥{10,50,100} 三阈值 | **状态语义精确**（滑动计数 + reset-on-fire；非完整 Top-N 输出） |
 | Q7 | 每 auction 滑窗最高出价 | `match<auction:10m>` max(price)≥{200,500,1000} 三阈值 | **状态语义精确**（滑窗 MAX；输出为阈值告警非 max 值投影） |
 | Q9 | person⋈auction 按 seller 分组计数 | auction 驱动 + snapshot join + `match<seller:10m>` count≥1 | **精确**（join + 分组计数同构） |
 
-**匹配度小结**：Q1/Q2/Q3/Q9 精确；Q5/Q7 窗口状态语义精确（输出为告警阈值面）；Q4 是唯一
-工作负载等价但输出语义近似（count ≠ category 均价）的查询。全部 7 条的白皮书测试集内对齐
-已覆盖（7/19 条 NEXMark 全集）。
+**匹配度小结**：Q1/Q2/Q3/Q9 精确；Q5/Q7 窗口状态语义精确（输出为告警阈值面）；Q4 部分精确
+（avg 聚合面对齐，外层 category avg 平台不可表达，见 SEMANTIC_ALIGNMENT §5.3）。全部 7 条
+的白皮书测试集内对齐已覆盖（7/19 条 NEXMark 全集）。
 
 ### 正确性验证（30M replay，seed=1）
 
@@ -59,13 +59,13 @@ Flink 参照系 = [Alibaba Nexmark 白皮书](https://help.aliyun.com/en/flink/r
 |---|---|---|---|
 | q2_mod_123 | 224,289 | 224,289 | ✅ |
 | q3_auction_seller | 1,800,000 | 1,800,000 | ✅ |
-| q4_real_avg_100 | 27,600,000 | 27,600,000 | ✅ |
+| q4_avg_price_by_category | 5,254,483（oracle 理想） | 30M 4,228,230 | ⚠（fixed+close 收口非确定，丢尾部，见 SEMANTIC_ALIGNMENT §6.1） |
 | q5_bidcount_10 | 1,712,532 | 1,712,470 | ✅（差 62 = 0.0036%，scan_timeouts 墙钟非确定性） |
 | q5_bidcount_50 / 100 | 0 / 0 | 0 / 0 | ✅ |
 | q6_avg_price_200 | 9,794,325 | 10m 3,263,324 | ✅（10m 对拍 ±1 墙钟摆动） |
 | q7_maxbid_200/500/1000 | 10,350,961 / 34,578 / 0 | 同左 | ✅ |
 | q8_monitor_new_user | 600,000 | 10m 200,000 | ✅（10m 对拍精确） |
-| q9_seller_count | 1,800,000 | 1,800,000 | ✅ |
+| q9_winning_bid | 5,254,483（oracle 理想） | 30M 4,183,632 | ⚠（fixed+close 收口非确定，丢尾部，见 SEMANTIC_ALIGNMENT §6.1） |
 | q10_arbitrary_selection | 3,944,636 | 10m 1,314,285 | ✅（10m 对拍精确） |
 | q13_bid_person_join | 27,600,000 | 10m 9,200,000 | ✅（10m 对拍精确） |
 

@@ -1,22 +1,40 @@
 use "nexmark.wfs"
 
-// 真 Q4：bid ⋈ auction join（bid 驱动，92M bids 进管道）
-// 每条 bid 用 snapshot join 查 auction 窗口拿 category（yield 引用），
-// 按 bid.auction 窗口 count 聚合。工作负载 = Flink Q4（处理 92M bid + join 查表）。
-rule q4_real_avg_100 {
+// Q4：按 category 分组的固定 10m 窗口均价（join-then-key, Path A）。
+//
+// 官方实现（nexmark/nexmark nexmark-flink/src/main/resources/queries/q4.sql）：
+//   SELECT Q.category, AVG(Q.final)
+//   FROM (SELECT MAX(B.price) AS final, A.category
+//         FROM auction A, bid B
+//         WHERE A.id = B.auction AND B.dateTime BETWEEN A.dateTime AND A.expires
+//         GROUP BY A.id, A.category) Q
+//   GROUP BY Q.category
+// —— 内层每 auction 胜出价 max，外层按 category 求 avg（两级聚合）。
+//
+// wfusion 能力面（join 字段作窗口键）：`match<category:10m:fixed>` 的键
+// `category` 不在驱动事件（bid）上，而是 auction 的 join 侧字段——引擎在事件
+// 路由进窗口前先执行 snapshot join（b.auction == auction_events.id）拿到
+// category，再按该键分组（join-then-key）。每 category × 固定 10m 桶收口时取
+// **窗口内均价**（avg measure）EMIT 一条，工作负载 = 92M bid 进管道 + join
+// 查找 + 每 category 状态累积。
+//
+// 语义说明（诚实标注，详见 SEMANTIC_ALIGNMENT.md §5.3）：
+// - **avg 口径**：官方 avg(每 auction 的 max 胜出价)；本面直接 avg(窗口内 bid
+//   价格)（max 面由 q9_winning_bid 覆盖；外层二级聚合 avg-of-max 需 conv 聚合
+//   算子，另行设计）。
+// - **时间窗口**：官方按 auction 生命周期 [dateTime, expires]，本面用 10m 固定
+//   桶近似（与 q4 旧 auction 键面同构，仅键从 auction 换成 category）。
+// - 验证锚点：oracle（真实规则引擎）与引擎 replay 对拍计数（fixed+close 收口
+//   非确定性为独立已知问题，见 verify 的 known-diff 报告）。内联 test 不维护
+//   join 窗口状态（join-then-key 全部 miss），故不使用。
+rule q4_avg_price_by_category {
     events { b : bid_events }
-    match<auction:10m> {
+    match<category:10m:fixed> {
         on event { b | count >= 1; }
-    } -> score(10.0)
+        and close { w: b.price | avg >= 10; }
+    } -> score(20.0)
     join auction_events snapshot on b.auction == auction_events.id
-    entity(digit, b.auction)
-    yield nexmark_alerts (id = b.auction, alert_type = "q4_real_100", detail = "bid joined", request_count = 1)
+    entity(digit, category)
+    yield nexmark_alerts (id = category, alert_type = "q4_avg", detail = "avg bid price", request_count = 1)
     limits { max_memory = "512MB" }
-}
-
-test q4_hit for q4_real_avg_100 {
-  input {
-        row(b, auction = 5, bidder = 1, price = 100, channel = "G", url = "u");
-  }
-  expect { hits == 1; }
 }

@@ -39,7 +39,7 @@ Flink OSS / VVR、Kafka Streams、Spark Streaming 等）。
 | **Q1** | 无状态投影：每 bid 输出一行 | `on each` 每 bid 一条告警 | **无状态吞吐天花板**（管线极限，无状态机开销） |
 | **Q2** | `WHERE MOD(auction,123)=0` 过滤 | `events { b && b.auction % 123 == 0 }` + count≥1 | **过滤 + 列式 guard**（选中 ~0.81% bids） |
 | **Q3** | person⋈auction（seller=id）投影卖家信息 | auction 驱动 + `join person_events snapshot` + count≥1 | **hash join + 窗口计数** |
-| **Q4** | bid⋈auction 后按 category 均价 | bid 驱动 + `join auction_events snapshot` + 窗口 count | **高吞吐 join 查表 + 窗口聚合**（92M bids 进管道） |
+| **Q4** | bid⋈auction 后按 category 均价（两层） | bid 驱动 + `match<auction:10m:fixed>` + `and close { b.price \| avg }` | **fixed-close avg 聚合 + 状态机**（外层 category avg 平台不可表达，见 SEMANTIC_ALIGNMENT §5.3） |
 | **Q5** | 滑窗计数面 | `match<auction:10m>` count≥{10,50,100} | **滑动窗口计数 + 状态机**（fire/reset，高实例 churn） |
 | **Q6** | 按卖家/分类窗口均价 | `match<auction:10m>` `b.price \| avg >= 200`（按 auction 聚合，卖家来自 join 需 emit 后数据） | **avg measure + 状态机** |
 | **Q7** | 每 auction 滑窗最高出价 | `match<auction:10m>` max(price)≥{200,500,1000} | **滑窗 MAX + emit 密集路径** |
@@ -140,12 +140,12 @@ NEXMark 标准数据的要求，本实现（`wfgen gen-nexmark`）全部满足�
 |---|---|---|---|
 | q2_mod_123 | 224,289 | 224,289 | ✅ |
 | q3_auction_seller | 1,800,000 | 1,800,000 | ✅ |
-| q4_real_avg_100 | 27,600,000 | 27,600,000 | ✅ |
+| q4_avg_price_by_category | 5,254,483（oracle 理想） | 30M 4,228,230 | ⚠（fixed+close 收口非确定，丢尾部，见 SEMANTIC_ALIGNMENT §6.1） |
 | q5_bidcount_10 | 1,712,532 | 1,712,470 | ✅（差 62=0.0036%，scan_timeouts 墙钟非确定） |
 | q6_avg_price_200 | 9,794,325 | 10m 3,263,324 | ✅（10m 对拍 ±1） |
 | q7_maxbid_200/500/1000 | 10,350,961 / 34,578 / 0 | 同左 | ✅ |
 | q8_monitor_new_user | 600,000 | 10m 200,000 | ✅（10m 对拍精确） |
-| q9_seller_count | 1,800,000 | 1,800,000 | ✅ |
+| q9_winning_bid | 5,254,483（oracle 理想） | 30M 4,183,632 | ⚠（fixed+close 收口非确定，丢尾部，见 SEMANTIC_ALIGNMENT §6.1） |
 | q10_arbitrary_selection | 3,944,636 | 10m 1,314,285 | ✅（10m 对拍精确） |
 | q13_bid_person_join | 27,600,000 | 10m 9,200,000 | ✅（10m 对拍精确） |
 | q15_high_bid_count_5 | 2,563,592 | 2,563,534 | ✅（差 58≈0.002%） |
@@ -197,9 +197,9 @@ NEXMark 标准数据的要求，本实现（`wfgen gen-nexmark`）全部满足�
 
 ### 5.5 已知波动（正确性的诚实边界）
 
-- **Q4**（join auction_events）：EMIT 在 ~7.3M↔9.2M 随 run 波动——源是 auction_events
-  窗口保留量随管道时序变化（join 求值时刻窗口里的 auction 数），**新旧二进制同样波动**，
-  非正确性破坏。
+- **Q4**（fixed+close avg）：EMIT 受引擎收口预算/scan_timeouts 影响（丢尾部收口，
+  30M oracle 5,254,483 vs 引擎 ~4.2M），见 `SEMANTIC_ALIGNMENT.md` §6.1——非正确性破坏，
+  是引擎收口路径的确定性缺陷（待修复：源 EOF 后无界扫尾）。
 - **Q5**（count≥10）：EMIT ±10（571,061~571,076），max_memory 驱逐时序 + 墙钟
   scan_timeouts 非确定性。
 - 判定标准：**区间重叠**而非单值相等；`[clean]` + ground truth 才是正确性权威。
