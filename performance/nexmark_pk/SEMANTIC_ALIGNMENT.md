@@ -289,9 +289,21 @@ ctx）~35%、`combine_step_data` ~3%。
 字段解析复刻 `build_eval_context` 优先级（match keys → step label /
 `field_values.last()` → `bind_data`）；唯一语义差异是 `emit_time` 批级共享
 （与 on-each 列式路径一致；verify 只比 EMIT 计数，不受影响）。
-**30m 实测：EPS 2.76M → 4.35M（+57%，超预期 3.5M）**，RSS 14.8 → 14.2GB。
-profiling 大变：emit 7.6s/批 → 0.11s，close_exec 1.92s，瓶颈转移到
-**advance（on-event 状态推进 2.2s/批，现占 42%）**。
+**30m 实测：EPS 2.76M → 4.27M（+54%）**，RSS 14.8 → 14.2GB。
+
+**advance 路径优化（2026-08-21，needs_field_history 精确化）**：
+
+- `compute_needs_field_history`：close_steps 存在时不再一律 true——若
+  score/entity/yield 只引用 match keys（scope_key 提供，`build_eval_context`
+  keys 优先）或常量/SystemVar，则不需要每事件 field_values 历史（q12 形态）；
+  引用非 key 字段 / L3 系列 / `stat.*` 时保持 true。跳过 `collect_alias_event`
+  （每事件省 alias_states HashMap + 字段收集）。
+- `accumulate_close_steps` 的 `collect_event_fields` 同样按
+  `needs_field_history` 跳过（close step 的 field_values 仅被 close 时
+  yield Field 消费，key-only 规则不读）。
+- **30m 实测：EPS 4.27M → 5.27M（+23%，累计 2.49M → 5.27M +112%）**；
+  profiling：advance 2.27s → 1.79s（-21%，与 close_exec 1.70s 相当），
+  两者为当前两大块。
 
 **RSS 14.9GB 归因（footprint/vmmap 实测）**：
 
@@ -311,8 +323,10 @@ profiling 大变：emit 7.6s/批 → 0.11s，close_exec 1.92s，瓶颈转移到
 
 **剩余优化方向（未实施）**：
 
-1. **advance 路径**（新瓶颈，占批预算 42%）：on-event 每事件状态机推进
-   （q12 2760 万 bid 全部命中）——列式 bind/step 推进、状态查找免哈希。
+1. **advance 剩余项**（现与 close_exec 并列最大，各 ~1.7-1.8s/批累计）：
+   实例查找免哈希（q12 键 bidder 低基数 4 万，可用索引结构）、
+   `accumulate_close_steps` 纯 count close step 的轻量化（跳过
+   record_evidence_time 等非必要更新）、event step 的 `evaluate_step` 常数项。
 2. **RSS 侧**：全速 replay 的积压是场景固有（输入速率 > 消化），限速
    `MAX_INGEST_RATE` 或提高吞吐到 append 峰值之上才能消除；
    `parse_buffer_bytes` 2GB 预算可调低。

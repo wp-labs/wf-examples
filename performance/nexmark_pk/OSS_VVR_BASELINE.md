@@ -114,7 +114,7 @@
 | q9 | 5,768,605 | 43,020 | 134.1× | 375,146 | 15.4× |
 | q10 | 38,758,595 | 526,357 | 73.6× | 1,953,049 | 19.8× |
 | q11 | 2,013,955 | 244,868 | 8.2× | 685,011 | 2.9× |
-| q12 | 4,345,268 | 822,680 | 5.3× | 2,703,360 | 1.6× |
+| q12 | 5,274,925 | 822,680 | 6.4× | 2,703,360 | 2.0× |
 | q13 | 538,178 | —（未发布） | — | —（未发布） | — |
 | q14 | 30,701,021 | 1,451,316 | 21.2× | 4,997,002 | 6.1× |
 | q15 | 7,478,547 | 544,339 | 13.7× | 2,340,057 | 3.2× |
@@ -147,7 +147,7 @@
 
 | 查询 | vs VVR | wfusion EPS | RSS | 负载 | 规则结构 | 白皮书语义 |
 |---|---|---|---|---|---|---|
-| q12 | 1.6× | 4.35M | 14.2GB | 9.6 | bidder × 10s fixed + close count（**全量输出**） | Processing Time Windows ✓ |
+| q12 | 2.0× | 5.27M | 14.0GB | 6.1 | bidder × 10s fixed + close count（**全量输出**） | Processing Time Windows ✓ |
 | q17 | 1.6× | 5.77M | 5.7GB | 8.6 | sliding 10m + `b.bidder \| distinct \| count>=20` | 标准 distinct ✓ |
 | q4 | 2.3× | 5.66M | 9.8GB | — | bid 驱动 + fixed+close avg（外层 category avg 不可表达） | 标准 join+均价（部分对齐） |
 | q11 | 2.9× | 2.01M | 18.5GB | 11.3 | session 窗口（bidder 60s gap） | 标准 session ✓ |
@@ -155,12 +155,13 @@
 **q12（新，2026-08-21 语义对齐后）**：瓶颈原在 **close 输出路径**（每窗口每 bidder
 一条，30m ≈ 1821 万条 EMIT）；profiling：emit 7.6s/批（67%）+ advance 2.1s（19%）；
 E2 计时定位 `execute_close_with_joins` 内 build 60% + ctx 35%。已实施三轮优化：
-批量 emit + ctx 惰性字段（EPS 2.49→2.76M）+ **列式 close 执行器**（L4：批量
-`CloseOutput` 直写列式 builder，跳过 OutputRecord/Event ctx 层；门控
-`close_plan_columnar_safe`，其余规则自动回退逐条）→ **EPS 2.76→4.35M（+57%）**，
-瓶颈转移到 advance（on-event 推进 2.2s/批占 42%）。RSS 14.2GB 为全速 replay
-的瞬时积压（send-arrow 秒推 2.3GB，引擎消化 6.9s；`MAX_INGEST_RATE=1M` 限速时
-RSS 仅 1.0GB 实证），非泄漏（详见 SEMANTIC_ALIGNMENT.md §5.7.1）。
+批量 emit + ctx 惰性字段（2.49→2.76M）+ 列式 close 执行器（L4：批量 `CloseOutput`
+直写列式 builder，跳过 OutputRecord/Event ctx 层，2.76→4.27M）+ **needs_field_history
+精确化**（close 输出只读 key 时跳过每事件 field_values 收集，advance 2.27→1.79s）
+→ **EPS 2.49M → 5.27M（+112%）**，advance 与 close_exec 并列最大块（各 ~1.7-1.8s）。
+RSS 14.0GB 为全速 replay 的瞬时积压（send-arrow 秒推 2.3GB，引擎消化 ~5.7s；
+`MAX_INGEST_RATE=1M` 限速时 RSS 仅 1.0GB 实证），非泄漏
+（详见 SEMANTIC_ALIGNMENT.md §5.7.1）。
 
 **q12 已移出**（2026-08-21 再次对齐）：旧 q12（auction 键 + 10m + conv top3，1.2×/3.24M/10.6GB）
 与 Flink Q12（Processing Time Windows：bidder × 10s 窗口 count）**语义不对齐**，对比作废。
@@ -182,8 +183,8 @@ SEMANTIC_ALIGNMENT.md §5.7）。
 
 **优化方向**（按性价比排序，待实现/验证）：
 
-1. **q12 advance 路径**（新瓶颈）：on-event 每事件状态机推进（2760 万 bid 全命中，
-   2.2s/批占 42%）——列式 step 推进 / 状态查找免哈希。
+1. **q12 advance 剩余项**：实例查找免哈希（bidder 低基数索引）、纯 count close
+   step 轻量化（record_evidence_time 等非必要更新跳过）。
 2. **q17 distinct → bitset**（最划算）：bidder 域受限（1..=1000），用 u128 位图去重——
    O(1) 位操作、零哈希零分配，预期比 HashSet 快一个量级（NEXMark 数据特性红利）。
 3. **q4 join 索引 → 直接寻址**：auction id 连续（1..=180 万），join 查找用 Vec 直接索引替代 HashMap。
