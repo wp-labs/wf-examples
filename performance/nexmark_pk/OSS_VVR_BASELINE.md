@@ -139,25 +139,29 @@
 
 ### 3.5 弱势 CASE 分析（vs VVR 优势不明显，2026-08-21）
 
-优势倍数最低的查询（q12 1.2× / q17 1.6× / q4 2.3× / q11 2.9×；**q3 已对齐语义后移除**）：
+优势倍数最低的查询（q17 1.6× / q4 2.3× / q11 2.9×；**q3/q12 已对齐语义后移除**）：
 
 | 查询 | vs VVR | wfusion EPS | RSS | 负载 | 规则结构 | 白皮书语义 |
 |---|---|---|---|---|---|---|
-| q12 | 1.2× | 3.24M | 10.6GB | 9.5 | fixed 10m + `and close` + conv `sort(-n)\|top(3)` | 标准 Top-N ✓ |
 | q17 | 1.6× | 5.77M | 5.7GB | 8.6 | sliding 10m + `b.bidder \| distinct \| count>=20` | 标准 distinct ✓ |
 | q4 | 2.3× | 1.48M | 22.8GB | 6.1 | bid 驱动 + 每 bid snapshot join auction 表 | 标准 join+均价 ✓ |
 | q11 | 2.9× | 2.01M | 18.5GB | 11.3 | session 窗口（bidder 60s gap） | 标准 session ✓ |
 
+**q12 已移出**（2026-08-21 再次对齐）：旧 q12（auction 键 + 10m + conv top3，1.2×/3.24M/10.6GB）
+与 Flink Q12（Processing Time Windows：bidder × 10s 窗口 count）**语义不对齐**，对比作废。
+对齐后为 fixed 10s + bidder 键 + close count，实例峰值 1030（10m 实测，10s 桶收口及时），
+瓶颈转为 emit 输出（10M ≈ 617 万条全量输出）；30m 正式 EPS/RSS 待重测（见
+SEMANTIC_ALIGNMENT.md §5.7）。
+
 **根因**（结构推断——规则形态 + 状态规模 + 负载上下文，未 profile 实证）：
 
-1. **状态物化量与 EPS 强负相关**（最大共同因素）：RSS ≥ 10GB 的查询（q4 22.8 / q11 18.5 /
-   q12 10.6）EPS 全在 1.5-3.2M；< 2GB 的轻状态查询（q2/q8/q10/q14）24-39M。
+1. **状态物化量与 EPS 强负相关**（最大共同因素）：RSS ≥ 10GB 的查询（q4 22.8 / q11 18.5）
+   EPS 全在 1.5-3.2M；< 2GB 的轻状态查询（q2/q8/q10/q14）24-39M。
    大状态 → 缓存/内存带宽瓶颈。
 2. **每事件成本最高的操作恰好集中于此**：q4 每 bid snapshot join 查表（600k 活 auction 索引）；
-   q11 每 bid 会话实例查 + gap 判断 + 合并/关闭；q17 每 bid distinct 集合哈希插入；
-   q12 每 10m 窗口收口全量 sort（top-N 无法提前剪枝）。
-3. **撞上 Flink/VVR 打磨最久的算子强项**：TopN（q12，VVR 增量/部分排序优化，其第 4 高 RPS）、
-   keyed-state distinct 聚合（q17，VVR 第 2 高）、join（q3/q4）。
+   q11 每 bid 会话实例查 + gap 判断 + 合并/关闭；q17 每 bid distinct 集合哈希插入。
+3. **撞上 Flink/VVR 打磨最久的算子强项**：keyed-state distinct 聚合（q17，VVR 第 2 高）、
+   join（q3/q4）。
 4. **非算法因素**：q11/q12/q17 处于高负载段（load 8.6-11.3），数字偏低。
    （q3 的语义不对等问题已解决：2026-08-21 对齐 `A.category = 10` 过滤，见 §3.4 注。）
 

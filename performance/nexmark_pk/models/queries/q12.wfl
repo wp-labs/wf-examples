@@ -1,20 +1,32 @@
 use "nexmark.wfs"
 
-// Q12：Top-N——每固定 10m 窗口，按 bid 数取**前 3 个 auction**（对齐 Flink Q12 的 Top-N 面）。
+// Q12：Processing Time Windows（对齐 Flink/Beam Q12，2026-08-21 语义对齐）。
 //
-// 用 conv 后处理：fixed 窗口收口时按 close 的 bid 数降序排序，只保留 Top-3。
-// 每个窗口输出 ≤3 条告警（conv top-N 语义，见 examples/conv）。测试 **conv 聚合
-// （sort + top-N）+ fixed 窗口**能力面。
-rule q12_top_auctions_by_count {
+// 官方实现（nexmark-flink/src/main/resources/queries/q12.sql）：
+//   SELECT bidder, count(*) as bid_count, window_start, window_end
+//   FROM TABLE(TUMBLE(TABLE B, DESCRIPTOR(p_time), INTERVAL '10' SECOND))
+//   GROUP BY bidder, window_start, window_end
+// —— 按 bidder 计**10 秒固定窗口**内的 bid 数，全量输出（无 Top-N）。
+//
+// 旧 q12（auction 键 + 10m + conv top3）是另一查询（Top-N 类），与 Flink Q12
+// 语义不对齐，2026-08-21 作废重写（见 SEMANTIC_ALIGNMENT.md §5.x）。
+//
+// wfusion 能力面：事件时间 10s 固定桶近似处理时间窗口（wfusion 为事件时间引擎，
+// replay 场景处理时间与事件时间同步推进）；键 = bidder（低基数 4 万），每
+// (bidder × 10s 桶) 收口输出窗口内 bid 计数。工作负载 = 92M bid 进管道 + 每
+// bidder 状态累积（count）+ 10s 桶收口，对齐 Flink Q12 的 bidder 级窗口计数面。
+//
+// 语义说明（诚实标注）：
+// - **处理时间（PROCTIME）用事件时间近似**：replay 下两者同步推进；实时流下
+//   处理时间窗口的分桶边界与事件时间不同（wfusion 不支持处理时间窗口）。
+// - **输出全量**：每窗口每 bidder 一条（旧 top3 语义作废）。
+rule q12_bidder_10s_window_count {
     events { b : bid_events }
-    match<auction:10m:fixed> {
+    match<bidder:10s:fixed> {
         on event { b | count >= 1; }
         and close { n: b | count >= 1; }
-    } -> score(15.0)
-    entity(digit, b.auction)
-    yield nexmark_alerts (id = b.auction, alert_type = "q12_top", detail = "top auction", request_count = 1)
-    conv {
-        sort(-n) | top(3) ;
-    }
+    } -> score(10.0)
+    entity(digit, b.bidder)
+    yield nexmark_alerts (id = b.bidder, alert_type = "q12_window", detail = "bids in 10s window", request_count = 1)
     limits { max_memory = "512MB" }
 }

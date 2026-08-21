@@ -53,7 +53,7 @@ wfgen verify-nexmark <N> --query qN
 | q9 | ✅ 对齐（2026-08-21） | **胜出出价（Winning Bids）**：每 auction 最高价 bid | fixed 10m + `and close` **max** 聚合（窗口胜者） | 见 §5.2；引擎 fixed+close 收口预算/时钟相关，EMIT 可能丢尾部收口（见 §6） |
 | q10 | ✅ 对齐 | 任意选择 | `auction % 7 == 0` 确定性子集（on-each） | 按 Flink 实现口径 |
 | q11 | ✅ 对齐 | 用户会话 | bidder 会话（60s gap） | 注意：bench 按 auction 分片时是 per-shard 会话；全局语义须 `CONNECTIONS=1` |
-| q12 | ✅ 对齐 | Top-3 auction/窗口 | fixed 10m + conv `sort(-n)\|top(3)` | conv 全局阶段（跨分片合并） |
+| q12 | ✅ 对齐（2026-08-21 再次对齐） | Processing Time Windows：每 bidder × 10s 窗口 bid 数（全量输出） | fixed 10s + `and close` count（键=bidder） | 见 §5.7：处理时间窗口用事件时间近似（replay 同步）；旧 top3 语义作废（那是另一查询） |
 | q13 | ✅ 对齐 | 有界侧输入 join | bid⋈person 快照 join | 等价（person 近静态） |
 | q14 | ✅ 对齐 | Top-10 seller/窗口 | 两段式：fixed 计数 + conv top-10 | conv 全局阶段 |
 | q15 | ✅ 对齐 | 过滤+窗口聚合 | price>100 过滤 + 滑窗 count≥5 | 等价 |
@@ -204,6 +204,50 @@ rule q4_avg_price_by_category {
 
 > 引擎 fixed+close 收口**非确定**（每批预算 1024 + 尾桶依赖墙钟）：200k 收 3 桶、10M 收 1 桶——同规则不同规模收口数不同。oracle 为"事件时间边界收口"的语义参考值。
 > q21（anti join）随 oracle join 窗口状态实现（2026-08-21）对拍打通：oracle 0 = 引擎 0。
+
+### 5.7 案例：Q12 语义对齐（2026-08-21，Processing Time Windows）
+
+旧 q12 是"Top-3 auction/10m 窗口"（auction 键 + conv top3）——那是 Top-N 类查询，
+与 Flink/Beam Q12 不对齐（OSS/VVR 对比也失真）。Flink Q12（`nexmark-flink
+q12.sql`，即 Beam NEXMark Query12 "Processing Time Windows"）为：
+
+```sql
+SELECT bidder, count(*) as bid_count, window_start, window_end
+FROM TABLE(TUMBLE(TABLE B, DESCRIPTOR(p_time), INTERVAL '10' SECOND))
+GROUP BY bidder, window_start, window_end;
+```
+
+wfusion q12（wfl）：
+
+```wfl
+rule q12_bidder_10s_window_count {
+    events { b : bid_events }
+    match<bidder:10s:fixed> {
+        on event { b | count >= 1; }
+        and close { n: b | count >= 1; }
+    } -> score(10.0)
+    entity(digit, b.bidder)
+    ...
+}
+```
+
+| 官方 Q12（SQL） | wfusion q12（WFL） | 对齐逻辑 |
+|---|---|---|
+| 键 = bidder | `match<bidder:10s:fixed>` | 按用户计窗口内 bid 数（对齐） |
+| `TUMBLE(p_time, 10 SECOND)` | fixed 10s（事件时间） | 处理时间窗口用事件时间近似：replay 下两者同步推进；wfusion 不支持处理时间窗口（标注） |
+| 窗口内 `count(*)` 全量输出 | `and close { b \| count }` 收口输出 | 每 (bidder × 桶) 一条计数（无 Top-N） |
+
+验证（10M，seed=1，2026-08-21）：
+
+| 项 | 值 |
+|---|---|
+| oracle | 6,172,208（每 bidder×10s 桶收口计数） |
+| 引擎 | 6,102,526，实例峰值 1030（10s 桶收口及时）⚠ fixed+close 收口非确定（差 1.1%，见 §6） |
+| vs 旧 q12 | 旧：auction 键 10m + conv top3，实例峰值 594k、RSS 10.6GB；新：bidder 键低基数 + 10s 桶及时收口，实例峰值 1030 |
+
+> 注意：新 q12 的 emit 输出量大（每窗口每 bidder 一条，10M ≈ 617 万条）——
+> 输出/sink 是主要成本（与 Flink Q12 全量输出一致）；引擎 profiling：emit 2.8s/批
+> 主导，advance 0.87s（旧 1.34s）。
 
 ## 6. 未对齐查询的处理原则
 
