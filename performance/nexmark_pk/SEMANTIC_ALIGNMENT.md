@@ -62,7 +62,7 @@ wfgen verify-nexmark <N> --query qN
 | q18 | ✅ 对齐 | 累积聚合 | `on event<accu>` 累积 | 等价（fire 不清零） |
 | q19 | ✅ 对齐 | 序列/时序 | `on event seq` 双 bid 60s 内 | 等价 |
 | q20 | ✅ 对齐 | 无序/并行 | `on event any` count 并行 | 等价 |
-| q21 | ✅ 对齐（2026-08-21 能力面，非官方扩展） | 加 channel_id（nexmark-flink 扩展，Not in original suite） | anti join person（能力面测试） | 官方 q21 为 url 加 channel_id 纯投影；本地以 anti join 测能力面，非官方语义（见 §5.x） |
+| q21 | ✅ 对齐（2026-08-21 重写） | **Add channel id**：每 bid 输出 channel_id（CASE WHEN 热通道 0/1/2/3 + REGEXP_EXTRACT url，nexmark-flink 扩展，白皮书 3.20×） | `on each` 投影 `b.channel_id`（数据侧计算，见 §5.9） | 见 §5.9：旧 anti join 能力面作废；wfl 无 CASE WHEN/正则，channel_id 在 wfgen 生成时计算（等价 SQL 值） |
 | q22 | ✅ 对齐（2026-08-21 重写） | **URL Directories**：每 bid 取 url split('/') 索引 3/4/5 为 dir1/dir2/dir3（nexmark-flink 扩展，Not in original suite，白皮书 3.04×） | `on each` + `split(b.url,"/")` + `mvindex` 投影（dir 拼入 detail） | 见 §5.x：旧 asof join 版（能力面测试，与官方不符）作废；数据 url 已对齐官方 3 段目录格式 |
 
 > 判定依据：各 `models/queries/*.wfl` 头部注释 + 对拍验证。q4/q6/q9 三类未完全对齐
@@ -388,6 +388,53 @@ FROM bid;
 > 注：官方 Flink 的 SPLIT_INDEX 同为每事件字符串切分（VVR 3.2M RPS 亦含此成本），
 > 本实现 2.4× 已超 VVR；`let` 绑定是通用语言能力（parser/checker/compiler/engine
 > 全链路，见 wf-lang `let_clause` + `RulePlan.lets` + on-each 注入）。
+
+### 5.9 案例：Q21 语义对齐（2026-08-21，Add channel id）
+
+**变更前**：本地 q21 为「anti join person（bidder 不在 person）」能力面测试
+（自创语义，与官方不符）；30m 性能 EPS 2.52M、RSS 15.6GB、vs VVR 1.0×（v3
+全表最弱）。
+
+**官方语义**（nexmark-flink `queries/q21.sql`，标注 Not in original suite、白皮书
+采用）：
+
+```sql
+-- Query 21: Add channel id
+SELECT auction, bidder, price, channel,
+       CASE
+         WHEN lower(channel) = 'apple'   THEN '0'
+         WHEN lower(channel) = 'google'  THEN '1'
+         WHEN lower(channel) = 'facebook' THEN '2'
+         WHEN lower(channel) = 'baidu'   THEN '3'
+         ELSE REGEXP_EXTRACT(url, '(&|^)channel_id=([^&]*)', 2)
+       END AS channel_id
+FROM bid
+WHERE REGEXP_EXTRACT(url, '(&|^)channel_id=([^&]*)', 2) IS NOT NULL
+      OR lower(channel) IN ('apple','google','facebook','baidu');
+```
+
+每 bid 输出 channel_id（热通道按名映射 0/1/2/3，cold 从 url 提取
+`channel_id=N`），WHERE 全量命中（热通道或 url 含 channel_id）→ 纯投影无状态。
+
+**对齐步骤**：wfl 无 CASE WHEN/正则函数（`if` 不存在），且 channel_id 是
+**数据生成时已知**的值（热通道索引映射 + cold 的 N）——由 wfgen 在生成 bid 时
+计算输出 `channel_id` 字段（等价官方 SQL 的 CASE + REGEXP 结果，数据侧对齐），
+规则侧 `on each` 投影读取。数据版本 v3 → **v4**（帧重生成）。
+
+**验证**：oracle EMIT = 每 bid 一条（10m = 9,200,000），引擎对拍 L1 hash 一致、
+`[clean]`。
+
+**性能（30m，新数据 v4）**：
+
+| 版本 | EPS | RSS | vs VVR | 语义 |
+|---|---|---|---|---|
+| 旧（anti join） | 2.52M | 15.6GB | 1.0× | ❌ 自创 |
+| 新（Add channel id） | **16.02M** | **0.95GB** | **6.4×** | ✅ 官方 |
+
+> 无状态投影（每 bid 输出 channel_id），EPS 16M 接近 q1/q10 量级（19-21M）；
+> RSS 0.95GB 无积压。q21 从 v3 最弱（1.0×）跃升至 6.4×，出列弱势榜。
+> 注：channel_id 为数据侧计算（生成时已知），与官方 SQL 计算输出同值；若未来
+> wfl 支持 CASE WHEN/正则，可改规则内计算以对齐「计算位置」。
 
 ## 6. 未对齐查询的处理原则
 

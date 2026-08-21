@@ -43,6 +43,7 @@ window bid_events {
         bidder: digit
         price: digit
         channel: chars
+        channel_id: chars
         url: chars
         dateTime: time
         extra: chars

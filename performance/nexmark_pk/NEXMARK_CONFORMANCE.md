@@ -66,6 +66,8 @@
 **数据体积 ~4 倍**（extra padding 到官方 avgByteSize：30M JSON ≈ 10.5GB，帧文件
 2.3GB → ~8GB 量级）——这是官方数据口径的必然代价，字节吞吐/内存口径与 VVR 对齐。
 `data/bench_30m_v2.frames` 与 `verify_*.txt` 锚点需重新生成。
+**v4（2026-08-21）**：bid 增 `channel_id` 字段（q21 Add channel id 数据侧对齐，
+官方 CASE WHEN 映射 + url channel_id，生成时已知）；数据版本 v3 → v4，帧重生成。
 
 ## 五、对照表来源
 

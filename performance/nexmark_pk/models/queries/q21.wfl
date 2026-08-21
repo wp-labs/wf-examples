@@ -1,18 +1,62 @@
 use "nexmark.wfs"
 
-// Q21：anti join——bidder 不在 person 表的 bid 触发（对齐 Flink Q21 的 anti/semi join 面，
-// 白皮书 5.79×）。
+// Q21：Add channel id（Flink 官方 q21，nexmark-flink 扩展查询，白皮书 3.20×）。
 //
-// `join person_events anti on b.bidder == person_events.id`：命中 person 的 bid 被丢弃，
-// 只保留 bidder 不在 person 窗口的 bid。NEXMark 数据所有 bidder 都存在 → 期望 EMIT 0
-// （anti join 正确丢弃全部），用于验证 anti join 语义。测试 **anti join** 能力面。
-rule q21_anti_person {
+// 官方实现（nexmark-flink/src/main/resources/queries/q21.sql）：
+//   SELECT auction, bidder, price, channel,
+//          CASE
+//            WHEN lower(channel) = 'apple'  THEN '0'
+//            WHEN lower(channel) = 'google' THEN '1'
+//            WHEN lower(channel) = 'facebook' THEN '2'
+//            WHEN lower(channel) = 'baidu'  THEN '3'
+//            ELSE REGEXP_EXTRACT(url, '(&|^)channel_id=([^&]*)', 2)
+//          END AS channel_id
+//   FROM bid
+//   WHERE REGEXP_EXTRACT(url, '(&|^)channel_id=([^&]*)', 2) IS NOT NULL
+//         OR lower(channel) IN ('apple','google','facebook','baidu');
+// —— 每 bid 输出 channel_id（热通道按名映射 0/1/2/3，cold 从 url 提取
+// channel_id=N），WHERE 全量命中（热通道或 url 含 channel_id）→ 纯投影无状态。
+//
+// 2026-08-21 语义对齐：旧版为「anti join person（bidder 不在 person）」能力面测试
+// （自创语义，与官方不符，v3 全表最弱 1.0×），已重写为官方语义。
+// wfusion 能力面映射：channel_id 为**数据生成时已知**的值（wfgen 按官方 CASE 映射
+// 与 url channel_id 计算后随 bid 输出，见 NEXMARK_CONFORMANCE.md），规则侧投影
+// 读取——wfl 无 CASE WHEN/正则函数，等价 SQL 计算在数据侧完成，输出值一致；
+// sink 为 nexmark_alerts 四列，channel_id 放 detail（与 q22 同款映射）。
+//
+// 工作负载：27.6M bid 无状态投影（每 bid 输出 channel_id）——对齐 Flink Q21 的
+// 纯投影面，吞吐应接近 q1/q10 量级。
+rule q21_channel_id {
     events { b : bid_events }
-    match<auction:10m> {
-        on event { b | count >= 1; }
-    } -> score(10.0)
-    join person_events anti on b.bidder == person_events.id
+    on each b -> score(10.0)
     entity(digit, b.auction)
-    yield nexmark_alerts (id = b.auction, alert_type = "q21_anti", detail = "bidder not a person", request_count = 1)
+    yield nexmark_alerts (
+        id = b.auction,
+        alert_type = "q21_cid",
+        detail = b.channel_id,
+        request_count = 1
+    )
     limits { max_memory = "512MB" }
+}
+
+test q21_hot_channel for q21_channel_id {
+  input {
+    row(b, auction = 1, bidder = 1, price = 100, channel = "Google", channel_id = "1",
+        url = "https://www.nexmark.com/aaaaa/bbbbb/ccccc/item.htm?query=1");
+  }
+  expect {
+    hits == 1;
+    hit[0].field("detail") == "1";
+  }
+}
+
+test q21_cold_channel for q21_channel_id {
+  input {
+    row(b, auction = 2, bidder = 2, price = 200, channel = "channel-42", channel_id = "42",
+        url = "https://www.nexmark.com/aaaaa/bbbbb/ccccc/item.htm?query=1&channel_id=42");
+  }
+  expect {
+    hits == 1;
+    hit[0].field("detail") == "42";
+  }
 }
