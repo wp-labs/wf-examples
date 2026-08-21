@@ -31,7 +31,8 @@ data/                    # 运行产物（gitignore）：帧文件、bench 结�
 （[100, 1e8)）、hot auction 50% / hot seller·bidder 75%（最近 100 人批次）、bid 引用最近
 `numInFlightAuctions=100` 个 auction ± 10 lead、seller/bidder 引用最近 `numActivePeople=1000`
 人 ± 10 lead、auction 有效期 = 1+[0,2×horizon) ms、category 10..14、channel 50% 热门
-4 通道 + 50% channel-N、city/state 10 城/6 州。
+4 通道 + 50% channel-N、city/state 10 城/6 州、name/email/creditCard/itemName/description
+随机生成（官方数组与 nextString）、extra 补齐到 avgByteSize（200/500/100）。
 **同一 count + seed 的生成结果字节级确定**（`wfgen gen-nexmark`，确定性已验证）。
 与 Flink 官方定义的**逐项对照（含残余差异说明）**见
 [`NEXMARK_CONFORMANCE.md`](./NEXMARK_CONFORMANCE.md)；`gen-nexmark --check` 与

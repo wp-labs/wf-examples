@@ -8,9 +8,11 @@ window person_events {
         id: digit
         name: chars
         email: chars
+        creditCard: chars
         city: chars
         state: chars
         dateTime: time
+        extra: chars
     }
 }
 

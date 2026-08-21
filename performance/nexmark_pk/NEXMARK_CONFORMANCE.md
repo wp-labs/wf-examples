@@ -27,23 +27,26 @@
 | 价格分布 | `nextPrice = round(10^(6u) × 100)` 对数均匀 [100, 1e8)，initialBid/reserve/bid.price 同分布、与冷热无关 | 同公式 | **对齐** |
 | auction 有效期 | `nextAuctionLengthMs = 1 + nextLong(2×horizonMs)`，horizon = 未来 `numInFlightAuctions=100` 个 auction 的生成间隔 | 同公式 | **对齐**（30M 口径 horizon≈100ms → 平均有效期 ≈100ms，同时活跃 ~100 个 auction） |
 | category | `FIRST_CATEGORY_ID=10 + rand(5)` → 10..14（5 类） | 同 | **对齐** |
-| channel | 50% 热门 4 通道（Google/Facebook/Baidu/Apple）+ 50% `channel-0..9999` | 同 | **对齐** |
+| channel | 50% 热门 4 通道（Google/Facebook/Baidu/Apple）+ 50% `channel-0..9999`（官方 cold 用递增计数器轮询） | 同 | **对齐** |
 | city/state | 10 城 / 6 州（AZ,CA,ID,OR,WA,WY），独立随机 | 同值域、独立随机 | **对齐** |
+| name/email | `FIRST_NAMES×LAST_NAMES` 随机姓名、`nextString(7)@nextString(5).com` 随机邮箱 | 同 | **对齐** |
+| creditCard | 4 组 4 位数字（`0000-9999`） | 同 | **对齐** |
+| itemName/description | `nextString(20)` / `nextString(100)` 随机 | 同 | **对齐** |
+| extra | `nextExtra` 补齐到 avgByteSize（`avgPersonByteSize=200 / avgAuctionByteSize=500 / avgBidByteSize=100`） | 同 | **对齐**（数据体积与官方一致，30M JSON ≈ 10.5GB） |
 
-## 二、残余差异 ⚠️（均无查询引用，零影响）
+## 二、残余差异 ⚠️（仅 2 条硬性项，均有明确理由）
 
-| 差异 | 说明 | 影响 |
+| 差异 | 说明 | 理由/影响 |
 |---|---|---|
-| name/email/itemName/description/url 为确定性模板 | 官方为随机字符串（first+last 姓名、随机邮箱、随机描述、随机长 url） | 无查询引用（官方 Q8/Q10 按 city/state 分组已对齐值域） |
-| 无 creditCard / extra 填充 | 官方 Person 含 creditCard、各事件 extra 补齐到 avgByteSize | 本地 schema 无 creditCard，extra 恒 `""` |
-| bidder id 单加 `FIRST_PERSON_ID` | **nexmark-flink 存在 bidder 双加 1000 的 bug**（`bidder += FIRST_PERSON_ID` 出现两次 → 引用错位 +1000）；wfgen 按 Beam 官方语义单加 | 本地查询集无 bidder→person join（Q3/Q9 用 auction.seller），零影响；若未来按 bidder join person 需按 Beam 语义 |
-| channel/url 用确定性 StdRng | nexmark-flink 的 `HOT_URLS`/`CHANNEL_URL_CACHE` 用**静态 SplittableRandom**，进程间不确定 | wfgen 为同 seed 字节级确定性重放而用确定 RNG；分布语义（50%/50%、4 热通道）一致 |
+| bidder id 单加 `FIRST_PERSON_ID` | **nexmark-flink 存在 bidder 双加 1000 的 bug**（`bidder += FIRST_PERSON_ID` 出现两次 → 引用错位 +1000 → 引用不存在的人）；wfgen 按 Beam 官方语义单加 | 双加是实现缺陷不是定义，不复刻；本地查询集无 bidder→person join（Q3/Q9 用 auction.seller），零影响；若未来按 bidder join person 需显式评估 |
+| 确定性 RNG（StdRng） | 官方用 `SplittableRandom`；`HOT_URLS`/`CHANNEL_URL_CACHE` 用**静态随机**，进程间不确定；wfgen 用 seed 派生的确定 RNG | 官方对 url/channel 缓存字段自身不可重放；确定性是 wfgen 字节级重放的前提；分布语义（50%/50%、4 热通道、channel-N 计数器轮询）与官方一致；url 内容为格式近似模板（无查询引用） |
 
 ## 三、对「符合 Flink 测试集定义」的判定
 
-- **生成语义（比例/时间轴/ID 体系/引用窗口/热点/价格/有效期/值域）——符合**：与官方
-  默认配置逐项对齐。这是正确性对拍（oracle vs 引擎）与白皮书/VVR **数字对比可比性**
-  的共同基础：
+- **生成语义（比例/时间轴/ID 体系/引用窗口/热点/价格/有效期/值域/字符串字段）——符合**：
+  与官方默认配置逐项对齐（含 name/email/creditCard/itemName/description 随机生成与
+  extra 补齐到 avgByteSize）。这是正确性对拍（oracle vs 引擎）与白皮书/VVR **数字对比
+  可比性**的共同基础：
   - Q1/Q2/Q3/Q9（无状态/join 面）可比性高；
   - Q4/Q5/Q7/Q17（价格阈值/窗口/join 面）命中面与官方口径一致（官方 Q7 阈值 10000
     在价格对数均匀下按官方概率命中，本地 q7 阈值 200/500/1000 的命中面亦按官方分布）；
@@ -56,6 +59,10 @@
 ## 四、数据口径变更记录（2026-08-21）
 
 此前版本（时间窗引用 15s/60s、阶梯价格 hot[100,500]/cold[10,150]、有效期固定 10-30
-分钟、category 1..26、5 固定通道）与官方分布参数不一致，已按本声明对齐为官方语义。
-**数据口径切换使所有 oracle 期望值与帧指纹变化**（30M 帧指纹 `25e75749…` → 新值），
+分钟、category 1..26、5 固定通道、无字符串随机/无 extra padding）与官方分布参数不一致，
+已按本声明对齐为官方语义（含 name/email/creditCard/itemName/description 随机与 extra
+补齐到 avgByteSize）。
+**数据口径切换使所有 oracle 期望值与帧指纹变化**（30M 帧指纹 `25e75749…` → 新值）；
+**数据体积 ~4 倍**（extra padding 到官方 avgByteSize：30M JSON ≈ 10.5GB，帧文件
+2.3GB → ~8GB 量级）——这是官方数据口径的必然代价，字节吞吐/内存口径与 VVR 对齐。
 `data/bench_30m_v2.frames` 与 `verify_*.txt` 锚点需重新生成。
