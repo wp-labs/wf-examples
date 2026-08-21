@@ -119,7 +119,7 @@
 | q14 | 30,701,021 | 1,451,316 | 21.2× | 4,997,002 | 6.1× |
 | q15 | 7,478,547 | 544,339 | 13.7× | 2,340,057 | 3.2× |
 | q16 | 3,470,001 | 108,980 | 31.8× | 296,478 | 11.7× |
-| q17 | 5,773,402 | 972,318 | 5.9× | 3,693,308 | 1.6× |
+| q17 | 7,212,828 | 972,318 | 7.4× | 3,693,308 | 2.0× |
 | q18 | 3,280,420 | 173,928 | 18.9× | 1,038,044 | 3.2× |
 | q19 | 3,923,589 | 170,565 | 23.0× | 1,051,293 | 3.7× |
 | q20 | 3,301,137 | 74,591 | 44.3× | 431,999 | 7.6× |
@@ -148,7 +148,7 @@
 | 查询 | vs VVR | wfusion EPS | RSS | 负载 | 规则结构 | 白皮书语义 |
 |---|---|---|---|---|---|---|
 | q12 | 2.0× | 5.27M | 14.0GB | 6.1 | bidder × 10s fixed + close count（**全量输出**） | Processing Time Windows ✓ |
-| q17 | 1.6× | 5.77M | 5.7GB | 8.6 | sliding 10m + `b.bidder \| distinct \| count>=20` | 标准 distinct ✓ |
+| q17 | 2.0× | 7.21M | 5.8GB | 8.8 | sliding 10m + `b.bidder \| distinct \| count>=20` | 标准 distinct ✓ |
 | q4 | 2.3× | 5.66M | 9.8GB | — | bid 驱动 + fixed+close avg（外层 category avg 不可表达） | 标准 join+均价（部分对齐） |
 | q11 | 2.9× | 2.01M | 18.5GB | 11.3 | session 窗口（bidder 60s gap） | 标准 session ✓ |
 
@@ -183,10 +183,12 @@ SEMANTIC_ALIGNMENT.md §5.7）。
 
 **优化方向**（按性价比排序，待实现/验证）：
 
-1. **q12 advance 剩余项**：实例查找免哈希（bidder 低基数索引）、纯 count close
-   step 轻量化（record_evidence_time 等非必要更新跳过）。
-2. **q17 distinct → bitset**（最划算）：bidder 域受限（1..=1000），用 u128 位图去重——
-   O(1) 位操作、零哈希零分配，预期比 HashSet 快一个量级（NEXMark 数据特性红利）。
+1. **q17 实例查找免哈希**：sliding 10m 高实例量（30m 峰值 171 万）下
+   `contains_key`+`take` 两次 foldhash 查找仍是 advance 大头；auction 域连续
+   （1..=180 万）可 Vec 直接索引（sliding 实例 slot 管理）。
+2. **q17 sliding 实例过期预算**：171 万实例堆积源于 expiry 扫描预算
+   （MAX_EXPIRY_SCAN_BUDGET=1024/批），加大预算 / 过期堆可同时降 RSS 与
+   verify 已知差异（q17 已列入 known-diff）。
 3. **q4 join 索引 → 直接寻址**：auction id 连续（1..=180 万），join 查找用 Vec 直接索引替代 HashMap。
 4. **q11 会话状态压缩**：RSS 18.5GB 说明会话实例膨胀，可优化实例表示与惰性过期。
 
