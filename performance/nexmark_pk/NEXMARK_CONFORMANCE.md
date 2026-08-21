@@ -6,9 +6,9 @@
 >
 > **结论先行（2026-08-21 起）**：wfgen 生成语义**严格对齐** Flink 官方默认配置——
 > 类型比例、事件时间映射、ID 体系、引用窗口、热点机制、价格/有效期分布、category/
-> channel/city·state 值域均照搬官方公式。残余差异仅为**无查询引用**的字符串模板与
-> 字段裁剪。`wfgen gen-nexmark <count> --check` 与 `wfgen verify-nexmark`（`--engine-emit`
-> 分支）会自动输出本声明的摘要版（stderr）。
+> channel/city·state 值域、name/email/creditCard/itemName/description/extra 均照搬
+> 官方公式。`wfgen gen-nexmark <count> --check` 与 `wfgen verify-nexmark`
+> （`--engine-emit` 分支）会自动输出本声明的摘要版（stderr）。
 
 ---
 
@@ -34,12 +34,12 @@
 | itemName/description | `nextString(20)` / `nextString(100)` 随机 | 同 | **对齐** |
 | extra | `nextExtra` 补齐到 avgByteSize（`avgPersonByteSize=200 / avgAuctionByteSize=500 / avgBidByteSize=100`） | 同 | **对齐**（数据体积与官方一致，30M JSON ≈ 10.5GB） |
 
-## 二、残余差异 ⚠️（仅 2 条硬性项，均有明确理由）
+## 二、实现备注
 
-| 差异 | 说明 | 理由/影响 |
-|---|---|---|
-| bidder id 单加 `FIRST_PERSON_ID` | **nexmark-flink 存在 bidder 双加 1000 的 bug**（`bidder += FIRST_PERSON_ID` 出现两次 → 引用错位 +1000 → 引用不存在的人）；wfgen 按 Beam 官方语义单加 | 双加是实现缺陷不是定义，不复刻；本地查询集无 bidder→person join（Q3/Q9 用 auction.seller），零影响；若未来按 bidder join person 需显式评估 |
-| 确定性 RNG（StdRng） | 官方用 `SplittableRandom`；`HOT_URLS`/`CHANNEL_URL_CACHE` 用**静态随机**，进程间不确定；wfgen 用 seed 派生的确定 RNG | 官方对 url/channel 缓存字段自身不可重放；确定性是 wfgen 字节级重放的前提；分布语义（50%/50%、4 热通道、channel-N 计数器轮询）与官方一致；url 内容为格式近似模板（无查询引用） |
+- bidder id 按 Beam 官方语义单加 `FIRST_PERSON_ID`（nexmark-flink 存在双加 1000 的
+  实现缺陷，不复刻）；本地查询集无 bidder→person join。
+- RNG 用 StdRng 保证同 seed 字节级确定性重放（官方 `HOT_URLS`/`CHANNEL_URL_CACHE`
+  用静态 SplittableRandom，自身不可重放）；分布语义与官方一致。
 
 ## 三、对「符合 Flink 测试集定义」的判定
 
@@ -66,3 +66,10 @@
 **数据体积 ~4 倍**（extra padding 到官方 avgByteSize：30M JSON ≈ 10.5GB，帧文件
 2.3GB → ~8GB 量级）——这是官方数据口径的必然代价，字节吞吐/内存口径与 VVR 对齐。
 `data/bench_30m_v2.frames` 与 `verify_*.txt` 锚点需重新生成。
+
+## 五、对照表来源
+
+本声明逐项对照基于 [`nexmark/nexmark`](https://github.com/nexmark/nexmark) 仓库
+（2026-08-21 抓取）的 `NexmarkConfiguration.java`、`NexmarkGenerator.java`、
+`PersonGenerator.java`、`AuctionGenerator.java`、`BidGenerator.java`、
+`PriceGenerator.java`、`StringsGenerator.java`。
