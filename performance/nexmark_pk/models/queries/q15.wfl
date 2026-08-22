@@ -14,10 +14,10 @@ use "nexmark.wfs"
 // 12 个 measure（guard 分价格档 + distinct 变换），收口输出一行统计。
 // 输出基数 = 桶数（1 行），对齐官方每 day 一行。
 //
-// ⚠ 性能（2026-08-22 实测）：全局单实例（空键）+ 9 个 distinct 集合无法并行，
-// 30M EPS=469k（push_capped O(n²) 修复后 10M 37k → 469k），CPU 100% 单核瓶颈，
-// vs VVR 0.9×。语义正确（EMIT=1 全局一行）；性能需引擎支持全局聚合并行化或
-// distinct 集合优化后再冲 VVR。
+// ⚠ 性能（2026-08-22 晚修复后）：全局单实例（空键）+ 9 个 distinct 集合。编译器误判
+// 修复（stat.value(final(label)) 不再误开字段历史）后 10M EPS 469k → 1.69M、30M
+// 469k → 1.62M（vs VVR 0.9× → 3.0×）。剩余瓶颈：9 distinct foldhash 25 亿次 + 12
+// measure guard cmp_vec 17.7 亿次——distinct 集合免哈希/列式化是下一步。
 rule q15_bidding_stats {
     events { b : bid_events }
     match<:30m:fixed> {
