@@ -169,8 +169,9 @@ except Exception: print(v)' "$1" 2>/dev/null || echo "$1"; }
 
 # ---- 校验 ----
 case "$TOTAL" in
+  1m) TOTAL_N=1000000;;
   10m) TOTAL_N=10000000;; 30m) TOTAL_N=30000000;; 100m) TOTAL_N=100000000;;
-  *) echo "bad total '$TOTAL' (10m|30m|100m)"; exit 1;;
+  *) echo "bad total '$TOTAL' (1m|10m|30m|100m)"; exit 1;;
 esac
 case "$QUERY" in
   q1|q2|q3|q4|q5|q6|q7|q8|q9|q10|q11|q12|q13|q14|q15|q16|q17|q18|q19|q20|q21|q22) QUERIES=("$QUERY");;

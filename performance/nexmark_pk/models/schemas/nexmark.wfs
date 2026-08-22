@@ -1,9 +1,13 @@
-// NEXMark 基准 — Person/Auction/Bid 三事件流（标准事件模型，10m 窗口）
+// NEXMark 基准 — Person/Auction/Bid 三事件流（标准事件模型）
 // 数据由 scripts/gen_nexmark.py 确定性生成，事件时间覆盖 ~30 分钟。
+// ⚠ over=1h：join 目标窗口（person/auction/bid）必须覆盖数据 span 才能
+// 保证实体行在 join 时可见——v5 数据 span = count×100µs（10m=1000s、30m=3000s），
+// 旧 over=10m(600s) 会时间驱逐早期实体行 → snapshot/asof join miss（Q3 差 50%、
+// Q6 差 36%、Q20 差 21%、Q9 差 24% 的根因，2026-08-22 实测）。
 window person_events {
     stream_tag = "person_events"
     time = dateTime
-    over = 10m
+    over = 1h
     fields {
         id: digit
         name: chars
@@ -19,7 +23,7 @@ window person_events {
 window auction_events {
     stream_tag = "auction_events"
     time = dateTime
-    over = 10m
+    over = 1h
     fields {
         id: digit
         itemName: chars
@@ -37,7 +41,7 @@ window auction_events {
 window bid_events {
     stream_tag = "bid_events"
     time = dateTime
-    over = 10m
+    over = 1h
     fields {
         auction: digit
         bidder: digit

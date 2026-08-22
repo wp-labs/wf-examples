@@ -1,6 +1,6 @@
 use "nexmark.wfs"
 
-// Q9 — Winning Bids（权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q9，扩展）
+// Q9 — Winning Bids（权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q9）
 // 权威 SQL：
 //   SELECT A.*, B.auction, B.bidder, B.price, ... FROM (
 //     SELECT A.*, ..., ROW_NUMBER() OVER (PARTITION BY A.id ORDER BY B.price DESC,
@@ -8,35 +8,37 @@ use "nexmark.wfs"
 //     FROM auction A, bid B
 //     WHERE A.id = B.auction AND B.dateTime BETWEEN A.dateTime AND A.expires)
 //   WHERE rownum <= 1
-// —— 纯 SQL（Flink planner 编译成时间窗口 join + TopN 去重）：每 auction 生命周期
-// [dateTime, expires] 内取价格最高（平手取最早）的 bid 为胜者，恰输出一条。
+// —— 每 auction 生命周期 [dateTime, expires] 内取价格最高（平手取 dateTime 最早）
+// 的 bid 为胜者，恰输出一条。
 //
-// wfusion 能力面（fixed 窗口 close 聚合）：bid 驱动，每 auction 固定 10m 窗口
-// 收口时取**窗口内最高出价**（max measure）作为胜者，EMIT 一条。
+// wfusion 表达（P3 deferred + reduce，设计 join-family-design.md §6.2）：
+// - auction 驱动，挂起（expiry = a.expires，auction 先于其 bids 到达的事件序
+//   保证到期时 bids 已全量入窗，无乱序问题）；
+// - watermark ≥ a.expires → 到期评估：bid_events 中
+//   a.id == bid.auction 且 bid.dateTime ∈ [a.dateTime, a.expires] 的集合，
+//   `reduce maxrow(price) tie(dateTime asc)` 选胜者（= 权威 ROW_NUMBER
+//   ORDER BY price DESC, dateTime ASC 第 1 名）；无 bid → 不输出；
+// - `as winner`：胜者整行以裸键 object 注入，`winner.bidder` 读取。
+// 输出基数 = 生命周期内有 bid 的 auction 数（对齐权威每 auction 至多一条）。
 //
-// ⚠ 近似：固定桶近似 auction 生命周期（计数口径不同：权威每 auction 恰一条，
-// 本地每 auction×桶一条）；平手（同价）取最早未定义（权威 ORDER BY dateTime ASC）；
-// fixed+close 尾部收口非确定（见 verify known）。
+// 依赖：bid_events.over ≥ 最大 auction 生命周期（nexmark.wfs over=10m，
+// 官方生命周期毫秒级，远小于窗口，D3 满足）。
+//
+// 注：inline test 无法断言本规则（deferred 需 watermark 推进 + WindowLookup）——
+// 由引擎级 deferred 测试（deferred_join.rs / deferred_integration_tests.rs）
+// + oracle/引擎对拍验证。
 rule q9_winning_bid {
-    events { b : bid_events }
-    match<auction:10m:fixed> {
-        on event { b | count >= 1; }
-        and close { w: b.price | max >= 10; }
-    } -> score(30.0)
-    entity(digit, b.auction)
-    yield nexmark_alerts (id = b.auction, alert_type = "q9_win", detail = "winning bid", request_count = 1)
-    limits { max_memory = "512MB" }
+    events { a : auction_events }
+    on each a -> score(30.0)
+    join bid_events reduce maxrow(price) tie(dateTime asc)
+        within [a.dateTime, a.expires]
+        on a.id == bid_events.auction as winner
+        emit at a.expires
+    entity(digit, a.id)
+    yield nexmark_alerts (
+        id = a.id,
+        alert_type = "q9_win",
+        detail = fmt("winner {}", winner.bidder),
+        request_count = 1
+    )
 }
-
-test q9_winning_bid_hit for q9_winning_bid {
-  input {
-    row(b, auction = 5, bidder = 1, price = 100, channel = "G", url = "u");
-    tick(11m);
-  }
-  expect { hits == 1; hit[0].entity_id == "5"; }
-}
-
-// AND 模式（on event + and close）：on event 满足后仅标记，输出发生在 close。
-// 测试结束 EOS flush 也会触发 close 收口，故「有 bid 的实例」必然输出一条；
-// 不存在 no-hit 情形（close 阈值 max>=10 为无条件兑底）。旧 no-hit 测试
-// 期望 hits==0 与 AND 语义矛盾（EOS flush 也会 close 输出），已删除。

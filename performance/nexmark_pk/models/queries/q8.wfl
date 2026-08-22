@@ -3,40 +3,27 @@ use "nexmark.wfs"
 // Q8 — Monitor New Users（权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q8）
 // 权威 SQL：person TUMBLE(10s) ⋈ auction TUMBLE(10s)
 //   ON P.id = A.seller AND P.starttime = A.starttime AND P.endtime = A.endtime
-// ——「10s 窗口内注册**且**创建了拍卖的人」（增量 join）。
+// ——「10s 窗口内注册**且**创建了拍卖的人」。
 //
-// wfusion 表达：person 流按 60s 间隙聚合为会话；`on event { count >= 1 }` 在会话内首个
-// person 事件触发。测试 wfusion 的 **session 窗口**（WindowSpec::Session）。
+// wfusion 表达（P3 deferred 存在 join，设计 join-family-design.md §6.1）：
+// - person 驱动，每 person 事件挂起（不即时输出），`emit at` = 该 person 的
+//   10s 桶末 `bucket_end(p.dateTime, 10s)`；
+// - watermark ≥ 桶末 → 到期评估：auction_events 内是否存在
+//   seller == p.id 且 auction.dateTime ∈ [p.dateTime, 桶末) 的行——有则输出，
+//   无则（没在桶内创建拍卖）不输出；
+// - 上开界对齐权威 TUMBLE 桶 [B, B+10s)：恰在桶边界 B+10s 的 auction 归下桶
+//   （下界 p.dateTime 依赖生成器保证「auction 必晚于其 seller 的 person」，
+//   见 join-family-design §9 风险 6）。
+// 输出 = 「10s 桶内注册且创建拍卖」的 person 数（对齐权威每 (person×桶) 一行）。
 //
-// ⚠ 未对齐（引擎能力限制，详见 NEXMARK_AUTHORITATIVE_SEMANTICS.md Q8 对照）：
-//   - 无 auction join：join 富化发生在 fire 之后，且 snapshot join miss 不 drop，
-//     无法表达「必须创建过拍卖」的内连接过滤，也无法表达同窗（window-aligned）条件；
-//   - 窗口形状：权威 10s 固定桶 join，本套 60s 会话。
-//   本查询保留为 session 窗口能力面测试；权威语义待引擎支持 window-join。
+// 注：inline test 无法断言本规则（deferred 需 watermark 推进 + WindowLookup，
+// harness 无右窗状态）——由引擎级 deferred 测试 + oracle/引擎对拍验证。
 rule q8_monitor_new_user {
     events { p : person_events }
-    match<id:session(60s)> {
-        on event { p | count >= 1; }
-    } -> score(10.0)
+    on each p -> score(10.0)
+    join auction_events within [p.dateTime, <bucket_end(p.dateTime, 10s)]
+        on p.id == auction_events.seller
+        emit at bucket_end(p.dateTime, 10s)
     entity(digit, p.id)
-    yield nexmark_alerts (id = p.id, alert_type = "q8_new_user", detail = "new user session", request_count = 1)
-    limits { max_memory = "512MB" }
-}
-
-test q8_hit for q8_monitor_new_user {
-  input {
-    row(p, id = 1, name = "n", email = "e", city = "c", state = "s");
-  }
-  expect { hits == 1; hit[0].entity_id == "1"; }
-}
-test q8_session_gap for q8_monitor_new_user {
-  input {
-    row(p, id = 1, name = "n", email = "e", city = "c", state = "s");
-    row(p, id = 1, name = "n", email = "e", city = "c", state = "s");
-    tick(61s);
-    row(p, id = 1, name = "n", email = "e", city = "c", state = "s");
-  }
-  // count>=1：每行都 fire（引擎/模拟器一致：EMIT = person 事件数）；session
-  // 只决定窗口归属。tick 跨 60s gap → 第 3 行属新会话（窗口信息不同）。
-  expect { hits == 3; }
+    yield nexmark_alerts (id = p.id, alert_type = "q8_new_user", detail = "new user created auction", request_count = 1)
 }
