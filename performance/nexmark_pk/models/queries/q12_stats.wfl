@@ -1,0 +1,24 @@
+use "nexmark.wfs"
+
+// Q12 — Processing Time Windows（stats 声明式版本, 与 q12.wfl CEP 版同语义对拍）
+// 权威 SQL:
+//   SELECT bidder, count(*) AS bid_count FROM bid
+//   GROUP BY bidder, TUMBLE(p_time, '10' SECOND);
+// —— 按 bidder 计 10s 固定窗口内的 bid 数, 每 (bidder × 桶) 一行。
+//
+// stats 形态: `stats<10s:fixed> group by (b.bidder)` —— 复合键分组（P2）,
+// 每桶 close 一条 alert; yield 读分组键字段 b.bidder（桶键值注入）。
+rule q12_bidder_10s_window_count {
+    events { b : bid_events }
+    stats<10s:fixed> group by (b.bidder) {
+        b | count as bid_count;
+    }
+    entity(digit, b.bidder)
+    yield nexmark_alerts (
+        id = b.bidder,
+        alert_type = "q12_stats",
+        detail = fmt("{} {}", b.bidder, stat.value(final(bid_count))),
+        request_count = 1
+    )
+    limits { max_memory = "512MB" }
+}

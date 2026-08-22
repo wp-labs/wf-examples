@@ -1,0 +1,33 @@
+use "nexmark.wfs"
+
+// Q17 — Auction Statistics Report（stats 声明式版本, 与 q17.wfl CEP 版同语义对拍）
+// 权威 SQL:
+//   SELECT auction, count(*), count(*) FILTER (3 价格档), min/max/avg/sum(price)
+//   FROM bid GROUP BY auction;
+// —— 按 auction 分组输出 bid 总数、三价格档计数与价格 min/max/avg/sum。
+//
+// stats 形态: `stats<30m:fixed> group by (b.auction)` + 8 度量（4 count 分档 +
+// min/max/avg/sum——P2 sum/avg/min/max）; 每 auction 一行。
+rule q17_auction_stats {
+    events { b : bid_events }
+    stats<30m:fixed> group by (b.auction) {
+        b | count as total;
+        b | count as r1 where b.price < 10000;
+        b | count as r2 where b.price >= 10000 && b.price < 1000000;
+        b | count as r3 where b.price >= 1000000;
+        b | min(b.price) as minp;
+        b | max(b.price) as maxp;
+        b | avg(b.price) as avgp;
+        b | sum(b.price) as sump;
+    }
+    entity(digit, b.auction)
+    yield nexmark_alerts (
+        id = b.auction,
+        alert_type = "q17_stats",
+        detail = fmt("{} {} {} {} {} {} {} {}",
+            stat.value(final(total)), stat.value(final(r1)), stat.value(final(r2)), stat.value(final(r3)),
+            stat.value(final(minp)), stat.value(final(maxp)), stat.value(final(avgp)), stat.value(final(sump))),
+        request_count = 1
+    )
+    limits { max_memory = "16GB" }
+}
