@@ -8,7 +8,7 @@
 
 | # | 要素 | 验证方式 | 验收标准 |
 |---|---|---|---|
-| 1 | 诊断模式进入 | `wfusion daemon --perf-diag conf/perf-diag.toml` | 启动成功，`__perf_sentinel` 窗口注册 |
+| 1 | 诊断模式进入 | `wfusion daemon --perf-diag conf/perf-diag.toml` | 启动成功，`__wf_sentinel` 窗口注册 |
 | 2 | 门控生效 | `cut_rules` 档（floor） | 规则求值直通（emit=0），append 追平（管道照跑） |
 | 3 | 哨兵记录 | 每批帧尾追加 sentinel | `data/perf_sentinel.ndjson` 每点一条，四元组 `{round, n, start_ns, emit_ns}` 完整 |
 | 4 | 状态机自切换 | sentinel 处理后自动推进 | `point{current=k+1}` 记录出现（先于 sentinel 记录），无外部控制指令 |

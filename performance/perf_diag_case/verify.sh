@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # perf_diag_case — 诊断机制验证驱动
 #
-# 依赖引擎实现：`--perf-diag` 启动参数、内置 __perf_sentinel 窗口、诊断点状态机、
+# 依赖引擎实现：`--perf-diag` 启动参数、内置 __wf_sentinel 窗口、诊断点状态机、
 #    `wfgen perf-diag` 子命令（见 wp-reactor/docs/design/perf-diag-mode-design.md §8
 #    落地清单）。
 #
