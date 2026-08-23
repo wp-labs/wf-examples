@@ -2,7 +2,8 @@
 
 > 口径：以官方 `github.com/nexmark/nexmark` 的 `nexmark-flink/.../queries/qN.sql` 为权威语义基准（见 `NEXMARK_AUTHORITATIVE_SEMANTICS.md`）。
 > 本表判断基于 2026-08-23 重审的 22 个当前 `.wfl` 文件 + wfusion 当前规则能力（CEP / Window / stats<> / Join 家族）的源码核查。
-> 2026-08-23 二次修订：Q10 全量落盘口径（旧 1/7 抽样作废）、Q5/Q7 并列全输出 `top_ties` 落地、Q4 avg-of-max 双规则链落地、Q8/Q9 deferred join 端到端激活（见 §二 已解决历史 与 落地登记）。
+> 2026-08-23 三次修订：全量 30M replay 完成——22 查询全部 `[clean]`（appended 追平 + 致命计数器归零），
+> 验证 §一 各查询的端到端可跑性（性能数据见本次会话基准，正确性对拍 `--verify` 仍待跑）。
 > 三档定义：
 > - **已有**：能力已落地且端到端可跑，输出与 Flink 语义/基数一致。
 > - **待接通**：算子已实现，但规则装配/计划连线未端到端激活（纸面符合，跑不通或未被规则引擎调度）。
@@ -94,4 +95,4 @@ wfusion 当前架构**能覆盖 NEXMark 绝大多数查询的"意图"**，但**�
 - **需补强语义才达标**：+1（Q12）—— 处理时间窗（产品特性向，Flink 侧亦墙钟不确定）。
 - **特殊口径**：3（Q11 分片 + session；Q6 Flink 官方未实现无基线；Q13 形状对齐、EMIT 基数一致）。
 
-**完整支持 Flink 测试集的最短路径**：① Q4 双规则链 daemon 级串联对拍（外层 stats oracle 接入后即可全链对拍）；② Q12 处理时间窗为产品特性（实时流场景）。通用确认项：bench daemon 级 replay 对拍（`bench.sh --verify`）待跑。
+**完整支持 Flink 测试集的最短路径**：① Q4 双规则链 daemon 级串联对拍（外层 stats oracle 接入后即可全链对拍）；② Q12 处理时间窗为产品特性（实时流场景）。通用确认项：全量 30M replay 已完成（22 查询 `[clean]`，§一 各查询端到端可跑性验证）；`bench.sh --verify` oracle 对拍（Q8/Q9 已单独对拍一致，其余待跑）。
