@@ -70,6 +70,7 @@
 | Q5 并列截断 | conv `top_ties(1)` 并列全输出 |
 | Q8/Q9/Q19 特性门 | 均已核查激活（deferred 端到端 + stats 装配/执行器测试） |
 | Q8 10M 对拍 ~40% 差异 | 三处根因修复（2026-08-23）：① 到期 miss（join 目标 append 滞后）→ `missed` 收集 + EOS 重试补出；② shutdown flush 的 EMIT 增量发生在 metrics 任务最后 tick 之后 → `Reactor::wait` 尾部最终导出（30,785 + 51,661 = 82,446 = oracle）；③ flush 用 i64::MAX 强评会多出尾部桶 +828（oracle/mod.rs EOS 水位注释同源）→ 改按最终事件时间 watermark 收口 |
+| Q5 10M 尾部多 3 条（532 vs 529） | `close_all` 收口对齐 oracle/Flink：HOP/Fixed 尾部未完整窗口（`created_at+size >` 最终事件时间 watermark）释放实例但不发射（2026-08-23；尾部 992/994/996s 窗口 w_end=1002/1004/1006 > 1000s；`wm≤0` 无时间推进场景保留旧全收口行为） |
 
 ### 落地登记（2026-08-23 新算子/能力）
 
