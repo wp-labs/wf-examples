@@ -83,8 +83,42 @@
 - **不是 stats-vs-CEP 选型问题**——qradar 的 count 规则形态 CEP 已是最优表达。
 - 问题在 **CEP 单规则求值路径**（实例查找/计数/guard 富类型访问）在当前引擎变慢
   （08-17 单事件 ~90µs → 当前 ~368µs，5× 量级，且 q1 等轻查询不受影响）。
-- 下一步：A/B 08-17 引擎对比 CEP 单规则成本；profile `c_*`/`g_*` 的 advance 路径
-  （实例表查找、key 提取、guard 字段访问）。
+
+## 7. 引擎侧定位（2026-08-23，PERF_BISECTION_METHOD 应用）
+
+### 7.1 段内热点（`sample` 活跃期采样，c_* 家族 1M 事件）
+
+活跃样本 27.6k，idle 线程已排除：
+
+| 热点簇 | 活跃占比 | 来源 |
+|---|---|---|
+| **计时开销** | **~7.6%** | `process_batch` 每行 5 对 `Instant::now()+elapsed`（profile 计时器） |
+| 状态机 advance | ~6% | `CepStateMachine::advance_*` + `scan_expired` + `evaluate_step` |
+| 分配/拷贝 | ~5% | `smol_str::Repr::new`、`mi_malloc`、`_platform_memmove/memcmp`（key 路径 String 克隆） |
+| 字段访问 | ~4.4% | `ColumnarEvent::field_value/value_at`、`extract_value`、`ColumnExpr::eval_vec` |
+| 实例表哈希 | ~3% | `foldhash` + `hashbrown` + `take_instance`（3 次哈希：contains+take+put） |
+| process_batch 自身 | ~4% | 循环/调度 |
+
+### 7.2 改进与验证
+
+**✅ 计时门控（已提交 wp-reactor `3beb41c`）**：规则相位计时器只为 1s 节流的
+`dump_profiling` 日志服务，却每行做 5 对时钟调用。新增 `set_rule_profiling`
+（`WF_RULE_PROFILING=0` 关闭，默认开启保持兼容）。采样验证（§7.3）：
+计时簇 **7.6% → 0%**（clock_gettime 全部消失），进程热路径零时钟开销。
+EPS 级 A/B 受本机负载噪声（±60%）阻挡无法分辨（max 158.5k vs 157.3k），
+以采样验证为准。
+
+**✖ take-early 尝试后回退**：把 `contains_key+take+put`（3 次哈希）提前 take
+（2 次）。1050 测试全过后采样显示实例表哈希只占活跃 ~2-3%，收益 <1%；
+改动触及正确性最关键的实例表访问（DropOldest 驱逐语义），性价比差，回退。
+
+### 7.3 剩余热点（改进方向）
+
+- **key 路径分配**：每事件每规则 2 次 String 克隆（`field_value` → `ScopeKey::from_value`）
+  + Vec 分配 + smol_str 构造 ≈ 活跃 5%——单 key 规则可直读列构 `ScopeKey` 免中间 Value。
+- **状态机 advance 内部**（~6%）：`evaluate_step`/`scan_expired` 每事件开销。
+- EPS 级测量需安静机器或更稳的测量协议（当前 load 5-6 + Zed 占 2 核，±60% 噪声
+  淹没 <10% 的改动）。
 
 ---
 
