@@ -22,11 +22,11 @@ over_cap = "2d"
 
 [window.bid_events]
 mode = "local"
-# 256MB：字节预算（性能定位：8GB 全量驻留 30m 数据 → RSS 3.3GB、内存带宽墙；
-# 恢复 256MB 后窗口内存有界 271MB、驱逐恢复，EPS 不回退）。
-max_window_bytes = "256MB"
-# 2d：Q15-18 stats 用 `1d:fixed` 日历天桶（86400s > 旧 1h 上限）——
-# over_cap 是校验上限，实际 over 由 wfl 决定，放宽不影响其他查询。
+# 2GB：deferred join（q9/q4a）的右窗数据必须保留到 expiry 评估时刻——
+# 256MB 只够 ~140s 的 bid，10M 数据 920 万行 bid（~1.8GB）被驱逐滚动后，
+# 规则任务（处理滞后）评估早期 auction 时其 bid 已被驱逐 → 全 miss
+# （q9 10M 引擎 81,974 vs oracle 557,204 根因）。over=1h 时间语义要求全保留。
+max_window_bytes = "2GB"
 over_cap = "2d"
 
 # q4 双规则链中间窗口（q4a deferred reduce → auction_finals → q4b stats avg）；
