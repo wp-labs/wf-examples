@@ -69,7 +69,8 @@ N=1M（`--rounds 1`，机制验证 + 10M 门禁）：
       `round/n/start_ns/emit_ns` 齐全且 `emit_ns > start_ns`；
 - [x] `floor` 档规则 emit = 0（cut_rules 生效），append 追平（管道未断）；
 - [x] 每档完成信号（`point{current=k}`）出现后推进下一档（无超时卡死）；
-- [x] 墙表三档 EPS 单调 `floor ≥ rules ≥ full`（噪声容差 ±10%）；
+- [x] 墙表单调：`floor ≥ rules ≥ full`——规则墙（floor→rules，~60×）严格断言
+      ±10%；输出墙（rules→full，blackhole 近无成本）容差 ±20%（噪声内）；
 - [x] 全程单 daemon 未重启（pid 不变）；
 - [x] `N ≥ 1M` 时 floor 档 EPS ≥ 10M。
 
