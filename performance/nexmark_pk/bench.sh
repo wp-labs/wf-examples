@@ -444,7 +444,6 @@ if [ "$FEED" = "replay" ] && [ ! -s "$FRAMES" ]; then
     exit 1
   }
   write_conf q1 replay
-  local local_dummy
   local_dummy=$(start_daemon) || exit 1
   "$WFGEN" dump-frames --scenario scenarios/nexmark.wfg --input data/burst_bench.jsonl \
     --ws models/schemas/nexmark.wfs --addr 127.0.0.1:$PORT --output "$FRAMES" --chunk 1000000 \
