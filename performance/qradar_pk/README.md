@@ -2,6 +2,8 @@
 
 > 性能结论与诚实边界见 `PK_REPORT_MAC.md`（16 核 M3 Max 口径）与 `PK_REPORT_LINUX.md`
 > （Linux 8 核对等口径），2026-08-17。
+> **规则成本分析（2026-08-23，当前引擎下性能回归排查）**：见 `RULE_SET_BISECTION.md`
+> ——规则集二分定位瓶颈子集（conn count ~30% + guard ~16%）+ stats<> 对照反证。
 
 生产环境的 CEP/SIEM 部署通常跑 50-500+ 条规则。本场景用 **450 条规则**验证高规则量下的
 引擎吞吐与内存扩展性，并作为 **wp-reactor#18**（object 字段内存驱逐）的回归门禁。
