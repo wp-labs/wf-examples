@@ -1,9 +1,27 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # 持续注入拐点扫描：450规则 单IP 300万，多档注入速率测引擎跟上情况
 set -u
 cd "$(dirname "$0")"
-REPO="${REPO:-/Users/zuowenjian/devspace/rust/wfusion/warp-fusion}"
-WF="$REPO/target/release/wfusion"; GEN="$REPO/target/release/wfgen"
+
+# 二进制来源：优先本地 warp-fusion release 构建；否则回退 PATH（与 run.sh 同款探测）。
+REPO_ROOT="${REPO_ROOT:-}"
+if [ -z "$REPO_ROOT" ] && [ -d "../../../warp-fusion" ]; then
+  REPO_ROOT="$(cd ../../../warp-fusion && pwd)"
+fi
+WF="${WFUSION:-}"; GEN="${WFGEN:-}"
+if [ -z "$WF" ] && [ -n "$REPO_ROOT" ] && [ -x "$REPO_ROOT/target/release/wfusion" ]; then
+  WF="$REPO_ROOT/target/release/wfusion"
+fi
+if [ -z "$GEN" ] && [ -n "$REPO_ROOT" ] && [ -x "$REPO_ROOT/target/release/wfgen" ]; then
+  GEN="$REPO_ROOT/target/release/wfgen"
+fi
+[ -n "$WF" ] || WF="$(command -v wfusion 2>/dev/null || true)"
+[ -n "$GEN" ] || GEN="$(command -v wfgen 2>/dev/null || true)"
+if [ -z "$WF" ] || [ -z "$GEN" ]; then
+  echo "错误: 找不到 wfusion/wfgen 二进制（设置 REPO_ROOT/WFUSION/WFGEN，或加入 PATH）" >&2
+  exit 1
+fi
+
 PORT=9800; PY="${PYTHON:-python3}"
 N="${1:-3000000}"
 CONF=/tmp/sw.toml; FRAMES=/tmp/sw.frames; METRICS=data/metrics.ndjson
