@@ -21,7 +21,7 @@
 | **Q5** | 热门新商品（top-1 by count） | hop(10s, 2s) + conv top_ties(1) | ✅ 已有 | HOP 算子落地（2026-08-23）：窗口形状/基数与权威一致（30M 数据 1500 窗 vs 旧 fixed 300 桶，5× 修正）；`top_ties(1)` 并列最高 count 的 auction 全输出（对齐权威 JOIN 并列语义，无残留） |
 | **Q6** | 卖家售出均价 | sliding 10m avg（能力面） | 🟡 特殊口径 | Flink 官方未实现 Q6（OVER WINDOW 不消费 retractions，权威 SQL 注释）；无对拍基线，当前为形状近似能力面 |
 | **Q7** | 时段最高出价 | CEP `match<auction:10s:fixed>` close max + conv top_ties(1) | ✅ 已有 | 并列全输出（RANK 语义 `top_ties`，2026-08-23 与 Q5 同落地）：同窗口最高价并列 auction 全出；残留 = auction 粒度 vs 权威 bid 行粒度（同 auction 内多条并列 bid 需窗口内行集算子） |
-| **Q8** | 新用户+其拍卖（TUMBLE join） | deferred exists join | ✅ 已有 | 端到端激活（spawn 单 worker + DeferredRuntime；集成测 7 例全绿；200k 实测 927 行）；auction 恰在桶边界归下桶（上开界） |
+| **Q8** | 新用户+其拍卖（TUMBLE join） | deferred exists join | ⚠️ 已知差异 | 端到端激活（spawn 单 worker + DeferredRuntime；集成测 7 例全绿）；**10M replay 对拍 known-diff（2026-08-23 验证基线发现）：引擎 ~33k vs oracle 82k（~40%）**——oracle 预加载完整 join 窗口（理想值）；引擎 deferred exists 评估输出不足，机制待查（已排除：帧过时/近期回归/ingest 竞速/EOS flush）；auction 恰在桶边界归下桶（上开界） |
 | **Q9** | 中标出价（asof join） | deferred reduce join | ✅ 已有 | 同上（200k 实测 10986 行）；`maxrow(price) tie(dateTime asc)` 与 ROW_NUMBER 第 1 名等价 |
 | **Q10** | 全量 bid 按时间分区落盘（每 bid 一行） | CEP on-each | ✅ 已有 | 2026-08-21 从「auction%7 子集」能力面重写为全量落盘（旧版只处理 1/7 事件，工作负载差 ~7×）；dt/hm 分区列本地 sink 省略（30m 数据恒同一天，无查询语义） |
 | **Q11** | 用户会话统计（session） | session 窗口 + 分片 | 🟡 已有(分片口径) | 分片口径，非单实例全量 |
@@ -37,9 +37,9 @@
 | **Q21** | 按渠道监控新用户 | CEP monitor | ✅ 已有 | wfgen 已输出 channel_id（cmd_gen_nexmark.rs:279） |
 | **Q22** | URL 目录投影 | CEP projection | ✅ 已有 | — |
 
-**汇总**：已有 18 · 待接通 0 · 待补强 1 (Q12) · 特殊口径 3 (Q11 分片 / Q6 Flink 未落地 / Q13 形状对齐)。
+**汇总**：已有 17 · 待接通 0 · 待补强 1 (Q12) · 已知差异 1 (Q8 deferred exists) · 特殊口径 3 (Q11 分片 / Q6 Flink 未落地 / Q13 形状对齐)。
 
-> 计数：18 已有 + 1 待补强 + 3 特殊口径 = 22。
+> 计数：17 已有 + 1 待补强 + 1 已知差异 + 3 特殊口径 = 22。
 
 ---
 
@@ -88,7 +88,8 @@
 
 wfusion 当前架构**能覆盖 NEXMark 绝大多数查询的"意图"**，但**无法逐条复现 Flink 测试集输出**：
 
-- **真正符合（可独立验证）**：18/22（Q1 Q2 Q3 Q4 Q5 Q7 Q8 Q9 Q10 Q14 Q15 Q16 Q17 Q18 Q19 Q20 Q21 Q22）—— CEP 类投影/过滤/标量计算 + `1d:fixed` UTC 日历天统计 + deferred exists/reduce join + stats<> top-N/last + HOP 滑动窗口（Q5）+ conv `top_ties` 并列全输出（Q7）+ Q4 avg-of-max 双规则链。
+- **真正符合（可独立验证）**：17/22（Q1 Q2 Q3 Q4 Q5 Q7 Q9 Q10 Q14 Q15 Q16 Q17 Q18 Q19 Q20 Q21 Q22）—— CEP 类投影/过滤/标量计算 + `1d:fixed` UTC 日历天统计 + deferred reduce join（Q9）+ stats<> top-N/last + HOP 滑动窗口（Q5）+ conv `top_ties` 并列全输出（Q7）+ Q4 avg-of-max 双规则链。
+- **已知差异**：+1（Q8 deferred exists 10M 对拍 ~40%，2026-08-23 验证基线发现，机制待查）。
 - **需补强语义才达标**：+1（Q12）—— 处理时间窗（产品特性向，Flink 侧亦墙钟不确定）。
 - **特殊口径**：3（Q11 分片 + session；Q6 Flink 官方未实现无基线；Q13 形状对齐、EMIT 基数一致）。
 
