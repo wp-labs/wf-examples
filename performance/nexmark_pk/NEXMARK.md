@@ -2,8 +2,9 @@
 
 > 配套文档：
 > - `README.md` —— 套件结构、bench.sh 用法、测量纪律
-> - `TEST_PLAN.md` —— 可执行测试方案（微基准 + 端到端 + 回归对比 + 验收标准）
-> - `PK_REPORT_MAC.md` / `PK_REPORT_LINUX.md` —— 实测性能报告与诚实边界
+> - `CAPABILITY_GAP_MATRIX.md` —— 22 查询逐条能力/语义判定（当前权威）
+> - `archive/TEST_PLAN.md` —— 可执行测试方案（历史；测量纪律已并入 README）
+> - `archive/PK_REPORT_MAC.md` / `archive/PK_REPORT_LINUX.md` —— 实测性能报告历史快照
 
 本文回答五个问题：**Nexmark 是什么？Q1~Q22 做什么测试？数据有什么要求？我们如何准备数据？正确的标准是什么？**
 
@@ -34,39 +35,13 @@ Flink OSS / VVR、Kafka Streams、Spark Streaming 等）。
 
 ## 2. Q1~Q22 做什么测试
 
-| Query | Flink 语义 | 本项目实现（`models/queries/`） | 测的能力面 |
-|---|---|---|---|
-| **Q1** | 无状态投影：每 bid 输出一行 | `on each` 每 bid 一条告警 | **无状态吞吐天花板**（管线极限，无状态机开销） |
-| **Q2** | `WHERE MOD(auction,123)=0` 过滤 | `events { b && b.auction % 123 == 0 }` + count≥1 | **过滤 + 列式 guard**（选中 ~0.81% bids） |
-| **Q3** | person⋈auction（seller=id）投影卖家信息 | auction 驱动 + `join person_events snapshot` + count≥1 | **hash join + 窗口计数** |
-| **Q4** | bid⋈auction 后按 category 均价（两层） | bid 驱动 + `match<auction:10m:fixed>` + `and close { b.price \| avg }` | **fixed-close avg 聚合 + 状态机**（外层 category avg 平台不可表达，见 SEMANTIC_ALIGNMENT §5.3） |
-| **Q5** | 滑窗计数面 | `match<auction:10m>` count≥{10,50,100} | **滑动窗口计数 + 状态机**（fire/reset，高实例 churn） |
-| **Q6** | 按卖家/分类窗口均价 | `match<auction:10m>` `b.price \| avg >= 200`（按 auction 聚合，卖家来自 join 需 emit 后数据） | **avg measure + 状态机** |
-| **Q7** | 每 auction 滑窗最高出价 | `match<auction:10m>` max(price)≥{200,500,1000} | **滑窗 MAX + emit 密集路径** |
-| **Q8** | 监控新用户 | person 流 `match<id:session(60s)>` count≥1 | **session 窗口**（person 流） |
-| **Q9** | person⋈auction 按 seller 分组计数 | auction 驱动 + snapshot join + `match<seller:10m>` count≥1 | **join + 分组计数** |
-| **Q10** | 任意选择（确定性子集） | `on each` + `b.auction % 7 == 0` | **on-each + bind filter**（无状态子集） |
-| **Q11** | 用户会话 | bid 流 `match<bidder:session(60s)>` count≥1 | **session 窗口**（bid 流；per-shard 见 §5） |
-| **Q12** | Top-N（前 N 项） | fixed 10m + `and close` count + `conv { sort(-n) \| top(3) }` | **conv top-N + fixed 窗口** |
-| **Q13** | 有界侧输入 join | bid ⋈ person snapshot join | **第二窗口 snapshot join** |
-| **Q14** | 两级聚合 Top-N | auction 按 seller 计数 + `conv { sort(-n) \| top(10) }` | **conv top-N（更大 N）+ 第二窗口键** |
-| **Q15** | 过滤 + 窗口计数 | `b.price > 100` 过滤 + `match<auction:10m>` count≥5 | **bind filter + 滑窗计数** |
-| **Q16** | 复杂窗口聚合 | fixed 10m + `and close` `b.price \| sum >= 1000` | **on close 窗口聚合（sum）** |
-| **Q17** | 去重/集合聚合 | `match<auction:10m>` `b.bidder \| distinct \| count >= 20` | **distinct 变换 + 窗口 measure** |
-| **Q18** | 窗口内累积 | `on event<accu> { b \| count >= 5 }` | **`on event<accu>` 累积 fire** |
-| **Q19** | 有序序列 | `on event seq { has b; has b within 60s }` | **`on event seq` 有序序列** |
-| **Q20** | 无序并存 | `on event any { count>=2; count>=3 }` | **`on event any` 无序 step** |
-| **Q21** | anti/semi join | `join person_events anti on b.bidder == person_events.id` | **anti join**（命中丢弃） |
-| **Q22** | 时间邻近 join | `join person_events asof within 60s` | **asof join**（时间邻近） |
+22 条查询覆盖 Flink 官方 NEXMark 测试集的全部查询（`qN.sql`，权威原文见
+`NEXMARK_AUTHORITATIVE_SEMANTICS.md`）。各查询的**官方意图 / 本地 `.wfl` 实现 / 能力档位**
+见 `CAPABILITY_GAP_MATRIX.md` §一（18 已有 / Q12 待补强 / Q6·Q11·Q13 特殊口径），
+执行器应用与语义偏差详见 `SEMANTIC_SUPPORT_MATRIX.md` / `SEMANTIC_ALIGNMENT.md`。
 
-> **语义诚实标注**：q6 按 auction 聚合（标准按卖家，卖家来自 join 属 emit 后数据，窗口键须取
-> 原始事件）；q4 聚合面是 count 而非 category 均价（工作负载等价）；q8/q11 会话窗口；
-> q12/q14 conv top-N 是**全局**（conv 阶段跨分片合并后 top-N）；**q11 会话在按 auction 分片下
-> 是 per-shard**（要全局会话语义须 `CONNECTIONS=1` 或按 bidder 分片）；q21 anti join 在
-> person 窗口过期时保留 bid（EMIT ≈ 部分 bid）。
-
-**能力面覆盖**：on-each / 过滤 / snapshot-join / anti-join / asof-join / 滑窗 count·max·avg·sum /
-session / distinct / conv top-N / `on event<accu>` / seq / any —— 主要 DSL 能力全覆盖。
+**能力面覆盖**：on-each / 过滤 / snapshot·deferred·asof join / fixed·sliding·session·hop
+窗口 / distinct / conv top-N·top_ties / stats<>（count/sum/avg/min/max/distinct/last/top）/ `1d:fixed` 日历天桶。
 
 ---
 
@@ -76,8 +51,8 @@ NEXMark 标准数据的要求，本实现（`wfgen gen-nexmark`）全部满足�
 
 1. **三流结构**：person/auction/bid 各字段与 NEXMark 事件模型一致（见 `models/schemas/nexmark.wfs`），
    事件时间字段为 `dateTime`（Timestamp）。
-2. **事件时间跨度 ~30 分钟**：`SPAN_NS = 1800s`——恰好填 3 个 10m 滑窗，保证窗口能完整滑动
-   与过期（窗口聚合/状态机语义可被真实触发）。
+2. **事件时间跨度 ∝ count**：`dateTime = BASE_NS + event_id × 100µs`（官方 `interEventDelayUs=100`
+   固定速率）——30M → 3000s ≈ 50min，10m 窗口可完整滑动与过期（窗口聚合/状态机语义可被真实触发）。
 3. **hot 分布**（贴近真实拍卖的偏斜）：**50% hot auctions**、**25% hot bidders**、**25% hot sellers**
    （`HOT_SELLERS=250`、`HOT_BIDDERS=250`、`HOT_AUCTION_RATIO=0.50`）——制造热 key 争抢，
    暴露状态/join 的热点压力。
@@ -128,46 +103,15 @@ NEXMark 标准数据的要求，本实现（`wfgen gen-nexmark`）全部满足�
 
 - 与 `gen-nexmark` 相同的 30s 桶序喂入——与引擎 daemon 收到的帧序一致，窗口过期
   语义对拍才成立（每规则独立 CepStateMachine + RuleExecutor）。
-- 覆盖全部 26 条规则（含旧模拟器未建模的 q1 on-each / q11/q12/q14/q22）。
-- **已知差异 q21（anti join）**：oracle 不评估 join 窗口状态（历史限制），标 ⚠
-  不判失败；其余规则与引擎 EMIT 精确相等（实测 q13=9,200,000 == 引擎 10m 对拍）。
+- 覆盖全部规则（含 q1 on-each / q11/q12/q14/q22 等早期模拟器未建模项）。
+- **已知差异**：Q19（stats 规则 oracle 未接入，标 ⚠ 不判失败）；q21 已随数据侧
+  `channel_id` 对齐（官方 95% 输出量）由 verify 覆盖。其余规则与引擎 EMIT 精确相等。
 - 对拍在 wfgen 内完成（`--engine-emit data`）：git-diff 同款分层（L1 哈希 →
   L2 Myers/降级 → L3 明细），退出码 0=一致 / 1=有差异。
 
-**30M（seed=1）期望值**（`wfgen verify-nexmark`；30M 权威 + 10m 对拍）：
-
-| 规则 | 30M 期望 | 引擎实测 | 结果 |
-|---|---|---|---|
-| q2_mod_123 | 224,289 | 224,289 | ✅ |
-| q3_auction_seller | 1,800,000 | 1,800,000 | ✅ |
-| q4_avg_price_by_category | 5,254,483（oracle 理想） | 30M 4,228,230 | ⚠ 旧规则（fixed+close 收口非确定，丢尾部，见 SEMANTIC_ALIGNMENT §6.1）；2026-08-23 已由 avg-of-max 双规则链（q4a+q4b）替代 |
-| q5_bidcount_10 | 1,712,532 | 1,712,470 | ✅（差 62=0.0036%，scan_timeouts 墙钟非确定） |
-| q6_avg_price_200 | 9,794,325 | 10m 3,263,324 | ✅（10m 对拍 ±1） |
-| q7_maxbid_200/500/1000 | 10,350,961 / 34,578 / 0 | 同左 | ✅ |
-| q8_monitor_new_user | 600,000 | 10m 200,000 | ✅（10m 对拍精确） |
-| q9_winning_bid | 5,254,483（oracle 理想） | 30M 4,183,632 | ⚠（fixed+close 收口非确定，丢尾部，见 SEMANTIC_ALIGNMENT §6.1） |
-| q10_arbitrary_selection | 3,944,636 | 10m 1,314,285 | ✅（10m 对拍精确） |
-| q13_bid_person_join | 27,600,000 | 10m 9,200,000 | ✅（10m 对拍精确） |
-| q15_high_bid_count_5 | 2,563,592 | 2,563,534 | ✅（差 58≈0.002%） |
-| q17_distinct_bidders_20 | 157,154 | 10m 52,236 | ✅（10m 对拍 ~0.3%） |
-| q18_accumulate_fires | 17,919,533 | 17,918,519 | ✅（差 1014≈0.006%） |
-| q19_seq_two_bids | 490,097 | 10m 162,879 | ✅（10m 对拍 ~0.3%） |
-| q20_any_count_3 | 7,763,818 | 10m 2,587,329 | ✅（10m 对拍 ~0.02%） |
-| q16_sum_price_1000 | 1,886,924 | 1,886,924 | ✅（2026-08-20 修复：max_memory 8GB 去限流 + scan_timeouts 无界预算收口最后桶） |
-| q21_anti_person | 0（朴素值） | 时序相关（10m ~21k-31k） | ⚠️ person 窗口驱逐，见下 |
-
-> **模拟器覆盖**：q2/q3/q4/q5/q6/q7/q8/q9/q10/q13/q15/q16/q17/q18/q19/q20 由
-> 模拟器精确对拍（q15~q20 已用 fresh 引擎运行对拍；q16 2026-08-20 起逐位一致）。
-> **时序相关（非固定 ground truth）**：
-> - q16（fixed + `and close` sum）：2026-08-20 修复后与模拟器**逐位一致**——根因是
->   ① `max_memory=512MB` 在 30m 规模触发 Throttle 丢事件（sum 累计不全，EMIT 低 8 倍）
->   改为 8GB；② 最后桶在数据末尾过期晚于最后事件时间，靠墙钟 `scan_timeouts` 兜底，
->   但 1024 增量预算处理不完 → 改 scan_timeouts 用**无界预算**（事件热路径仍 1024 防冻结）。
-> - q21（anti join）：模拟器给的是「所有 bidder 都是 person」的朴素 0；引擎实际因 person
->   窗口在 lookup 时刻不完全而保留少量 bid（时序相关）→ 以 `[clean]` + 多轮 EMIT 确定性验证。
-> **未覆盖**：q11（per-shard 会话，单机模拟无法匹配）、q12/q14（fixed 窗口 close+conv 未模拟）、
-> q22（asof join 全量扫描 O(n²)，独立里程碑）——以 **10m/30m 端到端确定性 + `[clean]`** 验证
-> （多轮 EMIT 一致），或 `CONNECTIONS=1`（q11 全局会话）。
+**各查询 30M 期望 / 实测 EMIT 状态**（Q1~Q22 全量 30M replay 全部 `[clean]`；
+Q8/Q9 已与 oracle 对拍一致，Q19 待 stats oracle 接入）：见
+`CAPABILITY_GAP_MATRIX.md` §一·§二（含已解决历史与 known-diff 登记）。
 
 ### 5.2 数据完整性（`[clean]`）
 
@@ -177,31 +121,28 @@ NEXMark 标准数据的要求，本实现（`wfgen gen-nexmark`）全部满足�
 
 ### 5.3 输出计数（EMIT）口径
 
-- **30M**：与 ground truth 逐位比对（权威，覆盖 q2/q3/q4/q5/q6/q7/q8/q9/q10/q13/
-  q15/q17/q18/q19/q20）。
-- **100M**：EMIT 与 30M **同比例侧证**（如 q2=747,816 = 30M 的 224,289 × 100/30 的
-  0.8129% 占比精确吻合；q9=6,000,000 = 1.8M × 100/30）。
-- **时序相关查询（q16/q21）**：以**多轮 10m/30m 端到端 EMIT 确定性 + `[clean]`** 验证
-  （区间重叠而非单值相等；模拟器给理想/朴素值作参照，见 §5.1）。
-- **新查询（q11/q12/q14/q22）**：以**多轮 10m/30m 端到端 EMIT 确定性 + `[clean]`**
-  验证（q11 全局会话用 `CONNECTIONS=1` 单独验）。
+- **30M**：与 ground truth 逐位比对（权威；`wfgen verify-nexmark` 覆盖全部规则）。
+- **100M**：EMIT 与 30M **同比例侧证**（历史例：q2=747,816 ≈ 30M 占比 0.8129%；
+  q9=6,000,000 = 1.8M × 100/30）。
+- **特殊口径查询**（q11 per-shard 会话 / q12 处理时间近似 / q13 形状对齐 / Q19 stats
+  oracle 未接入）：以多轮端到端 EMIT 确定性 + `[clean]` 验证，已知差异见
+  `CAPABILITY_GAP_MATRIX.md` §一·§二（q21 已随 `channel_id` 对齐由 verify 覆盖）。
 - **新旧二进制回归**：Q2/Q3/Q7/Q9 必须逐位一致；Q4/Q5 在**既存波动带**内（区间重叠
-  而非单值相等，见 TEST_PLAN §8）。
+  而非单值相等）。
 
 ### 5.4 深验（当前）
 
 `bench.sh <q> replay 30m --verify`：`wfgen verify-nexmark --engine-emit data` 用真实
 规则引擎逐规则对拍引擎 EMIT（git-diff 同款分层：L1 哈希 → L2 Myers/降级 → L3 明细），
-退出码 0=一致 / 1=有差异（q21 已知差异 ⚠ 不判失败）。逐 alert 明细对拍
+退出码 0=一致 / 1=有差异（Q19 stats oracle 未接入 = known-diff ⚠ 不判失败）。逐 alert 明细对拍
 （旧 28k 探针 `alerts.ndjson` 方案）随引擎 sink 改造已不再产生该文件，由计数级对拍替代。
 
 ### 5.5 已知波动（正确性的诚实边界）
 
-- **Q4**（fixed+close avg）：EMIT 受引擎收口预算/scan_timeouts 影响（丢尾部收口，
-  30M oracle 5,254,483 vs 引擎 ~4.2M），见 `SEMANTIC_ALIGNMENT.md` §6.1——非正确性破坏，
-  是引擎收口路径的确定性缺陷（待修复：源 EOF 后无界扫尾）。
-- **Q5**（count≥10）：EMIT ±10（571,061~571,076），max_memory 驱逐时序 + 墙钟
-  scan_timeouts 非确定性。
+- **Q4**（avg-of-max 双规则链）：内层 deferred reduce maxrow（Q9 同款）确定性；外层
+  stats avg 的 oracle 对拍待接入（known-diff，见 `CAPABILITY_GAP_MATRIX.md` §一 Q4）。
+- **Q5**（HOP + conv top_ties）：窗口形状/基数与权威一致（30M 1500 窗 vs 旧 fixed 300 桶，
+  5× 修正）；EMIT 除 scan_timeouts 墙钟级微差外无已知波动带。
 - 判定标准：**区间重叠**而非单值相等；`[clean]` + ground truth 才是正确性权威。
 
 ### 5.6 max_memory：限流机制与计算公式（2026-08-20 定稿）
@@ -243,43 +184,18 @@ q5 30m 432MB < 512MB 不触发 ✅——这就是 30m 对拍只有 q17/q19/q20 �
 只限制**正确处理的数据规模**（超限后事件静默丢弃、不降速不报错）；速率上限由 CPU/管道并行度
 决定。给定 M 与每实例估算 e：能正确处理的 key 数 = M/e（NEXMark 规模 = (M/e)/0.06）。
 
-## 6. q1 内存调查（2026-08-20）：RSS 21-25GB → 1.9GB
+## 6. q1 内存调查结论（2026-08-20 定案；排查链细节已入 git 历史）
 
-### 现象
-q1 100M 单独跑 RSS 峰值 21~25GB（`ps rss` 口径）、EPS 11~16M。
+**根因**：窗口持有量 = 规则 ack 进度 × 内存驱逐（`max_window_bytes`）。多连接 key 分片注入
+使规则 ack 慢 → 窗口堆积 → floor-respecting 驱逐无法清；单连接整文件推 → ack 快 → 窗口压到 cap。
 
-### 排查链（全部实测）
-| 假设 | 实验 | 结论 |
-|---|---|---|
-| preread 预算卡内存（文档 §3.1 曲线） | `parse_buffer_bytes` 2GB/1GB/128MB 三档 | **无效**（RSS 全 ~24GB）。文档曲线是 push 模型时代测的，pull 模型下预算只卡源→窗口段，不管窗口持有量 |
-| 窗口膨胀来自 max_window_bytes | 15GB→256MB（4 连接） | EPS +42%（16.5M）但 RSS 仅 20.9GB——**floor-respecting 驱逐被规则 ack 落后挡着**，持有量由消费进度决定 |
-| 时间驱逐（over=10m）生效 | evictor 日志：watermark/floor 正常，`time_evicted` 恒 0 | **不生效**：bench 注入（key 分片 + 100k 行攒批）批次内事件时间乱序，每批 max 事件时间接近末尾，`batch.max_ts < watermark-10m` 永不满足 |
-| 解码/分配器 | 零拷贝 decode（StreamDecoder）：列数据 64B 对齐 vs IPC 8B pad → 75% 列仍复制；mimalloc vs System 对比 RSS 无差异 | **都不是主因**（已回滚 decode 改动） |
-
-### 根因
-**窗口持有量 = 规则 ack 进度 × 内存驱逐（max_window_bytes）**。
-- 4 连接 key 分片（默认 `SHARD_KEYS`）→ 多源交错 → 规则 ack 慢 → 窗口堆积 ~727 批未 ack → floor-respecting 驱逐无法清 → 持有全量 ~8GB 内容。
-- 单连接整文件推 → 规则 ack 快 → 内存驱逐生效 → 窗口压到 cap。
-
-### 最优配置（q1 无状态专用）
-```bash
-SHARD_KEYS="" CONNECTIONS=1 ./bench.sh q1 replay 100m   # 单连接整文件推
-# 临时把 models/schemas/windows.toml 的 bid_events max_window_bytes 调小（如 256MB）
-```
-实测：**RSS 1.9~5.5GB（-90%+）、EPS 21~26M（+50~120%）、[clean]**（三次 1.9/3.0/4.5GB、26.2/23.4/22.4M）。
-
-### 注意
-- `max_window_bytes` 调小**只对无状态查询（q1）安全**——有状态/join 查询的 join 目标窗口数据会被驱逐、破坏正确性，不可全局套用。
-- macOS `ps rss` **高估**物理占用（含 swap 出/空 zone 页）；`vmmap` 的 `Physical footprint` / `footprint` 更准（System allocator 下 12.3GB vs ps 22GB）。
-- 时间驱逐依赖注入顺序：真实按事件时间有序的流不受影响；bench 的 key 分片注入天然乱序。
-
-### 定案（2026-08-20 固化）
-
-- **`gen-nexmark` 默认按事件时间排序输出**（60×30s 桶 + 桶内排序，内存有界，
-  事件集合不变，`--no-sort` 保留旧 phase-major）——已提交 warp-fusion。
-- **`bench.sh` 默认单连接**（`CONNECTIONS=1`、`SHARD_KEYS` 空）+ 帧缓存带
-  `DATA_VER`（默认 v2）指纹，旧乱序缓存自动失效。
-- **实测口径**（单连接 + v2 数据）：q1 100M RSS 3.0GB（256MB cap）/ 7.6GB
-  （15GB cap）、EPS 25-26M、clean；Q1~Q21 30M 全 `[clean]`。
-- 多连接（key 分片）仅在有状态负载需要键闭包时使用，引用内存数字必须标注
-  注入方式与 DATA_VER。
+**定案**：
+- **`gen-nexmark` 默认按事件时间排序输出**（30s 桶 + 桶内排序，内存有界，事件集合不变，
+  `--no-sort` 保留旧 phase-major）。
+- **`bench.sh` 默认单连接**（`CONNECTIONS=1`、`SHARD_KEYS` 空）+ 帧缓存带 `DATA_VER`（默认
+  v2）指纹，旧乱序缓存自动失效。
+- **窗口字节预算按查询显式配置**（`models/schemas/windows.toml`：bid_events 256MB，
+  2026-08-23，远端 `over_cap` 保留）——**有状态/join 查询的 join 目标窗口数据不可调小**，
+  否则被驱逐破坏正确性。
+- 多连接（key 分片）仅在有状态负载需要键闭包时使用；引用内存数字必须标注注入方式与 DATA_VER。
+- macOS `ps rss` **高估**物理占用（含 swap 出/空 zone 页），`vmmap` 的 `Physical footprint` 更准。

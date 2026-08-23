@@ -1,6 +1,6 @@
 # NEXMark Q1~Q22 语义支持度与执行器应用矩阵
 
-> 状态：2026-08-22（join 算子族 P1-P4 完成后）
+> 状态：2026-08-23（join 算子族 P1-P4 + HOP + conv top_ties + avg-of-max 双规则链落地后）
 > 参考：`NEXMARK_AUTHORITATIVE_SEMANTICS.md`（权威 SQL 逐条）· `SEMANTIC_ALIGNMENT.md`（对齐过程）
 > 视角：本文回答两个问题——**① 每个查询的语义是否得到全面支持；② CEP / Stat / Join / on-each 是否被正确应用**。
 > 执行器：**on-each**（无状态投影/过滤）、**CEP**（match 状态机：fixed/sliding/session + measure + conv）、
@@ -32,10 +32,10 @@
 | Q1 | 无状态投影（0.908×price） | `on each` | ✅ | ✅ on-each 正确 |
 | Q2 | 过滤（MOD(auction,123)=0） | `on each` + bind filter | ✅ | ✅ on-each 正确 |
 | Q3 | 增量 join + 过滤（INNER + state∈OR/ID/CA + category=10） | `match<id:10m>` + join snapshot + where | ✅ | ✅ join 正确；⚠️ CEP 包裹冗余（on-each + join + where 即可，Q20 同款写法） |
-| Q4 | **两层聚合 avg-of-max**（内层每 auction max 胜出价 → 外层按 category avg） | `match<category:10m:fixed>` + join-then-key + close avg | ⚠️ | ⚠️ 口径错位：本地 avg(全部 bid) ≠ 权威 avg(每 auction max)；窗口也不同（10m 桶 vs 生命周期） |
-| Q5 | HOP 滑窗(2s,10s) 每窗 bid 数最多 auction（并列全出） | `match<auction:10s:fixed>` + close count + conv top(1) | ⚠️ | ⚠️ 固定桶近似滑窗；并列截断 top-1 |
+| Q4 | **两层聚合 avg-of-max**（内层每 auction max 胜出价 → 外层按 category avg） | 双规则链：deferred `reduce maxrow` → 中间窗 `auction_finals` → `stats<1d:fixed> group by(category) avg` | ✅ | ✅（2026-08-23 落地；外层 stats oracle 对拍待接入） |
+| Q5 | HOP 滑窗(2s,10s) 每窗 bid 数最多 auction（并列全出） | `match<auction:hop(10s, 2s)>` + close count + conv `top_ties(1)` | ✅ | ✅（2026-08-23：窗口形状/基数与权威一致，并列全输出） |
 | Q6 | OVER 窗口（每 seller 最近 10 笔成交胜出价均值；**官方未落地**） | `match<seller:10m>` + join-then-key + avg≥200 阈值 | ⚠️ | ⚠️ 形态不同（阈值告警 vs 流式输出）；「最近 N 笔滑动均值」是能力缺口 |
-| Q7 | 每 10s 桶全局最高价 bid（并列全出） | `match<auction:10s:fixed>` + close max + conv top(1) | ⚠️ | ⚠️ 并列截断；设计已定 stats P5 桶内回查方案（未实施） |
+| Q7 | 每 10s 桶全局最高价 bid（并列全出） | `match<auction:10s:fixed>` + close max + conv `top_ties(1)` | ✅ | ✅（2026-08-23 top_ties 并列全出；残留 = auction 粒度 vs 权威 bid 行粒度） |
 | Q8 | person⋈auction **同窗 join**（10s 桶内注册且创建拍卖） | **P3 deferred 存在 join**：`within [p.dateTime, <bucket_end(10s)] on p.id==auction_events.seller emit at bucket_end` | ✅ | ✅ deferred join 正确（10M 对拍一致） |
 | Q9 | 生命周期内胜出价（ROW_NUMBER price DESC, dateTime ASC） | **P3 deferred + reduce**：`within [a.dateTime, a.expires] reduce maxrow(price) tie(dateTime asc) as winner emit at a.expires` | ✅ | ✅ deferred + reduce 正确（能力项测试全覆盖 §7；10M 对拍一致） |
 | Q10 | 全量投影落盘（dt/hm 分区） | `on each` | ✅ | ✅ on-each 正确 |
@@ -76,11 +76,11 @@
 - Q11 session 窗口：CEP 原生 session + 每会话一行，基数对齐 ✅（stats 虽声明 Session 模式但无需切换）。
 - Q12 fixed 窗口：CEP 与 stats 皆可，stats 更优；唯一偏差是**处理时间用事件时间近似**（引擎不支持 processing time 窗口，replay 下同步、实时流下分桶不同）——引擎级能力缺口，非执行器选错。
 
-### 3.5 未全面支持（Q4/Q5/Q6/Q7）—— 4 个 ⚠️，需要新能力（引擎缺口，设计已有方向）
+### 3.5 未全面支持（Q6）—— 1 个 ⚠️，需要新能力（引擎缺口）
 
-- **Q4**：avg-of-max 两级聚合——需要 stats→stats 管线（内层按 auction 的 max → 外层按 category 的 avg），设计文档 §9 D9 列为 P2 开放项，未实现。当前 avg-all 口径错位。
-- **Q5/Q7**：并列输出被 conv top-1 截断（权威输出所有并列最高）。Q7 设计已定「stats close 桶内回查（price==桶 max 扇出）」方案（stats P5，`join-family-design.md` §6.4），未实施。
 - **Q6**：官方 SQL 自己都未落地（Flink OVER 不支持 retractions），无对拍锚点；本地阈值告警形态（avg>=200 触发）与权威流式均值输出不同。真正缺口是「每键最近 N 行的滑动聚合」（keyed last-N sliding）。
+
+> 2026-08-23 更新：Q4（avg-of-max 双规则链）、Q5（HOP 窗口对齐）、Q7（conv `top_ties(1)` 并列全输出）已落地，从本表移出；详见 `CAPABILITY_GAP_MATRIX.md` §二「已解决历史」。
 
 ---
 
@@ -88,7 +88,8 @@
 
 - **执行器选择整体健康**：22 个查询中 20 个的执行器形态（on-each/join/stats/CEP-session）是合理的，没有「拿 CEP 硬塞 stats 场景」的方向性错误——CEP 版 Q15-18 只是历史遗留 + bench 默认加载，stats 版已存在。
 - **能力已就绪、实现已迁移**（2026-08-22 完成）：Q8/Q9 从 CEP 近似迁移到 **P3 deferred join**（Q8 纯存在 + 上开桶；Q9 reduce maxrow+tie+label），**能力项测试全覆盖**（见 §7）。
-- **三个能力缺口**（Q4 两级聚合、Q5/Q7 桶内回查并列、Q6 滑动 last-N）已有设计方向或待设计，属引擎侧后续。
+- **一个能力缺口**（Q6 滑动 last-N）已有设计方向或待设计，属引擎侧后续；Q4/Q5/Q7 已随
+  2026-08-23 双规则链 / HOP / `top_ties` 落地闭环。
 - **一个执行器切换**（bench Q15-18 → stats 版）立即可做，同时修复 Q18 的字段值语义。
 
 ---
@@ -103,11 +104,11 @@
 | 4 | Q8/Q9 引擎↔oracle 对拍 | ✅ 完全一致（Q8 82,446 / Q9 557,204，三层根因已修：field_usage 补字段 + over 1h + 帧内跨流时间序排序） |
 | 5 | Q1~Q22 10M 全量对拍 | ✅ 19/22 完全一致；Q11/Q12 known（fixed/session 收口实现）；Q19 oracle 未接 stats |
 | 6 | Q3 简化（on-each + join + where，去 CEP 包裹） | ⏳ 可选（语义已对，10M 一致） |
-| 7 | Q4 两级聚合（stats→stats 管线） | ⏳ 引擎能力缺口 |
-| 8 | Q5/Q7 桶内回查（stats P5） | ⏳ 引擎能力缺口 |
-| 9 | Q6 滑动 last-N 聚合 | ⏳ 引擎能力缺口 |
+| 7 | Q4 两级聚合（stats→stats 管线） | ✅ 已完成（2026-08-23 avg-of-max 双规则链：deferred reduce → auction_finals → stats avg） |
+| 8 | Q5/Q7 并列全输出 | ✅ 已完成（2026-08-23 conv `top_ties(1)`；Q5 另以 HOP 对齐窗口形状/基数） |
+| 9 | Q6 滑动 last-N 聚合 | ⏳ 引擎能力缺口（Flink 官方亦未落地） |
 | 10 | Q13 provider 精确化接线（bench 侧导出 person 表） | ⏳ 路径就绪待接线 |
-| 11 | bench 切换 Q15-18 → stats 版 | ⏳ 待做（需 oracle 先接入 StatsExecutor） |
+| 11 | bench 切换 Q15-18 → stats 版 | ✅ 已完成（2026-08-23：stats 版为标准 `qN.wfl`，CEP 版改 `qN-verify.wfl` 交叉验算） |
 
 ---
 

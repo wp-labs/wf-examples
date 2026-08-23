@@ -1,8 +1,10 @@
 # nexmark_pk — NEXMark 基准：吞吐 PK + 正确性验证（对齐 Flink 官方基线）
 
-与 Flink 对齐的 PK case：**同一份权威基准数据（NEXMark）+ 同一批查询（Q1/Q2/Q3/Q4/Q5/Q7/Q9）
-+ 同输出口径（blackhole 丢弃）**，跑引擎实测吞吐与输出正确性，对照阿里 Nexmark 白皮书发布的
-OSS Flink / VVR 基线。性能结论与诚实边界见 `PK_REPORT_MAC.md`（姊妹文档）。
+与 Flink 对齐的 PK case：**同一份权威基准数据（NEXMark）+ 同一批查询（Q1~Q22）+ 同输出
+口径（blackhole 丢弃）**，跑引擎实测吞吐与输出正确性，对照阿里 Nexmark 白皮书发布的
+OSS Flink / VVR 基线。查询覆盖与语义对齐判定见 `CAPABILITY_GAP_MATRIX.md`（22 条全实现）；
+性能历史快照见 `archive/PK_REPORT_MAC.md`（姊妹报告），**最新数字以当次跑批
+`data/bench_*_replay.txt` 为准**。
 
 ## 目录结构
 
@@ -26,7 +28,7 @@ data/                    # 运行产物（gitignore）：帧文件、bench 结�
 | auction_events | 6% | 30M 总量 = 1.8M auction |
 | bid_events | 92% | 30M 总量 = 27.6M bid |
 
-事件时间 ~30 分钟（线性映射，严格递增，等价 Flink `outOfOrderGroupSize=1`）；生成语义
+事件时间线性映射、严格递增（固定 100µs/事件，30M → 3000s，等价 Flink `outOfOrderGroupSize=1`）；生成语义
 **严格对齐 Flink 官方** `nexmark/nexmark` 默认配置：价格对数均匀 `round(10^(6u)×100)`
 （[100, 1e8)）、hot auction 50% / hot seller·bidder 75%（最近 100 人批次）、bid 引用最近
 `numInFlightAuctions=100` 个 auction ± 10 lead、seller/bidder 引用最近 `numActivePeople=1000`
@@ -40,23 +42,12 @@ data/                    # 运行产物（gitignore）：帧文件、bench 结�
 
 ## 查询：与 Flink Nexmark 测试集的逻辑匹配度
 
-Flink 参照系 = [Alibaba Nexmark 白皮书](https://help.aliyun.com/en/flink/realtime-flink/support/nexmark-performance-testing)
-测试集内的 7 条查询（Q1/Q2/Q3/Q4/Q5/Q7/Q9；**Q6、Q8 等其余 12 条未实现**）。
-每条按「语义对齐程度」分三档：
-
-| Query | Flink 语义 | wfusion 实现（`models/queries/`） | 匹配度 |
-|---|---|---|---|
-| Q1 | 无状态投影：每 bid 输出一行 | `on each` 每 bid 一条告警（无 match 状态机——keyed 版会让 6M 实例表击穿 CPU 缓存，非对等工作负载） | **精确**（工作负载等价，输出 schema 不同） |
-| Q2 | `WHERE MOD(auction,123)=0` 过滤 | `events { b && b.auction % 123 == 0 }` + count≥1 fire | **精确**（谓词同构，选中 ~0.81% bids） |
-| Q3 | person⋈auction（seller=id）投影卖家信息 | auction 驱动 + `join person_events snapshot`，count≥1 每 auction 一条 | **精确**（join 语义同构；输出 seller id 而非 name/city/state 投影） |
-| Q4 | bid⋈auction 后按 category 均价（两层：每 auction max → category avg） | bid 驱动 + `match<auction:10m:fixed>` + `and close { b.price \| avg }`（每 auction 窗口均价） | **部分精确**（avg 聚合面；外层 category avg 平台不可表达，见 SEMANTIC_ALIGNMENT §5.3） |
-| Q5 | 滑窗计数面（Top-N 的 counting 面） | `match<auction:10m>` count≥{10,50,100} 三阈值 | **状态语义精确**（滑动计数 + reset-on-fire；非完整 Top-N 输出） |
-| Q7 | 每 auction 滑窗最高出价 | `match<auction:10m>` max(price)≥{200,500,1000} 三阈值 | **状态语义精确**（滑窗 MAX；输出为阈值告警非 max 值投影） |
-| Q9 | person⋈auction 按 seller 分组计数 | auction 驱动 + snapshot join + `match<seller:10m>` count≥1 | **精确**（join + 分组计数同构） |
-
-**匹配度小结**：Q1/Q2/Q3/Q9 精确；Q5/Q7 窗口状态语义精确（输出为告警阈值面）；Q4 部分精确
-（avg 聚合面对齐，外层 category avg 平台不可表达，见 SEMANTIC_ALIGNMENT §5.3）。全部 7 条
-的白皮书测试集内对齐已覆盖（7/19 条 NEXMark 全集）。
+Flink 参照系 = 官方 `nexmark/nexmark` 测试集 **Q1~Q22 全部 22 条查询**（`qN.sql`，
+权威原文见 `NEXMARK_AUTHORITATIVE_SEMANTICS.md`）。22 条已全部实现（`models/queries/`），
+逐条判定（18 已有 / Q12 待补强 / Q6·Q11·Q13 特殊口径）见
+[`CAPABILITY_GAP_MATRIX.md`](./CAPABILITY_GAP_MATRIX.md)，复核见
+[`REVIEW_FLINK_CONFORMANCE_2026-08-23.md`](./REVIEW_FLINK_CONFORMANCE_2026-08-23.md)，
+各查询语义对齐细节见 `SEMANTIC_ALIGNMENT.md` / `SEMANTIC_SUPPORT_MATRIX.md`。
 
 ### 正确性验证（30M replay，seed=1）
 
@@ -64,43 +55,23 @@ Flink 参照系 = [Alibaba Nexmark 白皮书](https://help.aliyun.com/en/flink/r
 `bench.sh <q> replay 30m --verify` 在 wfgen 内与引擎实际 EMIT 计数对拍
 （git-diff 同款分层：L1 哈希 → L2 Myers → L3 明细，退出码 0=一致 / 1=有差异）。
 
-| 规则 | 期望 | 引擎实测 | 结果 |
-|---|---|---|---|
-| q2_mod_123 | 224,289 | 224,289 | ✅ |
-| q3_auction_seller | 1,800,000 | 1,800,000 | ✅ |
-| q4_avg_price_by_category | 5,254,483（oracle 理想） | 30M 4,228,230 | ⚠ 旧规则（fixed+close 收口非确定，丢尾部，见 SEMANTIC_ALIGNMENT §6.1）；2026-08-23 已由 avg-of-max 双规则链（q4a+q4b）替代 |
-| q5_bidcount_10 | 1,712,532 | 1,712,470 | ✅（差 62 = 0.0036%，scan_timeouts 墙钟非确定性） |
-| q5_bidcount_50 / 100 | 0 / 0 | 0 / 0 | ✅ |
-| q6_avg_price_200 | 9,794,325 | 10m 3,263,324 | ✅（10m 对拍 ±1 墙钟摆动） |
-| q7_maxbid_200/500/1000 | 10,350,961 / 34,578 / 0 | 同左 | ✅ |
-| q8_monitor_new_user | 600,000 | 10m 200,000 | ✅（10m 对拍精确） |
-| q9_winning_bid | 5,254,483（oracle 理想） | 30M 4,183,632 | ⚠（fixed+close 收口非确定，丢尾部，见 SEMANTIC_ALIGNMENT §6.1） |
-| q10_arbitrary_selection | 3,944,636 | 10m 1,314,285 | ✅（10m 对拍精确） |
-| q13_bid_person_join | 27,600,000 | 10m 9,200,000 | ✅（10m 对拍精确） |
+- **全量 30M replay**：22 查询全部 `[clean]`（appended 30M/30M + 致命计数器归零），
+  登记见 `CAPABILITY_GAP_MATRIX.md` §一。
+- **`--verify` oracle 对拍**：Q8 已修复并对拍一致（10M = 82,446 identical；三处根因：
+  到期 miss 的 join 目标 append 滞后 → EOS 重试补出、shutdown flush 的 EMIT 指标尾部导出、
+  flush 按最终事件水位收口不误扫尾部桶）；Q9 同口径一致；其余查询的 daemon 级对拍
+  **待跑**（Q19 stats oracle 未接入 = known-diff，标 ⚠ 不判失败）。
+- 逐 alert 明细对拍（旧 28k 探针 `alerts.ndjson` 方案）随引擎 sink 改造已由计数级对拍替代。
+- 各查询 EMIT 期望值 / 已知波动 / 特殊口径（Q11 分片、Q12 处理时间近似、Q13 形状对齐）
+  见 `CAPABILITY_GAP_MATRIX.md` §一·§二 与 `SEMANTIC_ALIGNMENT.md` §5~§6。
 
-> **新查询语义诚实标注**：q6 按 auction 聚合均价（非标准按卖家——卖家来自 join，窗口键须取原始
-> 事件）；q8/q11 会话窗口（`session(gap)`）。**q11 的会话在 bench 按 auction 分片下是 per-shard**
-> （同一 bidder 的 bid 跨 shard，会话被切碎；要全局会话语义须 `CONNECTIONS=1` 或按 bidder 分片）；
-> **q12/q14 的 conv top-N 是全局的**（conv 阶段跨分片合并后做 top-N，`CONNECTIONS=4` 即全局）。
-> `wfgen verify-nexmark` 覆盖全部规则；**已知差异 q21（anti join）**——oracle 不评估 join 窗口
-> 状态，标 ⚠ 不判失败；q11 全局语义以 `CONNECTIONS=1` 验证，q12/q14 以 30M
-> 端到端确定性 + `[clean]` 为准。
-
-28k 事件探针逐 alert 对拍 **2,679/2,679 全量精确吻合**（含 fire 时刻）。q1 为无状态路径
-（输出=输入 bid 数，无状态机语义）。全部跑批 appended 30M/30M，
-serialize_failed/dropped_late/cursor_gap/memory_evicted = 0。
-
-**100M 吞吐跑批的正确性侧证（2026-08-17，P0-② content 记账 2GB）**：全量 Q1-Q9
-（q1/q2/q3/q4/q5/q7/q9）SUMMARY 全 clean（serialize_failed / dropped_late /
-memory_evicted / cursor_gap = 0），appended=100M/100M。输出计数：q1=92,000,000
-（=输入 bid 数）、**q2=747,816（占比 0.8129%，与 30M 的 0.8127% 精确吻合）**、
-q9=6,000,000（=30M 期望 1.8M × 100/30）。q3/q5/q7 的 EMIT 在 run 间有驱逐时序
-波动（非正确性破坏，见 PK_REPORT_MAC 测量说明）。
+> **100M 吞吐跑批的正确性侧证（2026-08-17 记录，已随旧报告归档）**：当时 Q1-Q9 全 clean、
+> q2=747,816（0.8129%）、q9=6,000,000——详见 `archive/PK_REPORT_MAC.md`。
 
 ## 基准工具：bench.sh
 
 ```bash
-./bench.sh [query=all|q1|q2|q3|q4|q5|q7|q9] [feed=replay|stream] [total=100m|30m|10m]
+./bench.sh [query=all|q1..q22] [feed=replay|stream] [total=100m|30m|10m]
 MAX_FRAME_BYTES=1048576 ./bench.sh all replay 30m    # 指定帧 cap（默认 8MiB）
 ```
 
@@ -121,7 +92,7 @@ MAX_FRAME_BYTES=1048576 ./bench.sh all replay 30m    # 指定帧 cap（默认 8M
 ### 测量纪律（违反会得出假结论）
 
 1. **计时口径 = append_total**：metrics 三输入流 append 计数器求和追平 TOTAL 的时刻
-   （旧 ingress 预读游标口径已作废；PK_REPORT_MAC §4.1 已按新口径更新）。
+   （旧 ingress 预读游标口径已作废）。
 2. **RSS 口径（2026-08-17 起）**：`parse_buffer_bytes` 默认值已改为 128MB
    （P0-② content 记账，18 槽）——q1 100M ≈ 6.1M / RSS ~5.9GB，旧默认
    （256MB 解码记账）为 5.93M / 4.4GB。吞吐优先场景显式调大预算（bench 默认

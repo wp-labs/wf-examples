@@ -97,5 +97,4 @@ cursor_gap = 0），q2 EMIT 与单连接基线逐位一致（747,816）、q9=6,0
 
 ---
 
-> 完整技术细节、优化链、瓶颈分析见 `TASK_PK_FLINK.md` §8；基准工具见本目录 `bench.sh`
-> （`./bench.sh all cont 100m`）；Mac 口径对照见 `PK_REPORT_MAC.md`。
+> 基准工具见本目录 `bench.sh`（`./bench.sh all replay 100m`）；Mac 口径对照见 `PK_REPORT_MAC.md`。
