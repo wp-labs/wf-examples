@@ -163,32 +163,43 @@ print(s)
 EOF
 }
 
-# 引擎消化信号：统计 metrics.ndjson 里 emitted_total 各规则 label 的累计值之和，
-# 连续若干秒不再增长则判定引擎处理完（qradar 无 append_total，emitted 累计是
-# 可靠完成信号；matches 是每秒增量不可用）。
-sum_emitted() {
-  "$PY" - "$METRICS" <<'EOF'
-import json, os, sys
-path = sys.argv[1]
+# 引擎消化信号（pull 模型，与 nexmark bench.sh 同口径）：
+# - append_total：各输入流已 append 的行数累计（EPS 口径 + “数据已全部进入 window”）。
+# - acked_lag：每窗口 next_seq - min_acked（未 ack 批数，0 = 所有规则已消费到最新）。
+# 完成条件 = append 追平 N 且 acked_lag 归零（append 追平 ≠ 规则吃完，曾致尾部 emit 漏报）。
+# 注意：新引擎 metrics 为区间差值，append_total/emitted_total 均须**全文件求和**
+# （旧版读尾部 2MB + emitted 停滞判定在 30MB 级文件下恒判停滞，2026-08-23 修复）。
+STREAMS="auth_events conn_events dns_events file_events firewall_events proxy_events"
+engine_appended() {
+  "$PY" - "$METRICS" "$STREAMS" <<'EOF'
+import json, sys
+path, streams = sys.argv[1], set(sys.argv[2].split())
+s = 0
 try:
-    size = os.path.getsize(path)
-    # 只读文件尾部（最新快照区），避免全扫累积 NDJSON。
-    tail = min(size, 2 * 1024 * 1024)
-    with open(path, "rb") as f:
-        f.seek(size - tail if tail < size else 0)
-        data = f.read().decode(errors="replace")
-    label = {}
-    for line in data.splitlines():
+    for line in open(path, errors="replace"):
         try: o = json.loads(line)
         except Exception: continue
-        if o.get("name") != "emitted_total":
-            continue
-        try: v = int(o.get("value", 0))
-        except (TypeError, ValueError): continue
-        label[o.get("label", "?")] = v
-    print(sum(label.values()))
+        if o.get("name") == "append_total" and o.get("label") in streams:
+            s += int(o.get("value", 0))
 except FileNotFoundError:
-    print(0)
+    pass
+print(s)
+EOF
+}
+engine_acked_lag() {
+  "$PY" - "$METRICS" "$STREAMS" <<'EOF'
+import json, sys
+path, streams = sys.argv[1], set(sys.argv[2].split())
+lag = {}
+try:
+    for line in open(path, errors="replace"):
+        try: o = json.loads(line)
+        except Exception: continue
+        if o.get("name") == "acked_lag" and o.get("label") in streams:
+            lag[o["label"]] = int(o.get("value", 0))
+except FileNotFoundError:
+    pass
+print(sum(lag.values()))
 EOF
 }
 
@@ -212,20 +223,25 @@ else
   "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT $RATE_ARG > /dev/null 2>&1
 fi
 SEND_DONE=$($PY -c 'import time; print(time.time())')
-# 等引擎消化：emitted 累计连续 4 秒停滞（snapshot 1s → ~4s 无新增长）判断处理完。
-PE=0; STALL=0; END=""
-for i in $(seq 1 600); do
-  E=$(sum_emitted)
-  if [ "$E" = "$PE" ]; then STALL=$((STALL+1)); else STALL=0; PE=$E; fi
-  if [ "$STALL" -ge 4 ]; then END=$($PY -c 'import time; print(time.time())'); break; fi
-  sleep 0.3
+# 等引擎消化：append 追平 N 且 acked_lag 归零（超时保护：上限按最低能力外推）。
+MAX_SEC=$(( N / 100000 + 600 ))
+TIMEOUT=0; END=""; DRAINED=1
+for i in $(seq 1 $((MAX_SEC * 2))); do
+  APP=$(engine_appended)
+  DRAINED=$(engine_acked_lag)
+  if [ "${APP:-0}" -ge "$N" ] && [ "${DRAINED:-1}" = "0" ]; then
+    END=$($PY -c 'import time; print(time.time())'); break
+  fi
+  sleep 0.5
 done
-[ -n "$END" ] || END=$($PY -c 'import time; print(time.time())')
+[ -n "$END" ] || { END=$($PY -c 'import time; print(time.time())'); TIMEOUT=1; }
 ELAPSED=$($PY -c "print($END - $START)")
 D=$(received)
-E=$(sum_emitted)
-EPS=$($PY -c "print(int($N / $ELAPSED))" 2>/dev/null || echo 0)
-echo "    接收 $D / $N 事件：注入墙钟 $($PY -c "print(f'{$SEND_DONE-$START:.1f}')")s，全墙钟(引擎消化完)${ELAPSED}s (emitted累计=$E, 限速=${RATE_BYTES}B/s)"
+APP=$(engine_appended)
+EPS=$($PY -c "print(int($APP / $ELAPSED))" 2>/dev/null || echo 0)
+TO_MARK=""; [ "$TIMEOUT" = 1 ] && TO_MARK=" ⚠TIMEOUT(appended未追平,EPS=实际处理速率)"
+INJ_S=$($PY -c "print(f'{$SEND_DONE-$START:.1f}')")
+echo "    接收 $D / $N 事件：注入墙钟 ${INJ_S}s，全墙钟(引擎消化完)${ELAPSED}s (appended=$APP, acked_lag=$DRAINED, 限速=${RATE_BYTES}B/s)$TO_MARK"
 echo "    EPS = $EPS events/sec (send-arrow ${CONNECTIONS}连接 / 引擎消化口径)"
 
 # 送达后平台期：继续运行 PLATEAU 秒采 RSS 峰值 + 等告警落盘（实例存活至窗口关闭）
