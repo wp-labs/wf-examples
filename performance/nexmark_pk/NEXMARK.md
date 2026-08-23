@@ -3,8 +3,6 @@
 > 配套文档：
 > - `README.md` —— 套件结构、bench.sh 用法、测量纪律
 > - `CAPABILITY_GAP_MATRIX.md` —— 22 查询逐条能力/语义判定（当前权威）
-> - `archive/TEST_PLAN.md` —— 可执行测试方案（历史；测量纪律已并入 README）
-> - `archive/PK_REPORT_MAC.md` / `archive/PK_REPORT_LINUX.md` —— 实测性能报告历史快照
 
 本文回答五个问题：**Nexmark 是什么？Q1~Q22 做什么测试？数据有什么要求？我们如何准备数据？正确的标准是什么？**
 

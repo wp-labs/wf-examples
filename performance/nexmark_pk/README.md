@@ -3,8 +3,7 @@
 与 Flink 对齐的 PK case：**同一份权威基准数据（NEXMark）+ 同一批查询（Q1~Q22）+ 同输出
 口径（blackhole 丢弃）**，跑引擎实测吞吐与输出正确性，对照阿里 Nexmark 白皮书发布的
 OSS Flink / VVR 基线。查询覆盖与语义对齐判定见 `CAPABILITY_GAP_MATRIX.md`（22 条全实现）；
-性能历史快照见 `archive/PK_REPORT_MAC.md`（姊妹报告），**最新数字以当次跑批
-`data/bench_*_replay.txt` 为准**。
+**性能数字以当次跑批 `data/bench_*_replay.txt` 为准**（历史实测报告已清理，见 git 历史）。
 
 ## 目录结构
 
@@ -65,8 +64,8 @@ Flink 参照系 = 官方 `nexmark/nexmark` 测试集 **Q1~Q22 全部 22 条查�
 - 各查询 EMIT 期望值 / 已知波动 / 特殊口径（Q11 分片、Q12 处理时间近似、Q13 形状对齐）
   见 `CAPABILITY_GAP_MATRIX.md` §一·§二 与 `SEMANTIC_ALIGNMENT.md` §5~§6。
 
-> **100M 吞吐跑批的正确性侧证（2026-08-17 记录，已随旧报告归档）**：当时 Q1-Q9 全 clean、
-> q2=747,816（0.8129%）、q9=6,000,000——详见 `archive/PK_REPORT_MAC.md`。
+> **100M 吞吐跑批的正确性侧证（2026-08-17 记录）**：当时 Q1-Q9 全 clean、
+> q2=747,816（0.8129%）、q9=6,000,000（记录见 git 历史）。
 
 ## 基准工具：bench.sh
 

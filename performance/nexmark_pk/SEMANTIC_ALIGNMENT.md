@@ -4,7 +4,7 @@
 > 与标准 NEXMark / 阿里白皮书（Flink）的**语义对齐状态、对齐逻辑与验证锚点**，
 > 防止拿错语义的数字做 PK 结论（q3 曾因此出现 1.4× 假象，见 §5）。
 > 与 `README.md`（套件结构）、`OSS_VVR_BASELINE.md`（OSS/VVR 基线）、
-> `NEXMARK.md`（基准背景/数据/正确性）、`archive/PK_REPORT_MAC/LINUX.md`（实测报告快照）互为配套。
+> `NEXMARK.md`（基准背景/数据/正确性）互为配套。
 
 ## 1. 为什么需要语义对齐
 

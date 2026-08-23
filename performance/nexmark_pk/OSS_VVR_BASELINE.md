@@ -2,8 +2,7 @@
 
 > 独立存档阿里云 Nexmark 性能白皮书的 **OSS（开源 Flink）与 VVR（实时计算 Flink）逐查询吞吐数据**，
 > 以及 wfusion 的对照情况。供 PK 对比、报告引用、查询能力评估使用。
-> 与 `README.md`（套件结构）、`archive/PK_REPORT_MAC.md` / `archive/PK_REPORT_LINUX.md`
-> （实测报告历史快照）、`NEXMARK.md`（基准背景/数据/正确性）、`CAPABILITY_GAP_MATRIX.md`
+> 与 `README.md`（套件结构）、`NEXMARK.md`（基准背景/数据/正确性）、`CAPABILITY_GAP_MATRIX.md`
 > （查询能力/语义判定）、`SEMANTIC_ALIGNMENT.md`（各查询语义对齐状态）互为配套。
 
 ## 1. 数据来源与口径
@@ -58,17 +57,14 @@ wfusion 对照数字随引擎版本演进，**最新结果以当次跑批 `data/
 vs VVR 20/21 项领先（1.5-20×），唯一落后 q14（0.9×，待 100M 重测）。查询形态与能力面
 见 `CAPABILITY_GAP_MATRIX.md`。
 
-历史对照（2026-08-14~21 旧构建，Q1~Q22 × 30M / 100M 快照）已随实测报告归档：
-`archive/PK_REPORT_MAC.md`（16 核 M3 Max）、`archive/PK_REPORT_LINUX.md`（8 CU 对等）。
-8-21 起的旧数字在缓存热度 / 输出链瓶颈修复前测得，**不可直接复现**（对比时必须带当次
+历史对照（2026-08-14~21 旧构建，Q1~Q22 × 30M / 100M 快照）已随文档清理删除（记录见 git
+历史）；8-21 起的旧数字在缓存热度 / 输出链瓶颈修复前测得，**不可直接复现**（对比时必须带当次
 注入方式、`parse_buffer_bytes` 与机器负载）。
 
 ## 4. 引用注意
 
 - 白皮书数字基于特定硬件与引擎版本，官方声明仅供参考；硬件升级/版本更新后可能变化。
 - 引用 wfusion RSS 数字须标注 `parse_buffer_bytes` 配置（默认 128MB；吞吐优先 2GB）。
-- 对外公平对比（硬件与 VVR 8 CU 同量级）历史口径见 `archive/PK_REPORT_LINUX.md`；
-  `archive/PK_REPORT_MAC.md` 为更强硬件（16 核 M3 Max）口径。
 
 ## 5. 来源
 
