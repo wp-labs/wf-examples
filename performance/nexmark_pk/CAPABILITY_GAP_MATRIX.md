@@ -31,7 +31,7 @@
 | **Q15** | 按日历天的分类统计 | stats + 日历天窗口 | ✅ 已有 | `1d:fixed`（epoch 对齐 = UTC 午夜 = 日历天），30m 数据 1 桶 |
 | **Q16** | 按日历天的竞价统计 | stats + 日历天窗口 | ✅ 已有 | 同上 |
 | **Q17** | 按日历天的拍卖统计 | stats + 日历天窗口 | ✅ 已有 | 同上 |
-| **Q18** | 每 (bidder,auction) 最后一条 bid | stats last + 1d 桶 | ✅ 已有 | q18_stats `1d:fixed` + 4 个 last 度量：值语义（最后一条字段值）+ 基数（每键 1 行）双对齐（last 序 = 到达序，有序数据 = max dateTime）；CEP 版为基数对齐近似 |
+| **Q18** | 每 (bidder,auction) 最后一条 bid | stats last + 1d 桶 | ✅ 已有 | ★标准形态 `q18.wfl` = `1d:fixed` + 4 个 last 度量：值语义（最后一条字段值）+ 基数（每键 1 行）双对齐（last 序 = 到达序，有序数据 = max dateTime）；CEP 版（q18-verify.wfl）为基数对齐近似（值语义缺失） |
 | **Q19** | 拍卖 Top-10 价格 | stats<> top-N | ✅ 已有 | stats<> 编译/装配/执行器测试确认（`stats_top_keeps_top_n_desc`）；bench daemon 对拍待跑（oracle 不执行 stats 规则） |
 | **Q20** | 每卖家最高价出价 | CEP maxrow | ✅ 已有 | — |
 | **Q21** | 按渠道监控新用户 | CEP monitor | ✅ 已有 | wfgen 已输出 channel_id（cmd_gen_nexmark.rs:279） |

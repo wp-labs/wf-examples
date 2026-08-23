@@ -1,12 +1,17 @@
 use "nexmark.wfs"
 
-// Q12 — Processing Time Windows（权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q12，扩展）
+// Q12 — Processing Time Windows（★标准形态：CEP fixed 窗口，bench.sh 默认加载）
+// 权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q12，扩展
 // 权威 SQL：
 //   CREATE VIEW B AS SELECT *, PROCTIME() AS p_time FROM bid;
 //   SELECT bidder, count(*) AS bid_count, window_start, window_end
 //   FROM TABLE(TUMBLE(TABLE B, DESCRIPTOR(p_time), INTERVAL '10' SECOND))
 //   GROUP BY bidder, window_start, window_end;
 // —— 按 bidder 计**10 秒处理时间固定窗口**内的 bid 数，全量输出（无 Top-N）。
+//
+// ★标准 vs 验证（2026-08-23 双形态整理）：CEP/stats 双版实测持平
+// （12.87M vs 12.81M）；选 CEP 为标准 = 可 oracle 对拍（oracle 不执行 stats
+// 规则），stats 版已改名 q12-verify.wfl 交叉验算。
 //
 // wfusion 表达：事件时间 10s 固定桶近似处理时间窗口（wfusion 为事件时间引擎，
 // replay 场景处理时间与事件时间同步推进）；键 = bidder（低基数 4 万），每

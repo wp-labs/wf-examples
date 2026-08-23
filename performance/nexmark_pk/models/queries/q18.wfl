@@ -1,50 +1,34 @@
 use "nexmark.wfs"
 
-// Q18 — Find last bid（权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q18，扩展）
-// 权威 SQL：
+// Q18 — Find last bid（★标准形态：stats last 度量，bench.sh 默认加载；
+// ★唯一语义正确版——CEP 版只输出键+计数带不出「最后一条 bid 字段值」（官方 dedup 语义），
+// 已改名 q18-verify.wfl 作基数对拍）
+// 权威 SQL:
 //   SELECT * FROM (SELECT *, ROW_NUMBER() OVER
 //     (PARTITION BY bidder, auction ORDER BY dateTime DESC) AS rank_number FROM bid)
 //   WHERE rank_number <= 1;
-// —— 每 (bidder, auction) 取最后一条 bid（按 dateTime 降序 dedup）。
+// —— 每 (bidder, auction) 取最后一条 bid 的字段。
 //
-// wfusion 映射：`match<bidder,auction:30m:fixed>`（多键窗口）+ `and close` count，
-// 每 (bidder,auction) 收口输出一条 → **输出基数对齐**（每键一条 = 官方 dedup 结果数）。
-// ⚠ 近似：官方带出「最后一条 bid」的字段值（price/channel/url/...）；本 CEP 版输出键
-// 与计数（值语义为窗口内聚合）。**完整值语义见 q18_stats.wfl**（stats `last` 度量，
-// `1d:fixed` 桶对齐基数 + 带出最后一条字段值）。
-rule q18_last_bid {
+// stats 形态: `stats<1d:fixed> group by (b.bidder, b.auction)` + 4 个 last 度量
+// （price/channel/url/dateTime）; 每个 last 度量保留最近合格行的整行字段, close 时
+// 经 field_values 注入 yield 的 `b.*`（Q18 输出 = 最后一条 bid 的字段值）。
+// 1d 固定桶 = 有界 benchmark 下覆盖全流（EOS close_all 收口）→ 每键 1 行，对齐
+// 权威 ROW_NUMBER dedup 基数；30m 桶会把 >30m 数据切成多桶（每键多行，旧版偏）。
+// 注意: last 度量 label 不得与 yield 读的字段名撞名（label 会覆盖同名字段）。
+rule q18_last_bid_stats {
     events { b : bid_events }
-    match<bidder,auction:30m:fixed> {
-        on event { b | count >= 1; }
-        and close { n: b | count >= 1; }
-    } -> score(15.0)
+    stats<1d:fixed> group by (b.bidder, b.auction) {
+        b | last(b.price) as last_price;
+        b | last(b.channel) as last_channel;
+        b | last(b.url) as last_url;
+        b | last(b.dateTime) as last_dateTime;
+    }
     entity(digit, b.auction)
     yield nexmark_alerts (
         id = b.auction,
-        alert_type = "q18_last",
-        detail = fmt("bidder {}", b.bidder),
+        alert_type = "q18_last_stats",
+        detail = fmt("{} {} {} {} {}", b.bidder, b.price, b.channel, b.url, b.dateTime),
         request_count = 1
     )
     limits { max_memory = "16GB" }
-}
-
-test q18_pair for q18_last_bid {
-  input {
-    row(b, auction = 1, bidder = 5, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 5, price = 200, channel = "G", url = "u");
-    tick(31m);
-  }
-  // 同一 (bidder,auction) 对 → 收口 1 条（官方 dedup 也是 1 条）
-  expect { hits == 1; hit[0].entity_id == "1"; }
-}
-
-test q18_two_pairs for q18_last_bid {
-  input {
-    row(b, auction = 1, bidder = 5, price = 100, channel = "G", url = "u");
-    row(b, auction = 2, bidder = 5, price = 100, channel = "G", url = "u");
-    row(b, auction = 1, bidder = 6, price = 100, channel = "G", url = "u");
-    tick(31m);
-  }
-  // 3 个 (bidder,auction) 对 → 3 条
-  expect { hits == 3; }
 }

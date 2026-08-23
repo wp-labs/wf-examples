@@ -1,6 +1,6 @@
 use "nexmark.wfs"
 
-// Q12 — Processing Time Windows（stats 声明式版本, 与 q12.wfl CEP 版同语义对拍）
+// Q12 — Processing Time Windows（验证形态：stats 复合键分组，与 q12.wfl CEP 版交叉验算）
 // 权威 SQL:
 //   SELECT bidder, count(*) AS bid_count FROM bid
 //   GROUP BY bidder, TUMBLE(p_time, '10' SECOND);

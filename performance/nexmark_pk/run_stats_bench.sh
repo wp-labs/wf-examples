@@ -1,6 +1,7 @@
 #!/bin/bash
-# 手动跑 stats 版查询 30M replay（bench.sh 只接受 q1..q22 加载 CEP 版 wfl）。
-# 用法: ./run_stats_bench.sh q18_stats q19_stats [q12_stats ...]
+# 跑验证形态（qN-verify.wfl）30M replay——与标准形态 qN.wfl 交叉验算（2026-08-23）。
+# 标准形态（stats/CEP 最优版）已统一为 qN.wfl（bench.sh 直接支持），本脚本只跑
+# `qN-verify` 版用于双实现对拍。用法: ./run_stats_bench.sh q15-verify q18-verify
 # 复用 bench.sh 的 replay 流程: write_conf → daemon → send-arrow 重放 → 追平等待 → 采样。
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -206,4 +207,4 @@ for Q in "$@"; do
   [ -f "models/queries/$Q.wfl" ] || { echo "跳过: models/queries/$Q.wfl 不存在" >&2; continue; }
   run_one "$Q"
 done
-echo "== done: 结果在 data/bench_*_stats_replay.txt =="
+echo "== done: 结果在 data/bench_*_replay.txt =="

@@ -66,11 +66,10 @@
 - Q13 形状对齐（流 + 有界侧输入 enrichment），键仍是近似（bidder→person vs 官方 mod(auction,10000)→文件表）；**P4 已补齐 provider 静态表 + checker「仅 snapshot」约束**，落地清单见 `wp-reactor/docs/design/provider-window-usage.md` §2/§3，只差 bench 数据侧导出 person 表。
 - Q3 的 `match<id:10m>` 包裹是历史遗留：每 auction 一行、无累积需求，`on each` + join + where 即可（Q20 已示范）。语义正确，非最小形态。
 
-### 3.3 Stats 类（Q15/Q16/Q17/Q18/Q19）—— 5 个 ✅，stats 是正确执行器，但 bench 默认跑 CEP 版
+### 3.3 Stats 类（Q15/Q16/Q17/Q18/Q19）—— 5 个 ✅，stats 是正确执行器（2026-08-23 已切标准形态）
 
-- 纯窗口聚合（无 join、无 CEP 状态机需求），stats 的列式批执行器 + 复合键 group by + distinct_count/last/top 是**正确形态**；`*_stats.wfl` 全部就位（Q19 已直接是 stats 版）。
-- **执行器应用偏差在 bench 侧**：`bench.sh` 按 `models/queries/$Q.wfl` 加载 → Q15/Q16/Q17/Q18 跑的是 CEP 版。Q18 尤其严重：CEP 版只输出键+计数，**带不出「最后一条 bid 的字段值」**（官方 dedup 语义），`q18_stats.wfl` 的 4 个 last 度量才是对的。
-- 建议：bench 切换 `q15→q15_stats`、`q16→q16_stats`、`q17→q17_stats`、`q18→q18_stats`（既有统计版实测性能也优于 CEP 版：Q12 先例 EPS 2.5M→14.7M）。
+- 纯窗口聚合（无 join、无 CEP 状态机需求），stats 的列式批执行器 + 复合键 group by + distinct_count/last/top 是**正确形态**；`qN.wfl` 已是 stats 标准形态（Q19 原本就是 stats 版）。
+- **执行器切换已完成（2026-08-23）**：`q15→q15_stats`、`q16→q16_stats`、`q17→q17_stats`、`q18→q18_stats` 的 bench 建议已落地——stats 版改为标准 `qN.wfl`（bench.sh 默认加载），CEP 版改名为 `qN-verify.wfl`（交叉验算）。Q18 值语义已由 stats last 度量修复（CEP 版只输出键+计数）。
 
 ### 3.4 CEP 正确类（Q11/Q12）—— 2 个 ✅/⚠️
 

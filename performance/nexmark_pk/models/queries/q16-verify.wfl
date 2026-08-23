@@ -1,0 +1,62 @@
+use "nexmark.wfs"
+
+// Q16 — Channel Statistics Report（验证形态：CEP 状态机，与 q16.wfl stats 版交叉验算）
+// 权威 SQL：
+//   SELECT channel, DATE_FORMAT(dateTime,'yyyy-MM-dd') AS day,
+//          max(DATE_FORMAT(dateTime,'HH:mm')) AS minute,
+//          count(*), count(*) FILTER (3 价格档), count(distinct bidder) ...,
+//          count(distinct auction) ...  （15 列统计）
+//   FROM bid GROUP BY channel, day;
+// —— 按 channel/天分组输出 bids/bidders/auctions 总量与三价格档统计。
+//   30m 数据恰 1 天（BASE_NS=2026-01-01T00:00）→ GROUP BY channel 退化为每 channel 一行。
+//
+// wfusion 映射：`match<channel:1d:fixed>`（键 = 事件字段 channel，1 天固定桶 = UTC 日历天，~10k 实例可并行）
+// + `and close` 12 个 measure（guard 分档 + distinct 变换），每 channel 收口一行。
+// minute 列（当天最后 HH:mm）为数据侧常量（00:00~00:30），省略不输出。
+rule q16_channel_stats {
+    events { b : bid_events }
+    match<channel:1d:fixed> {
+        on event { b | count >= 1; }
+        and close {
+            total: b | count >= 1;
+            r1: b && b.price < 10000 | count >= 1;
+            r2: b && b.price >= 10000 && b.price < 1000000 | count >= 1;
+            r3: b && b.price >= 1000000 | count >= 1;
+            total_bidder: b.bidder | distinct | count >= 1;
+            r1_bidder: b.bidder && b.price < 10000 | distinct | count >= 1;
+            r2_bidder: b.bidder && b.price >= 10000 && b.price < 1000000 | distinct | count >= 1;
+            r3_bidder: b.bidder && b.price >= 1000000 | distinct | count >= 1;
+            total_auction: b.auction | distinct | count >= 1;
+            r1_auction: b.auction && b.price < 10000 | distinct | count >= 1;
+            r2_auction: b.auction && b.price >= 10000 && b.price < 1000000 | distinct | count >= 1;
+            r3_auction: b.auction && b.price >= 1000000 | distinct | count >= 1;
+        }
+    } -> score(10.0)
+    entity(digit, 1)
+    yield nexmark_alerts (
+        id = 1,
+        alert_type = "q16_stats",
+        detail = fmt("{} {} {} {} {} {} {} {} {} {} {} {} {}",
+            b.channel,
+            stat.value(final(total)), stat.value(final(r1)), stat.value(final(r2)), stat.value(final(r3)),
+            stat.value(final(total_bidder)), stat.value(final(r1_bidder)), stat.value(final(r2_bidder)), stat.value(final(r3_bidder)),
+            stat.value(final(total_auction)), stat.value(final(r1_auction)), stat.value(final(r2_auction)), stat.value(final(r3_auction))),
+        request_count = 1
+    )
+    limits { max_memory = "8GB" }
+}
+
+test q16_stats for q16_channel_stats {
+  input {
+    row(b, auction = 1, bidder = 1, price = 100, channel = "Google", url = "u");
+    row(b, auction = 2, bidder = 1, price = 50000, channel = "Google", url = "u");
+    row(b, auction = 3, bidder = 2, price = 2000000, channel = "Google", url = "u");
+    tick(31m);
+  }
+  // 1 桶收口：total=3, r1=1, r2=1, r3=1, bidder distinct=2, r1/r2/r3_bidder=1,
+  // auction distinct=3, r1/r2/r3_auction=1
+  expect {
+    hits == 1;
+    hit[0].field("detail") == "Google 3 1 1 1 2 1 1 1 3 1 1 1";
+  }
+}

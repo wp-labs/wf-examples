@@ -12,17 +12,27 @@ late_policy = "drop"
 [window.person_events]
 mode = "local"
 max_window_bytes = "2GB"
-over_cap = "1h"
+over_cap = "2d"
 
 [window.auction_events]
 mode = "local"
 max_window_bytes = "2GB"
-over_cap = "1h"
+over_cap = "2d"
 
 [window.bid_events]
 mode = "local"
 max_window_bytes = "8GB"
-over_cap = "1h"
+# 2d：Q15-18 stats 用 `1d:fixed` 日历天桶（86400s > 旧 1h 上限）——
+# over_cap 是校验上限，实际 over 由 wfl 决定，放宽不影响其他查询。
+over_cap = "2d"
+
+# q4 双规则链中间窗口（q4a deferred reduce → auction_finals → q4b stats avg）；
+# nexmark.wfs 定义 over=1h，2026-08-23 双规则链落地时漏配导致全部查询
+# validate over vs over_cap 失败。
+[window.auction_finals]
+mode = "local"
+max_window_bytes = "2GB"
+over_cap = "2d"
 
 # 输出窗口（over=0）
 [window.nexmark_alerts]
