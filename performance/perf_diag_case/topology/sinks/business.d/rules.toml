@@ -1,0 +1,8 @@
+# 规则输出业务组：blackhole 丢弃（只测处理吞吐，对齐 Flink discarding sink 口径）。
+# 覆盖规则 yield 目标 network_alerts——full 档（cut_output=false）下规则真实 emit。
+[sink_group]
+name = "rule_output"
+windows = ["network_alerts"]
+[[sink_group.sinks]]
+connect = "blackhole_sink"
+name = "rule_blackhole"

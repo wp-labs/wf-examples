@@ -1,0 +1,7 @@
+use "../models/schemas/evt.wfs"
+
+scenario evt<seed=1> {
+  traffic {
+    stream evt_events gen 100000/s
+  }
+}

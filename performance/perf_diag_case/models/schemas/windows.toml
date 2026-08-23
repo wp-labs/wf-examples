@@ -11,3 +11,8 @@ late_policy = "drop"
 mode = "local"
 max_window_bytes = "512MB"
 over_cap = "30m"
+
+[window.network_alerts]
+mode = "local"
+max_window_bytes = "128MB"
+over_cap = "30m"

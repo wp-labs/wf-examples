@@ -12,3 +12,14 @@ window evt_events {
         event_time: time
     }
 }
+
+// 规则 yield 目标（21 条规则统一输出到本窗口，sink 侧 blackhole 丢弃）
+window network_alerts {
+    over = 0
+    fields {
+        sip: ip
+        alert_type: chars
+        detail: chars
+        request_count: digit
+    }
+}
