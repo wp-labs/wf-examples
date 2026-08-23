@@ -66,8 +66,14 @@ PLATEAU="${PLATEAU:-8}"
 # send-arrow 注入（方向 B）：dump-frames 预编码 + 多连接 raw-copy，绕开 `wfgen send`
 # 的 JSONL 实时编码客户端墙。CONNECTIONS>1 是多连接注入；SHARD_KEYS 按流指定
 # match key 做键闭包分片（同 key 同连接，保证有状态规则正确）。
+#
+# 注入路径（2026-08-23 修正）：CONNECTIONS>1 时走 `shard-frames` 预分片 +
+# `send-arrow --shard-files` 纯 copy（nexmark bench.sh 同款，零解码）。已弃用
+# `send-arrow --shard-keys` 动态分片路径：其连接 0 承载全部未分片流（此前
+# SHARD_KEYS 漏了 file_events）+ shard-0 桶，可阻塞整条发送链，且该路径忽略
+# `--rate-bytes`（1M 实测卡死在 711k、file_events=0，TEST_PLAN §7.3 已知边界）。
 CONNECTIONS="${CONNECTIONS:-4}"
-SHARD_KEYS="${SHARD_KEYS:-conn_events:sip,dns_events:sip,proxy_events:sip,firewall_events:sip,auth_events:source_ip}"
+SHARD_KEYS="${SHARD_KEYS:-conn_events:sip,dns_events:sip,proxy_events:sip,firewall_events:sip,auth_events:source_ip,file_events:user}"
 # RATE_BYTES：send-arrow 持续注入速率（bytes/秒），默认 0=不限速（nexmark 用）。
 # 对 qradar 测速务必设 >0（持续注入，禁用 burst——burst 会窗口积压失真，见 TEST_PLAN §3.4）。
 # 注入速率 ≈ 目标EPS × 每事件字节(~244B)。脚本输出「注入墙钟 vs 全墙钟」判断引擎是否跟上。
@@ -83,7 +89,7 @@ done
 echo "==> 0. 启动 daemon（TCP 源 + 指标，report_interval=1s） profile=$PROFILE"
 "$WFUSION" daemon --config conf/wfusion.toml --work-dir . > data/daemon.log 2>&1 &
 DAEMON_PID=$!
-trap 'kill $DAEMON_PID $SAMPLER_PID 2>/dev/null || true' EXIT
+trap 'kill ${SEND_PID:-} $DAEMON_PID $SAMPLER_PID 2>/dev/null || true' EXIT
 
 # RSS 采样循环：优先 macOS footprint；Linux 用 /proc/<pid>/status VmRSS；兜底 ps -o rss=。
 # 每 1s 采样峰值落盘（字节）。送达后由 PLATEAU 控制继续采样时长。
@@ -203,44 +209,78 @@ print(sum(lag.values()))
 EOF
 }
 
-# send-arrow 多连接注入（raw-copy，瞬时推完），再等引擎消化（emitted 累计停滞）。
-if [ "$CONNECTIONS" -gt 1 ]; then
-  echo "==> 3. send-arrow ${CONNECTIONS} 连接注入（SHARD_KEYS=${SHARD_KEYS%%:*},... raw-copy）"
-else
-  echo "==> 3. send-arrow 单连接注入（raw-copy）"
-fi
-START=$($PY -c 'import time; print(time.time())')
+# send-arrow 多连接注入（后台化），再等引擎消化（append 追平 + acked_lag 归零）。
+# CONNECTIONS>1：shard-frames 预分片（键闭包，同 key 同连接）→ send-arrow --shard-files
+# 纯 copy 零解码（分片文件按 N×CONNECTIONS×shard-keys 指纹缓存，换键不静默复用）。
+# CONNECTIONS=1：单连接 raw-copy（无需分片，顺序天然保证键闭包）。
 # rate 参数：RATE_BYTES>0 时加 --rate-bytes（限速匀速注入）；否则不限速。
 RATE_ARG=""
 if [ "$RATE_BYTES" -gt 0 ]; then RATE_ARG="--rate-bytes $RATE_BYTES"; fi
-if [ "$CONNECTIONS" -gt 1 ] && [ -n "$SHARD_KEYS" ]; then
+if [ "$CONNECTIONS" -gt 1 ]; then
+  echo "==> 3. shard-frames(${CONNECTIONS} 分片) + send-arrow --shard-files 注入（SHARD_KEYS=${SHARD_KEYS%%:*},...）"
+  SHARD_KEY_FP=$($PY -c 'import hashlib,sys;print(hashlib.md5(sys.argv[1].encode()).hexdigest()[:8])' "$SHARD_KEYS")
+  SHARD_PREFIX="data/shard_${N}_c${CONNECTIONS}_k${SHARD_KEY_FP}"
+  SHARD_FILES=""
+  i=0
+  while [ "$i" -lt "$CONNECTIONS" ]; do
+    [ -s "${SHARD_PREFIX}.s${i}.frames" ] || { SHARD_FILES=""; break; }
+    SHARD_FILES="${SHARD_FILES:+$SHARD_FILES,}${SHARD_PREFIX}.s${i}.frames"
+    i=$(( i + 1 ))
+  done
+  if [ -z "$SHARD_FILES" ]; then
+    echo "    预分片 → ${SHARD_PREFIX}.s0..s$(( CONNECTIONS - 1 )).frames"
+    "$WFGEN" shard-frames --input "$FRAMES" --shards "$CONNECTIONS" \
+      --shard-keys "$SHARD_KEYS" --output-prefix "$SHARD_PREFIX" > /dev/null 2>&1 || {
+      echo "ERROR: shard-frames 失败（检查 SHARD_KEYS 的 key 字段是否在对应流 schema）" >&2
+      exit 1
+    }
+    SHARD_FILES=""
+    i=0
+    while [ "$i" -lt "$CONNECTIONS" ]; do
+      SHARD_FILES="${SHARD_FILES:+$SHARD_FILES,}${SHARD_PREFIX}.s${i}.frames"
+      i=$(( i + 1 ))
+    done
+  fi
   "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT \
-    --connections "$CONNECTIONS" --shard-keys "$SHARD_KEYS" $RATE_ARG > /dev/null 2>&1 \
-    || "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT --connections "$CONNECTIONS" $RATE_ARG > /dev/null 2>&1
-elif [ "$CONNECTIONS" -gt 1 ]; then
-  "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT --connections "$CONNECTIONS" $RATE_ARG > /dev/null 2>&1
+    --shard-files "$SHARD_FILES" $RATE_ARG > /dev/null 2>&1 &
 else
-  "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT $RATE_ARG > /dev/null 2>&1
+  echo "==> 3. send-arrow 单连接注入（raw-copy）"
+  "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT $RATE_ARG > /dev/null 2>&1 &
 fi
-SEND_DONE=$($PY -c 'import time; print(time.time())')
+SEND_PID=$!
+START=$($PY -c 'import time; print(time.time())')
 # 等引擎消化：append 追平 N 且 acked_lag 归零（超时保护：上限按最低能力外推）。
+# 长等待期每 10s 报一次进度（0.5s 轮询），避免全程静默像挂死。
+# INJ_END = append 首次追平 N（注入+append 完成）——注入墙钟的计时点；
+# END = 再等 acked_lag 归零（规则全部消化）——全墙钟的计时点。
 MAX_SEC=$(( N / 100000 + 600 ))
-TIMEOUT=0; END=""; DRAINED=1
+TIMEOUT=0; END=""; INJ_END=""; DRAINED=1
 for i in $(seq 1 $((MAX_SEC * 2))); do
   APP=$(engine_appended)
   DRAINED=$(engine_acked_lag)
+  if [ -z "$INJ_END" ] && [ "${APP:-0}" -ge "$N" ]; then
+    INJ_END=$($PY -c 'import time; print(time.time())')
+  fi
   if [ "${APP:-0}" -ge "$N" ] && [ "${DRAINED:-1}" = "0" ]; then
     END=$($PY -c 'import time; print(time.time())'); break
+  fi
+  if [ $(( i % 20 )) -eq 0 ]; then
+    echo "  ingest: ${APP:-0}/${N} ack_lag=${DRAINED:-1}（等待引擎消化，超时上限 ${MAX_SEC}s）"
   fi
   sleep 0.5
 done
 [ -n "$END" ] || { END=$($PY -c 'import time; print(time.time())'); TIMEOUT=1; }
+[ -n "$INJ_END" ] || INJ_END="$END"
+# 追平后收掉注入客户端（多连接分片路径已推完；保险清理，防端口占用）。
+# sender 可能已自行退出（kill 返回 1）；wait 返回信号退出码——两者都必须 || true，
+# 否则 set -e 会在此处杀掉脚本、丢掉结果输出。
+kill "$SEND_PID" 2>/dev/null || true; wait "$SEND_PID" 2>/dev/null || true
 ELAPSED=$($PY -c "print($END - $START)")
 D=$(received)
 APP=$(engine_appended)
 EPS=$($PY -c "print(int($APP / $ELAPSED))" 2>/dev/null || echo 0)
 TO_MARK=""; [ "$TIMEOUT" = 1 ] && TO_MARK=" ⚠TIMEOUT(appended未追平,EPS=实际处理速率)"
-INJ_S=$($PY -c "print(f'{$SEND_DONE-$START:.1f}')")
+INJ_S=$($PY -c "print(f'{$INJ_END-$START:.1f}')")
 echo "    接收 $D / $N 事件：注入墙钟 ${INJ_S}s，全墙钟(引擎消化完)${ELAPSED}s (appended=$APP, acked_lag=$DRAINED, 限速=${RATE_BYTES}B/s)$TO_MARK"
 echo "    EPS = $EPS events/sec (send-arrow ${CONNECTIONS}连接 / 引擎消化口径)"
 
