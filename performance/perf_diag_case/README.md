@@ -22,7 +22,7 @@
   （早期 0.6s 步进版本窗口内计数上不去，floor≈full，墙梯无区分度）；
 - **21 条规则**（3 类 × 7）：count（`c_*`）/ guard（`g_*`）/ distinct（`d_*`）——
   三类在规则墙上成本不同，验证墙梯能区分；yield 到 `network_alerts`；
-- **sink**：`business.d/perf_sentinel.toml` 把哨兵记录落盘
+- **sink**：`business.d/sentinel.toml` 把哨兵记录落盘
   `data/perf_sentinel.ndjson`；`business.d/rules.toml` 把规则输出 blackhole
   （只测吞吐，对齐 Flink discarding sink 口径）。
 
@@ -41,7 +41,7 @@ perf_diag_case/
 │   └── gen_rules.py        # 21 条规则 → basic.wfl
 ├── topology/
 │   ├── sources/ingress.toml    # TCP 源（9800）
-│   └── sinks/business.d/       # perf_sentinel（哨兵落盘）+ rules（blackhole）
+│   └── sinks/business.d/       # sentinel（哨兵落盘）+ rules（blackhole）
 └── verify.sh               # 验证驱动（已实现，可直接运行）
 ```
 
