@@ -1535,7 +1535,7 @@ rule g_geo_30 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c && c.conn_info.geo.country == "CN" | count >= 30; }
+        on event { c && c.geo_country == "CN" | count >= 30; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -1552,7 +1552,7 @@ rule g_geo_80 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c && c.conn_info.geo.country == "CN" | count >= 80; }
+        on event { c && c.geo_country == "CN" | count >= 80; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -1569,7 +1569,7 @@ rule g_geo_dip_40 {
         c : conn_events
     }
     match<dip:2m> {
-        on event { c && c.conn_info.geo.country == "CN" | count >= 40; }
+        on event { c && c.geo_country == "CN" | count >= 40; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -1586,7 +1586,7 @@ rule g_geo_dip_90 {
         c : conn_events
     }
     match<dip:2m> {
-        on event { c && c.conn_info.geo.country == "CN" | count >= 90; }
+        on event { c && c.geo_country == "CN" | count >= 90; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -1875,7 +1875,7 @@ rule g_geo_vlan_100 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c && c.conn_info.vlan >= 1000 | count >= 20; }
+        on event { c && c.vlan >= 1000 | count >= 20; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -1892,7 +1892,7 @@ rule g_geo_flow {
         c : conn_events
     }
     match<dip:2m> {
-        on event { c && indexof(c.conn_info.flow_id, "flow-") == 0 | count >= 30; }
+        on event { c && indexof(c.flow_id, "flow-") == 0 | count >= 30; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4506,7 +4506,7 @@ rule g_geo_city_30 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c && c.conn_info.geo.city == "Shanghai" | count >= 30; }
+        on event { c && c.geo_city == "Shanghai" | count >= 30; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4523,7 +4523,7 @@ rule g_geo_city_60 {
         c : conn_events
     }
     match<dip:2m> {
-        on event { c && c.conn_info.geo.city == "Shanghai" | count >= 60; }
+        on event { c && c.geo_city == "Shanghai" | count >= 60; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (
@@ -4540,7 +4540,7 @@ rule g_geo_flow_60 {
         c : conn_events
     }
     match<sip:2m> {
-        on event { c && indexof(c.conn_info.flow_id, "flow-") == 0 | count >= 60; }
+        on event { c && indexof(c.flow_id, "flow-") == 0 | count >= 60; }
     } -> score(50.0)
     entity(ip, c.sip)
     yield network_alerts (

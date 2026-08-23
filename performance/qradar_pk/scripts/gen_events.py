@@ -215,18 +215,28 @@ for i in range(count):
         action = "denied" if denied else "allowed"
         if atk and rnd.random() < 0.5:
             action = "syn"
+        # 平坦计算字段（2026-08-23）：规则 guard 用的字段在**顶层**复制一份——
+        # 嵌套路径求值每事件克隆中间对象（conn_info 7 字段 + geo 5 字段，实测
+        # g_geo_30 advance 303ns vs 平坦同形 ~100ns 级，3.5×）。顶层平坦字段
+        # 贴近真实 SIEM 规范化形态（LEEF/CEF 平铺 key=value）。conn_info 对象
+        # 保留（#18 门禁：object 大批次内存记账）。
+        vlan = i % 4096
+        flow_id = f"flow-{i:08d}-{rnd.randint(1000, 9999)}"
+        geo_country = "CN"
+        geo_city = "Shanghai"
         if FLAT:
-            conn_info = {"iface": f"eth{i % 16}", "vlan": i % 4096}   # 扁平化：去嵌套 geo/array/deep
+            conn_info = {"iface": f"eth{i % 16}", "vlan": vlan}   # 扁平化：去嵌套 geo/array/deep
         else:
             conn_info = {
                 "iface": f"eth{i % 16}",
                 "tenant": f"acme-{i % 50:03d}",
-                "vlan": i % 4096,
-                "flow_id": f"flow-{i:08d}-{rnd.randint(1000, 9999)}",
+                "vlan": vlan,
+                "flow_id": flow_id,
                 "tags": ["prod", "edge", "dmz"],
                 "desc": "NAT traversal session established via edge gateway with 30s keepalive",
                 "geo": {
-                    "country": "CN", "city": "Shanghai", "asn": 4134, "lat": 31.23, "lon": 121.47,
+                    "country": geo_country, "city": geo_city, "asn": 4134,
+                    "lat": 31.23, "lon": 121.47,
                 },
             }
         ev = {
@@ -248,5 +258,10 @@ for i in range(count):
             "packet_rate": round(rnd.uniform(100.0, 20000.0), 1),
             "app_id": "0a0001" if rnd.random() < 0.40 else rnd.choice(["0b0002", "0c0003"]),
             "tags": ["prod", "edge", "dmz"],
+            # 平坦计算字段（规则 guard 用；避免嵌套路径中间克隆）
+            "geo_country": geo_country,
+            "geo_city": geo_city,
+            "vlan": vlan,
+            "flow_id": flow_id,
         }
     print(json.dumps(ev))

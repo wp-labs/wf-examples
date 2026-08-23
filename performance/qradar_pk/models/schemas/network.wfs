@@ -23,6 +23,12 @@ window conn_events {
         packet_rate: float
         app_id: chars
         tags: array/chars
+        // 平坦计算字段（2026-08-23）：规则 guard 用顶层字段避免嵌套路径中间克隆
+        //（conn_info 对象保留，服务 #18 object 内存记账门禁）
+        geo_country: chars
+        geo_city: chars
+        vlan: digit
+        flow_id: chars
     }
 }
 
