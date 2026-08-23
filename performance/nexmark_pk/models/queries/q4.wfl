@@ -8,32 +8,53 @@ use "nexmark.wfs"
 //         WHERE A.id = B.auction AND B.dateTime BETWEEN A.dateTime AND A.expires
 //         GROUP BY A.id, A.category) Q
 //   GROUP BY Q.category;
-// —— 内层每 auction 生命周期内胜出价 max，外层按 category 求 avg（avg-of-max）。
+// —— 内层每 auction 生命周期 [dateTime, expires] 内胜出价 max；外层按 category
+// 求 avg（avg-of-max）。
 //
-// wfusion 能力面（join 字段作窗口键）：`match<category:10m:fixed>` 的键
-// `category` 不在驱动事件（bid）上，而是 auction 的 join 侧字段——引擎在事件
-// 路由进窗口前先执行 snapshot join（b.auction == auction_events.id）拿到
-// category，再按该键分组（join-then-key）。每 category × 固定 10m 桶收口时取
-// **窗口内均价**（avg measure）EMIT 一条，工作负载 = 92M bid 进管道 + join
-// 查找 + 每 category 状态累积。
+// wfusion 表达（双规则链，2026-08-23 落地；G7 probe 实证可编译可运行）：
+// - 内层 q4a：`on each a` + deferred `reduce maxrow(price) within
+//   [a.dateTime, a.expires] emit at a.expires`（Q9 同款）——auction 挂起、
+//   watermark ≥ expires 到期评估出胜出价，yield 到中间窗口 `auction_finals`
+//   （id/category/final/dateTime=到期时刻）。
+// - 外层 q4b：`stats<1d:fixed> group by (category) { avg(f.final) }` 消费
+//   auction_finals（intermediate relay，与 `__wf_pipe_` 管道同机制）——1d 桶在
+//   有界 benchmark 下覆盖全流（EOS close_all 收口），每 category 一行 avg。
 //
-// 语义说明（诚实标注，详见 SEMANTIC_ALIGNMENT.md §5.3）：
-// - **avg 口径**：官方 avg(每 auction 的 max 胜出价)；本面直接 avg(窗口内 bid
-//   价格)（max 面由 q9_winning_bid 覆盖；外层二级聚合 avg-of-max 需 conv 聚合
-//   算子，另行设计）。
-// - **时间窗口**：官方按 auction 生命周期 [dateTime, expires]，本面用 10m 固定
-//   桶近似（与 q4 旧 auction 键面同构，仅键从 auction 换成 category）。
-// - 验证锚点：oracle（真实规则引擎）与引擎 replay 对拍计数（fixed+close 收口
-//   非确定性为独立已知问题，见 verify 的 known-diff 报告）。内联 test 不维护
-//   join 窗口状态（join-then-key 全部 miss），故不使用。
-rule q4_avg_price_by_category {
-    events { b : bid_events }
-    match<category:10m:fixed> {
-        on event { b | count >= 1; }
-        and close { w: b.price | avg >= 10; }
-    } -> score(20.0)
-    join auction_events snapshot on b.auction == auction_events.id
-    entity(digit, category)
-    yield nexmark_alerts (id = category, alert_type = "q4_avg", detail = "avg bid price", request_count = 1)
+// 语义说明：
+// - avg 口径：官方 avg(每 auction 的 max 胜出价)——本双规则链逐层一致
+//   （旧 `match<category:10m:fixed>` 直接 avg(窗口内 bid 价) 为度量错，已废）。
+// - 输出基数：外层每 category 一行（有界 1d 桶 + EOS 收口），对齐官方无界
+//   per-category 输出在 benchmark 下的形态。
+// - 验证：内层输出（每 auction 胜出价，10k → 455 条 = q9 同款计数）oracle
+//   可对拍；外层 stats 规则 oracle 暂不执行（known-diff 列表），daemon 级
+//   串联对拍待 stats oracle 接入。
+rule q4a_auction_finals {
+    events { a : auction_events }
+    on each a -> score(20.0)
+    join bid_events reduce maxrow(price) tie(dateTime asc)
+        within [a.dateTime, a.expires]
+        on a.id == bid_events.auction as winner
+        emit at a.expires
+    entity(digit, a.id)
+    yield auction_finals (
+        id = a.id,
+        category = a.category,
+        final = winner.price,
+        dateTime = a.expires
+    )
+}
+
+rule q4b_category_avg {
+    events { f : auction_finals }
+    stats<1d:fixed> group by (f.category) {
+        f | avg(f.final) as avg_final;
+    }
+    entity(digit, f.category)
+    yield nexmark_alerts (
+        id = f.category,
+        alert_type = "q4_avg",
+        detail = fmt("{}", stat.value(final(avg_final))),
+        request_count = 1
+    )
     limits { max_memory = "512MB" }
 }

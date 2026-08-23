@@ -7,13 +7,15 @@ use "nexmark.wfs"
 //   WHERE rank_number <= 1;
 // —— 每 (bidder, auction) 取最后一条 bid 的字段。
 //
-// stats 形态: `stats<30m:fixed> group by (b.bidder, b.auction)` + 4 个 last 度量
+// stats 形态: `stats<1d:fixed> group by (b.bidder, b.auction)` + 4 个 last 度量
 // （price/channel/url/dateTime）; 每个 last 度量保留最近合格行的整行字段, close 时
 // 经 field_values 注入 yield 的 `b.*`（Q18 输出 = 最后一条 bid 的字段值）。
+// 1d 固定桶 = 有界 benchmark 下覆盖全流（EOS close_all 收口）→ 每键 1 行，对齐
+// 权威 ROW_NUMBER dedup 基数；30m 桶会把 >30m 数据切成多桶（每键多行，旧版偏）。
 // 注意: last 度量 label 不得与 yield 读的字段名撞名（label 会覆盖同名字段）。
 rule q18_last_bid_stats {
     events { b : bid_events }
-    stats<30m:fixed> group by (b.bidder, b.auction) {
+    stats<1d:fixed> group by (b.bidder, b.auction) {
         b | last(b.price) as last_price;
         b | last(b.channel) as last_channel;
         b | last(b.url) as last_url;

@@ -7,12 +7,12 @@ use "nexmark.wfs"
 //   FROM bid GROUP BY day;
 // —— 30m 数据 BASE_NS=2026-01-01T00:00 → 恰 1 天, GROUP BY day 退化为全局一行。
 //
-// stats 形态: `stats<30m:fixed>`（空键固定窗口, 列式归并执行器）+ 12 度量
+// stats 形态: `stats<1d:fixed>`（空键固定窗口 = UTC 日历天, 列式归并执行器）+ 12 度量
 // （4 count + 8 distinct_count, 价格分档 where）, 窗口 close 产出 12 值。
 // yield 用 stat.value(final(label)) 读度量终值（与 CEP 版一致）。
 rule q15_bidding_stats {
     events { b : bid_events }
-    stats<30m:fixed> {
+    stats<1d:fixed> {
         b | count as total;
         b | count as r1 where b.price < 10000;
         b | count as r2 where b.price >= 10000 && b.price < 1000000;

@@ -140,7 +140,7 @@ NEXMark 标准数据的要求，本实现（`wfgen gen-nexmark`）全部满足�
 |---|---|---|---|
 | q2_mod_123 | 224,289 | 224,289 | ✅ |
 | q3_auction_seller | 1,800,000 | 1,800,000 | ✅ |
-| q4_avg_price_by_category | 5,254,483（oracle 理想） | 30M 4,228,230 | ⚠（fixed+close 收口非确定，丢尾部，见 SEMANTIC_ALIGNMENT §6.1） |
+| q4_avg_price_by_category | 5,254,483（oracle 理想） | 30M 4,228,230 | ⚠ 旧规则（fixed+close 收口非确定，丢尾部，见 SEMANTIC_ALIGNMENT §6.1）；2026-08-23 已由 avg-of-max 双规则链（q4a+q4b）替代 |
 | q5_bidcount_10 | 1,712,532 | 1,712,470 | ✅（差 62=0.0036%，scan_timeouts 墙钟非确定） |
 | q6_avg_price_200 | 9,794,325 | 10m 3,263,324 | ✅（10m 对拍 ±1） |
 | q7_maxbid_200/500/1000 | 10,350,961 / 34,578 / 0 | 同左 | ✅ |

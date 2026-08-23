@@ -8,12 +8,12 @@ use "nexmark.wfs"
 // —— 按 auction/天分组输出 bid 总数、三价格档计数与价格 min/max/avg/sum。
 //   30m 数据恰 1 天 → GROUP BY auction 退化为每 auction 一行。
 //
-// wfusion 映射：`match<auction:30m:fixed>`（键 = 事件字段 auction，1.8M 实例）+ `and close`
+// wfusion 映射：`match<auction:1d:fixed>`（键 = 事件字段 auction，1 天固定桶 = UTC 日历天，1.8M 实例）+ `and close`
 // 8 个 measure（4 count 分档 + min/max/avg/sum），每 auction 收口一行。
 // 输出基数 = 有 bid 的 auction 数（对齐官方每 (auction,day) 一行）。
 rule q17_auction_stats {
     events { b : bid_events }
-    match<auction:30m:fixed> {
+    match<auction:1d:fixed> {
         on event { b | count >= 1; }
         and close {
             total: b | count >= 1;

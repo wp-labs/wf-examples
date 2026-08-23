@@ -47,23 +47,23 @@ wfgen verify-nexmark <N> --query qN
 |---|---|---|---|---|
 | q1 | ✅ 对齐（2026-08-21） | Currency Conversion：每 bid 一行 + `0.908*price` | `on each` + `score(0.908*b.price)` | 每 bid 一条，换算在 score（fmt 进 detail 曾致 EPS 减半，已改）；计数等价 |
 | q2 | ✅ 对齐（2026-08-21） | `MOD(auction,123)=0` 每行输出 | `on each` + bind filter | 每满足条件 bid 一条（旧 match per-auction 去重基数差一个量级，已修）；EMIT 226,103 对拍 identical |
-| q3 | ⚠️ 部分（2026-08-21） | person⋈auction join + `category=10` + `state∈(OR,ID,CA)` | auction 驱动 + snapshot join person + `category=10` | 缺州过滤（join 富化在 fire 后，规则侧无法过滤 join 字段，引擎限制）；EMIT 比官方大 ~2× |
-| q4 | ⚠️ 部分（2026-08-21，join 字段作键） | bid⋈auction 均价（两层：每 auction max → 按 category avg） | **join-then-key**：`match<category:10m:fixed>` + `and close` **avg**（每 category×桶均价） | 外层 avg-of-max 不可表达（见 §5.3）；avg 口径为窗口内直接均价；fixed+close 收口非确定 + join 可见性非确定（见 §6） |
-| q5 | ⚠️ 部分（2026-08-21：阈值→top-1） | Hot Items：HOP(2s,10s) 每窗口 bid 数最多的 auction（top-1 by count） | fixed 10s 桶 + `and close` count + `conv { sort(-n) \| top(1) }` | 桶形状近似（fixed 10s 不重叠 vs HOP 2s/10s 滑动重叠）；conv 按收口批 top-1（批边界由水位推进决定） |
-| q6 | ⚠️ 部分（2026-08-21，join 字段作键，自测） | 每 seller 最近 10 笔成交胜出价均值（权威 ROW_NUMBER 胜出价 + OVER ROWS 10 PRECEDING；官方注释 OVER 不支持 retractions 未落地） | **join-then-key**：`match<seller:10m>` + `on event` **avg**（每 seller 均价） | 聚合面/窗口形状不同；join 可见性非确定（见 §6）；白皮书无基线，仅自测 |
-| q7 | ⚠️ 部分（2026-08-21：per-auction 阈值→全局最高价） | TUMBLE(10s) 每窗口全局最高价 bid（跨 auction） | `match<:10s:fixed>` 空键全局窗口 + close max（每桶一条） | 权威 JOIN 输出所有并列最高价 bid；本地每桶一条；全局单实例无法并行（max 轻量） |
-| q8 | ⚠️ 部分（无 auction join） | person TUMBLE(10s) ⋈ auction TUMBLE(10s) 同窗 join（注册且创建拍卖的人） | person 会话窗口（60s gap） | 无 auction join/同窗（join 在 fire 后 + miss 不 drop，引擎限制）；窗口形状不同 |
-| q9 | ⚠️ 部分（已声明近似） | **胜出出价（Winning Bids）**：每 auction 最高价 bid（ROW_NUMBER price DESC, dateTime ASC） | fixed 10m + `and close` **max** 聚合（窗口胜者） | 见 §5.2；fixed+close 收口非确定（见 §6） |
+| q3 | ✅ 对齐（2026-08-21：join 后 `where` 补齐州过滤） | person⋈auction join + `category=10` + `state∈(OR,ID,CA)` | auction 驱动（`category==10` 下推）+ snapshot join person + join 后 `where person_events.state in ("OR","ID","CA")` | 州过滤经 join 后 `where` 补齐（false/None 抑制输出 = INNER JOIN 丢行）；EMIT 与官方一致（oracle/引擎对拍验证） |
+| q4 | ✅ 对齐（2026-08-23：avg-of-max 双规则链落地） | bid⋈auction 均价（两层：每 auction max → 按 category avg） | 双规则链：deferred `reduce maxrow(price) within [a.dateTime, a.expires]`（Q9 同款）→ 中间窗口 `auction_finals` → `stats<1d:fixed> group by(category) avg(f.final)` | 双规则链正式落地（q4a+q4b + nexmark.wfs `auction_finals`，2026-08-23）；verify 10k 编译 29 规则全通、oracle 内层 455 条（= q9 口径）；残留：外层 stats oracle 不执行（known-diff），daemon 级串联对拍待跑；旧 `match<category:10m:fixed>` 直接 avg 面为度量错 + 基数 ×3，已废（见 §5.3） |
+| q5 | ✅ 对齐（2026-08-23：HOP + top_ties 落地） | Hot Items：HOP(2s,10s) 每窗口 bid 数最多的 auction（top-1 by count，并列全输出） | `match<auction:hop(10s, 2s)>` + `and close` count + `conv { sort(-n) | top_ties(1) }` | 窗口形状/基数与权威一致（30M 数据 1500 窗 vs 旧 fixed 300 桶）；`top_ties(1)` 并列最高 count 的 auction 全输出（对齐权威 JOIN 并列语义，无残留） |
+| q6 | 🟡 无权威基线（Flink 官方未实现） | 每 seller 最近 10 笔成交胜出价均值（权威 ROW_NUMBER 胜出价 + OVER ROWS 10 PRECEDING；官方注释 OVER 不支持 retractions **未落地**） | **join-then-key**：`match<seller:10m>` + `on event` **avg**（每 seller 均价） | Flink 本身不运行 Q6 → 无对拍基线；当前为形状近似能力面（仅自测） |
+| q7 | ✅ 对齐（2026-08-23：top_ties 并列全输出） | TUMBLE(10s) 每窗口全局最高价 bid（跨 auction，并列全输出） | `match<auction:10s:fixed>` + close max + `conv { sort(-m) | top_ties(1) }`（auction 键可并行，批内取全局最高并列全出） | 局部 max→批内全局 max 语义等价（max 分配律）；残留 = auction 粒度 vs 权威 bid 行粒度（同 auction 内多条并列 bid 需窗口内行集算子） |
+| q8 | ✅ 对齐（2026-08-23：deferred exists join 端到端激活） | person TUMBLE(10s) ⋈ auction TUMBLE(10s) 同窗 join（注册且创建拍卖的人） | `on each` + deferred `join auction_events within [p.dateTime, <bucket_end(p,10s)) emit at bucket_end(p,10s)`（存在性） | 每 (person×桶) 一行；auction 恰在桶边界 → 归下桶（上开界，`deferred_q8_boundary_auction_excluded` 单测覆盖）；已知小分歧：同窗内早于注册的 auction 漏配（25% 冷 seller 可引用未来 person） |
+| q9 | ✅ 对齐（2026-08-23：deferred reduce 端到端激活） | **胜出出价（Winning Bids）**：每 auction 最高价 bid（ROW_NUMBER price DESC, dateTime ASC） | `on each` + deferred `join bid_events reduce maxrow(price) tie(dateTime asc) within [a.dateTime, a.expires] emit at a.expires` + `as winner` | 与 ROW_NUMBER 第 1 名等价；无 bid 不输出；每 auction 至多一条（`deferred_q9_*` 单测 + 真实 wfl 编译运行覆盖） |
 | q10 | ✅ 对齐（2026-08-21 重写） | Log to File System：全量 bid 落盘 | `on each` 全量 bid 每行输出（旧 1/7 子集作废） | EMIT = 全部 bid（权威全量）；dt/hm 分区列省略（30m 数据单天无查询语义） |
 | q11 | ⚠️ 部分（2026-08-21：gap 10s + 每会话一条带 count） | User Sessions：SESSION(10s) 每会话输出 bid_count | session(10s) + `and close` count（每会话一条，detail 带 count） | 计数口径对齐（旧 on-event 每行 fire）；bench 按 auction 分片时为 per-shard 会话（全局语义须 CONNECTIONS=1）；尾部会话收口 known |
 | q12 | ⚠️ 部分（已声明近似） | Processing Time Windows：每 bidder × 10s 窗口计数（全量输出） | fixed 10s + `and close` count（键=bidder） | 处理时间窗口用事件时间近似（replay 同步）；fixed+close 收口非确定（见 §6） |
 | q13 | ✅ 接近 | 有界侧输入 join（mod(auction,10000)=key） | bid⋈person 快照 join | snapshot 近似侧输入（键不同，形状接近） |
 | q14 | ✅ 对齐（2026-08-21 重写） | Calculation：0.908*price + CASE HOUR 分型 + count_char UDF + 价格过滤 | `on each` + bind 价格过滤 + `strftime("%H")` 分型 + `count_char`（新增 UDF） | 每行输出对齐；bidTimeType/c_counts 拼入 detail（sink 四列限制） |
-| q15 | ⚠️ 部分（2026-08-21 重写；性能待优化） | Bidding Statistics Report：按天 12 列统计（count/distinct × 价格档） | `match<:30m:fixed>` 全局统计 + 12 close measure | 30m 数据恰 1 天 → 全局=按天；全局单实例 + 9 distinct 无法并行，30M 未跑通（性能标注） |
-| q16 | ⚠️ 部分（2026-08-21 重写） | Channel Statistics Report：按 channel/天 15 列统计 | `match<channel:30m:fixed>` + 12 close measure | minute 列省略（数据侧常量）；fixed+close 尾部收口 known |
-| q17 | ⚠️ 部分（2026-08-21 重写） | Auction Statistics Report：按 auction/天 count/min/max/avg/sum + 价格档 | `match<auction:30m:fixed>` + 8 close measure | 每 auction 一行对齐；fixed+close 尾部收口 known |
-| q18 | ⚠️ 部分（2026-08-21 重写） | Find last bid：每 (bidder,auction) 最后一条（dateTime DESC dedup） | `match<bidder,auction:30m:fixed>` + close count（每键一条） | 输出基数对齐（每键一条）；「最后一条」的字段值语义未带出（wfl 无 last-value measure） |
-| q19 | ❌ 能力面（cap，权威待引擎） | Auction TOP-10 Price：每 auction 价格 top-10 | `on event seq` 连续 2 bid（能力面） | per-key TopN 需 conv 按键分组/ROW_NUMBER 算子（引擎待补） |
+| q15 | ✅ 对齐（2026-08-23：`1d:fixed` UTC 日历天；性能待优化） | Bidding Statistics Report：按天 12 列统计（count/distinct × 价格档） | `match<:1d:fixed>` 全局统计 + 12 close measure | `1d:fixed` 桶 = UTC 日历天（epoch 对齐 = UTC 午夜），30m 数据 1 桶 → 全局=按天；全局单实例 + 9 distinct 无法并行（性能标注） |
+| q16 | ✅ 对齐（2026-08-23：`1d:fixed`） | Channel Statistics Report：按 channel/天 15 列统计 | `match<channel:1d:fixed>` + 12 close measure | minute 列省略（数据侧常量）；fixed+close 尾部收口 known |
+| q17 | ✅ 对齐（2026-08-23：`1d:fixed`） | Auction Statistics Report：按 auction/天 count/min/max/avg/sum + 价格档 | `match<auction:1d:fixed>` + 8 close measure | 每 auction 一行对齐；fixed+close 尾部收口 known |
+| q18 | ✅ 对齐（2026-08-23：stats last + 1d 桶） | Find last bid：每 (bidder,auction) 最后一条（dateTime DESC dedup） | `stats<1d:fixed> group by (b.bidder, b.auction)` + 4 个 `last` 度量（price/channel/url/dateTime） | 值语义（最后一条字段）+ 基数（每键 1 行）双对齐；last 序 = 到达序（有序数据 = max dateTime）；CEP 版（`match<bidder,auction:30m:fixed>` + count）为基数对齐近似 |
+| q19 | ✅ 对齐（2026-08-23：stats<> top-N 编译/装配/执行器确认） | Auction TOP-10 Price：每 auction 价格 top-10（ROW_NUMBER price DESC） | `stats<30m:fixed> group by(b.auction) { top(10, b.price) }`（每键有界 top-N，close 按 rank 序逐条输出） | `stats_top_keeps_top_n_desc` 覆盖 Q19 形状；oracle 不执行 stats 规则，bench daemon 对拍待跑 |
 | q20 | ❌ 能力面（cap，权威待引擎） | Expand bid with auction（category=10 filter join） | `on event any` 并行计数到 3（能力面） | `A.category=10` 为 join 右窗字段过滤，需 join 后 where（引擎待补，与 q3 同源） |
 | q21 | ✅ 对齐（2026-08-21 重写） | **Add channel id**：每 bid 输出 channel_id（CASE WHEN 热通道 0/1/2/3 + REGEXP_EXTRACT url） | `on each` 投影 `b.channel_id`（数据侧计算） | 见 §5.9：旧 anti join 能力面作废；wfl 无 CASE WHEN/正则，channel_id 在 wfgen 生成时计算（等价 SQL 值） |
 | q22 | ✅ 对齐（2026-08-21 重写） | **URL Directories**：每 bid 取 url split('/') 索引 3/4/5 | `on each` + `split(b.url,"/")` + `mvindex` 投影 | 语义对齐（0 基 split + mvindex 等价 SPLIT_INDEX） |
@@ -160,6 +160,10 @@ rule q9_winning_bid {
 | 对拍 | oracle 5,254,483 ⚠ 引擎 4,183,632（fixed+close 收口非确定，见 §6.1） |
 
 ### 5.3 案例：Q4 语义对齐（2026-08-21，join 字段作窗口键）
+
+> ⚠ 本节为 2026-08-21 的 join-then-key 案例（度量错 + 10m 桶基数 ×3，已废）；
+> **2026-08-23 起 q4.wfl = avg-of-max 双规则链**（deferred reduce → 中间窗口
+> `auction_finals` → stats avg，见 CAPABILITY_GAP_MATRIX.md G7），本节仅作历史保留。
 
 旧 q4 先是"每 bid 一条 + auction join"的工作负载近似面（输出=全部 bid 数，非 Q4 均价），
 后为 auction 键 fixed+close 近似（category 不可作键）。2026-08-21 实现

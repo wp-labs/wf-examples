@@ -68,7 +68,7 @@ Flink 参照系 = [Alibaba Nexmark 白皮书](https://help.aliyun.com/en/flink/r
 |---|---|---|---|
 | q2_mod_123 | 224,289 | 224,289 | ✅ |
 | q3_auction_seller | 1,800,000 | 1,800,000 | ✅ |
-| q4_avg_price_by_category | 5,254,483（oracle 理想） | 30M 4,228,230 | ⚠（fixed+close 收口非确定，丢尾部，见 SEMANTIC_ALIGNMENT §6.1） |
+| q4_avg_price_by_category | 5,254,483（oracle 理想） | 30M 4,228,230 | ⚠ 旧规则（fixed+close 收口非确定，丢尾部，见 SEMANTIC_ALIGNMENT §6.1）；2026-08-23 已由 avg-of-max 双规则链（q4a+q4b）替代 |
 | q5_bidcount_10 | 1,712,532 | 1,712,470 | ✅（差 62 = 0.0036%，scan_timeouts 墙钟非确定性） |
 | q5_bidcount_50 / 100 | 0 / 0 | 0 / 0 | ✅ |
 | q6_avg_price_200 | 9,794,325 | 10m 3,263,324 | ✅（10m 对拍 ±1 墙钟摆动） |

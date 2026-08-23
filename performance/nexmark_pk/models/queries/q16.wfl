@@ -10,12 +10,12 @@ use "nexmark.wfs"
 // —— 按 channel/天分组输出 bids/bidders/auctions 总量与三价格档统计。
 //   30m 数据恰 1 天（BASE_NS=2026-01-01T00:00）→ GROUP BY channel 退化为每 channel 一行。
 //
-// wfusion 映射：`match<channel:30m:fixed>`（键 = 事件字段 channel，~10k 实例可并行）
+// wfusion 映射：`match<channel:1d:fixed>`（键 = 事件字段 channel，1 天固定桶 = UTC 日历天，~10k 实例可并行）
 // + `and close` 12 个 measure（guard 分档 + distinct 变换），每 channel 收口一行。
 // minute 列（当天最后 HH:mm）为数据侧常量（00:00~00:30），省略不输出。
 rule q16_channel_stats {
     events { b : bid_events }
-    match<channel:30m:fixed> {
+    match<channel:1d:fixed> {
         on event { b | count >= 1; }
         and close {
             total: b | count >= 1;

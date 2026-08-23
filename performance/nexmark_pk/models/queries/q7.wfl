@@ -6,11 +6,12 @@ use "nexmark.wfs"
 // —— 每个 10s 窗口内全局最高价的 bid（跨 auction 的时段最高价）。
 //
 // wfusion 表达：`match<auction:10s:fixed>`（auction 键可并行）+ `and close`
-// 每 auction×10s 桶的 max(price) + `conv { sort(-m) | top(1) }` 每收口批取
-// max 最大的一条（= 该 10s 桶全局最高价）。max 是分配律聚合，按键求局部 max
+// 每 auction×10s 桶的 max(price) + `conv { sort(-m) | top_ties(1) }` 每收口批取
+// max 最大（并列最高价的 auction 全输出）。max 是分配律聚合，按键求局部 max
 // 再批内取全局 max，语义等价；全局单实例（空键）版 30M 实测过慢已弃。
-// ⚠ 近似：权威 JOIN 输出所有价格==最高价的 bid（并列可能多条）；本地每桶输出
-// top-1 一条（conv 批内取 max 最大的 auction）。
+// ⚠ 残留近似：权威 JOIN 输出所有价格==最高价的 **bid 行**（同 auction 内多条
+// 并列 bid 也全出）；本地为每 auction 一条 max 的 auction 粒度（同窗口内
+// 最高价并列的 auction 全出，bid 粒度需要窗口内行集输出算子，引擎待补）。
 rule q7_highest_bid {
     events { b : bid_events }
     match<auction:10s:fixed> {
@@ -25,7 +26,7 @@ rule q7_highest_bid {
         request_count = 1
     )
     conv {
-        sort(-m) | top(1) ;
+        sort(-m) | top_ties(1) ;
     }
     limits { max_memory = "8GB" }
 }

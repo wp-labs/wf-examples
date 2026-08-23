@@ -9,8 +9,9 @@ use "nexmark.wfs"
 //
 // wfusion 映射：`match<bidder,auction:30m:fixed>`（多键窗口）+ `and close` count，
 // 每 (bidder,auction) 收口输出一条 → **输出基数对齐**（每键一条 = 官方 dedup 结果数）。
-// ⚠ 近似：官方带出「最后一条 bid」的字段值（price/channel/url/...）；wfl 无 last-value
-// measure，本地输出键（auction/bidder）与计数，值语义为「窗口内聚合」而非「最后一条」。
+// ⚠ 近似：官方带出「最后一条 bid」的字段值（price/channel/url/...）；本 CEP 版输出键
+// 与计数（值语义为窗口内聚合）。**完整值语义见 q18_stats.wfl**（stats `last` 度量，
+// `1d:fixed` 桶对齐基数 + 带出最后一条字段值）。
 rule q18_last_bid {
     events { b : bid_events }
     match<bidder,auction:30m:fixed> {

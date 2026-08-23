@@ -6,11 +6,11 @@ use "nexmark.wfs"
 //   FROM bid GROUP BY auction;
 // —— 按 auction 分组输出 bid 总数、三价格档计数与价格 min/max/avg/sum。
 //
-// stats 形态: `stats<30m:fixed> group by (b.auction)` + 8 度量（4 count 分档 +
+// stats 形态: `stats<1d:fixed> group by (b.auction)`（1 天固定桶 = UTC 日历天）+ 8 度量（4 count 分档 +
 // min/max/avg/sum——P2 sum/avg/min/max）; 每 auction 一行。
 rule q17_auction_stats {
     events { b : bid_events }
-    stats<30m:fixed> group by (b.auction) {
+    stats<1d:fixed> group by (b.auction) {
         b | count as total;
         b | count as r1 where b.price < 10000;
         b | count as r2 where b.price >= 10000 && b.price < 1000000;

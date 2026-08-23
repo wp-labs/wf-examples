@@ -10,7 +10,7 @@ use "nexmark.wfs"
 // —— 按天分组输出 bids/bidders/auctions 的总量与三价格档计数（30m 数据
 //   BASE_NS=2026-01-01T00:00 → 恰 1 天，GROUP BY day 退化为全局一行）。
 //
-// wfusion 映射：`match<:30m:fixed>`（空键全局窗口，30m 数据 1 桶）+ `and close`
+// wfusion 映射：`match<:1d:fixed>`（空键全局窗口，1 天固定桶 = UTC 日历天，30m 数据 1 桶）+ `and close`
 // 12 个 measure（guard 分价格档 + distinct 变换），收口输出一行统计。
 // 输出基数 = 桶数（1 行），对齐官方每 day 一行。
 //
@@ -20,7 +20,7 @@ use "nexmark.wfs"
 // measure guard cmp_vec 17.7 亿次——distinct 集合免哈希/列式化是下一步。
 rule q15_bidding_stats {
     events { b : bid_events }
-    match<:30m:fixed> {
+    match<:1d:fixed> {
         on event { b | count >= 1; }
         and close {
             total: b | count >= 1;

@@ -72,3 +72,17 @@ window nexmark_alerts {
         request_count: digit
     }
 }
+
+// Q4 内层中间窗口：每 auction 生命周期内胜出价（deferred reduce maxrow 在
+// a.expires 到期输出一条，时间列 = 到期时刻）。外层 stats 按 category 消费
+// 做 avg-of-max（NEXMARK_AUTHORITATIVE_SEMANTICS.md Q4 两层聚合）。
+window auction_finals {
+    time = dateTime
+    over = 1h
+    fields {
+        id: digit
+        category: digit
+        final: digit
+        dateTime: time
+    }
+}

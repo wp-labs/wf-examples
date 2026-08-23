@@ -6,11 +6,11 @@ use "nexmark.wfs"
 //          count(distinct auction) ... FROM bid GROUP BY channel;
 // —— 按 channel 分组输出 bids/bidders/auctions 总量与三价格档统计（12 列）。
 //
-// stats 形态: `stats<30m:fixed> group by (b.channel)` + 12 度量（4 count + 8
+// stats 形态: `stats<1d:fixed> group by (b.channel)`（1 天固定桶 = UTC 日历天）+ 12 度量（4 count + 8
 // distinct_count, 价格分档 where）; 每 channel 一行; yield 读分组键 b.channel。
 rule q16_channel_stats {
     events { b : bid_events }
-    stats<30m:fixed> group by (b.channel) {
+    stats<1d:fixed> group by (b.channel) {
         b | count as total;
         b | count as r1 where b.price < 10000;
         b | count as r2 where b.price >= 10000 && b.price < 1000000;

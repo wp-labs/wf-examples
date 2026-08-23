@@ -5,22 +5,23 @@ use "nexmark.wfs"
 //   按 auction 计 bid 数，再 JOIN 各窗口最大 bid 数 → 每窗口输出 bid 数最多的 auction。
 // —— 最近 10s（每 2s 更新）内 bid 数最多的 auction（top-1 by count）。
 //
-// wfusion 表达：`match<auction:10s:fixed>`（固定 10s 桶，对齐权威 10s 窗口跨度）
-// + `and close` 每桶各 auction 的 count + `conv { sort(-n) | top(1) }` 每收口批取
-// count 最大一条（= 该 10s 桶最热 auction）。
-// ⚠ 近似：权威 HOP 每 2s 滑动更新（10s 窗口重叠）；本地 fixed 10s 桶不重叠、
-// conv 按收口批 top-1（批边界由水位推进决定），输出频率与窗口形状不同，但
-// 「每窗口 bid 数最多的 auction」语义对齐。
+// wfusion 表达：`match<auction:hop(10s, 2s)>`（HOP 滑动窗口，size=10s 每 slide=2s
+// 推进，事件扇入 size/slide=5 个覆盖窗口）+ `and close` 每窗口各 auction 的
+// count + `conv { sort(-n) | top_ties(1) }` 每收口批取 count 最大一条（并列最高
+// count 的 auction 全输出，对齐权威 JOIN 并列语义）。窗口在 w_start+size 收口
+// （slide 对齐），与权威 HOP 同形状；
+// 30M 数据（50min=3000s）≈ (3000-2)/2+1 = 1500 窗（旧 fixed 10s 仅 300 桶，
+// 基数 5× 修正）。
 rule q5_hottest_auction {
     events { b : bid_events }
-    match<auction:10s:fixed> {
+    match<auction:hop(10s, 2s)> {
         on event { b | count >= 1; }
         and close { n: b | count >= 1; }
     } -> score(20.0)
     entity(digit, b.auction)
     yield nexmark_alerts (id = b.auction, alert_type = "q5_hot", detail = "top-1 auction by bid count", request_count = 1)
     conv {
-        sort(-n) | top(1) ;
+        sort(-n) | top_ties(1) ;
     }
     limits { max_memory = "512MB" }
 }
