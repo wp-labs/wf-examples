@@ -1,0 +1,10 @@
+# TCP 入流 source（perf_diag_case）
+connect = "tcp_src"
+enable = true
+key = "ingress"
+stream_tag = ""
+addr = "127.0.0.1"
+port = "9800"
+framing = "len"
+data_format = "arrow_framed"
+instances = 4

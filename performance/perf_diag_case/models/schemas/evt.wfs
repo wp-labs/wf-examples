@@ -1,0 +1,14 @@
+// perf_diag_case — 单流 schema（最小但覆盖规则墙三类成本：count/guard/distinct）
+window evt_events {
+    stream_tag = "evt_events"
+    time = event_time
+    over = 2m
+    fields {
+        sip: ip
+        action: chars
+        code: digit
+        blocked: bool
+        bytes: digit
+        event_time: time
+    }
+}

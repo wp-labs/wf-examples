@@ -1,0 +1,17 @@
+# 哨兵（批末完成信号）记录 —— 诊断模式专用
+#
+# sentinel 事件走内置 __perf_sentinel 窗口 + 哨兵规则（豁免 perf 门控），emit 时
+# 写四元组记录 {round, n, start_ns, emit_ns} → 本 sink 落盘 data/perf_sentinel.ndjson。
+# wfgen perf-diag 从该文件读完成信号，EPS = n/(emit_ns−start_ns) 直接可算。
+#
+# 仅诊断模式（wfusion daemon --perf-diag ...）下 __perf_sentinel 窗口存在；
+# 生产模式本 sink 空转，无副作用。
+[sink_group]
+name = "perf_sentinel_infra"
+windows = ["__perf_sentinel"]
+[[sink_group.sinks]]
+connect = "file_json_sink"
+name = "perf_sentinel_out"
+[sink_group.sinks.params]
+base = "data"
+file = "perf_sentinel.ndjson"
