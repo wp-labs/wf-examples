@@ -1,0 +1,10 @@
+# wp-knowledge 静态表加载（provider 窗口）：daemon 启动时读本文件，把
+# [[tables]] 的 CSV 加载为 ProviderWindow（q13 有界侧输入 side_input）。
+# CSV 相对路径 = base_dir（相对本文件所在目录）/ dir / data_file。
+base_dir = "."
+
+[[tables]]
+name = "side_input"
+enabled = true
+dir = "side_input"
+data_file = "side_input.csv"

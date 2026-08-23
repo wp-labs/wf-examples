@@ -37,6 +37,19 @@ mode = "local"
 max_window_bytes = "2GB"
 over_cap = "2d"
 
+# q13 双规则链中间窗口（q13a on each → bid_mod → q13b snapshot join side_input）
+[window.bid_mod]
+mode = "local"
+max_window_bytes = "2GB"
+over_cap = "2d"
+
+# q13 有界侧输入静态表（knowdb CSV 加载 key 0..9999 → value；nexmark.wfs 的
+# window<provider> side_input；daemon 从 knowdb.toml 加载 data/side_input/side_input.csv）
+[window.side_input]
+mode = "local"
+table = "side_input"
+over_cap = "0s"
+
 # 输出窗口（over=0）
 [window.nexmark_alerts]
 mode = "local"

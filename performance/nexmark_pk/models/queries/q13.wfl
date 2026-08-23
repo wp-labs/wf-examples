@@ -1,32 +1,71 @@
 use "nexmark.wfs"
 
-// Q13 — Bounded Side Input Join（权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q13，扩展）
-// 权威 SQL：bid ⋈ 文件侧输入 side_input FOR SYSTEM_TIME AS OF B.p_time
-//   ON mod(B.auction, 10000) = S.key（有界侧输入 enrichment）。
+// Q13 — Bounded Side Input Join（权威语义：NEXMARK_AUTHORITATIVE_SEMANTICS.md Q13）
+// 权威 SQL：
+//   SELECT B.auction, B.bidder, B.price, B.dateTime, S.`value`
+//   FROM (SELECT *, PROCTIME() as p_time FROM bid) B
+//   JOIN side_input FOR SYSTEM_TIME AS OF B.p_time AS S
+//   ON mod(B.auction, 10000) = S.key;
+// —— 每 bid 一行，按 mod(auction,10000) 查有界侧输入静态表（key 0..9999）
+//    富化 value 输出（流 enrichment）。
 //
-// wfusion 表达：bid ⋈ person 快照 join（`b.bidder == person_events.id`）——把
-// person 表作为（准静态）侧输入，每条 bid 快照查找 bidder → person。
-// ⚠ 近似：键不同（权威 mod(auction,10000) 查文件 side_input；本地 bidder 查
-// person 窗口），但「流 + 有界侧输入 enrichment」形状对齐（person 流近静态 2%，
-// 侧输入近似成立）。
+// wfusion 表达（双规则链，q4 同款 pipe 模式）：
+// - 内层 q13a：`on each b` yield 到中间窗口 `bid_mod`——每 bid 一行，预计算
+//   mod_key = b.auction % 10000（join 条件只支持字段引用，mod 表达式先物化）。
+// - 外层 q13b：`on each m` + `join side_input snapshot on m.mod_key ==
+//   side_input.key`——snapshot join 查 provider 静态表（knowdb CSV 加载），
+//   miss 保留事件不富化（snapshot 外联语义），命中富化 value。
+// 输出基数 = 每 bid 一行（对齐权威；join miss 的 bid 富化 value 为空字符串）。
 //
-// 执行形态：`on each b`（2026-08-23 RSS/EPS 归因后从 match 形态改写）。旧
-// `match<bidder:10m> { on event { b | count >= 1 } }` 每事件必匹配，输出与
-// `on each` 完全等价（每 bid 一条 alert），但走 CEP 行式路径（advance + exec +
-// emit 90% CPU）→ 消费 1.7M/s < 推入 3M/s → ack floor 落后 → bid 窗口持积压
-// → q13 30M RSS 22GB。each 形态列式直通 + 索引 join ≈ 2.5M/s、RSS -70%。
-// 快照 join miss 时事件保留（无富化），与 match 形态一致。
-rule q13_bid_person_join {
+// 注：join-then-key 的 key 必须落在右窗键字段；本链用 provider 静态表
+// （`window<provider> side_input`），daemon 从 knowdb.toml 加载
+// data/side_input/side_input.csv（key 0..9999）。
+rule q13a_bid_mod {
     events { b : bid_events }
     on each b -> score(10.0)
-    join person_events snapshot on b.bidder == person_events.id
     entity(digit, b.bidder)
-    yield nexmark_alerts (id = b.bidder, alert_type = "q13_sidejoin", detail = "bid joined person", request_count = 1)
+    yield bid_mod (
+        id = b.bidder,
+        bidder = b.bidder,
+        auction = b.auction,
+        price = b.price,
+        dateTime = b.dateTime,
+        mod_key = b.auction % 10000
+    )
 }
 
-test q13_hit for q13_bid_person_join {
+rule q13b_side_input_join {
+    events { m : bid_mod }
+    on each m -> score(10.0)
+    join side_input snapshot on m.mod_key == side_input.key
+    entity(digit, m.bidder)
+    yield nexmark_alerts (
+        id = m.bidder,
+        alert_type = "q13_sidejoin",
+        detail = fmt("{}", side_input.value),
+        request_count = 1
+    )
+}
+
+test q13a_mod_key for q13a_bid_mod {
   input {
-    row(b, auction = 1, bidder = 5, price = 100, channel = "G", url = "u");
+    row(b, auction = 12345, bidder = 5, price = 100, channel = "G", url = "u");
+  }
+  // mod(12345, 10000) = 2345 → 中间窗口 mod_key 字段
+  expect { hits == 1; }
+}
+
+test q13b_hit for q13b_side_input_join {
+  input {
+    row(m, id = 5, auction = 2345, price = 100, dateTime = 0, mod_key = 2345);
   }
   expect { hits == 1; hit[0].entity_id == "5"; }
+}
+
+test q13b_miss_keeps_event for q13b_side_input_join {
+  input {
+    row(m, id = 7, auction = 1, price = 100, dateTime = 0, mod_key = 99999);
+  }
+  // side_input 无 key=99999 → snapshot miss 保留事件（不富化）
+  expect { hits == 1; hit[0].entity_id == "7"; }
 }

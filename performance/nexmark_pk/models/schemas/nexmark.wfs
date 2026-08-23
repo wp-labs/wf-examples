@@ -86,3 +86,28 @@ window auction_finals {
         dateTime: time
     }
 }
+
+// Q13 内层中间窗口：每 bid 一行 + 预计算 mod(auction,10000)（侧输入 join 键）。
+// 外层 q13b 按 mod_key 查 side_input 静态表富化（NEXMARK_AUTHORITATIVE_SEMANTICS.md
+// Q13 Bounded Side Input Join：ON mod(B.auction, 10000) = S.key）。
+window bid_mod {
+    time = dateTime
+    over = 1h
+    fields {
+        id: digit
+        bidder: digit
+        auction: digit
+        price: digit
+        dateTime: time
+        mod_key: digit
+    }
+}
+
+// Q13 有界侧输入（side_input.txt 静态表：key 0..9999 → value，knowdb CSV 加载）。
+// 权威 SQL：JOIN side_input FOR SYSTEM_TIME AS OF B.p_time ON mod(B.auction,10000)=S.key
+window<provider> side_input {
+    fields {
+        key: digit
+        value: chars
+    }
+}

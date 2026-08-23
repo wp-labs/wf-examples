@@ -368,7 +368,11 @@ for line in open('data/metrics.ndjson'):
 print(s)"
 }
 
-# pull 完成信号：三输入窗口最新 acked_lag 之和（0 = 规则全消费完）。
+# pull 完成信号：**所有被消费窗口**（三输入流 + 中间管道窗口如 bid_mod /
+# auction_finals）最新 acked_lag 之和（0 = 所有规则已消费到最新）。2026-08-23
+# q13：中间管道下游（q13b）消费滞后时，只查三输入流会提前 SIGTERM（广播
+# seq 用真实批次后，中间窗口的 acked_lag 反映消费进度；nexmark_alerts 等无
+# 消费者窗口 min_acked=u64::MAX → lag 恒 0，不受影响）。
 engine_acked_lag() {
   "$PY" -c "
 import json
@@ -376,7 +380,7 @@ lag={}
 for line in open('data/metrics.ndjson'):
     try: o=json.loads(line)
     except: continue
-    if o.get('name')=='acked_lag' and o.get('label') in ('auction_events','bid_events','person_events'):
+    if o.get('name')=='acked_lag':
         lag[o.get('label')]=int(o.get('value',0))
 print(sum(lag.values()))"
 }
