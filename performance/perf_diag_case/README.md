@@ -18,7 +18,7 @@
 
 - **1 个流** `evt_events`（sip/action/code/blocked/bytes，100k 事件，确定性 seed）——
   最小但覆盖规则墙；
-- **~24 条规则**（3 类 × 8）：count（`c_*`）/ guard（`g_*`）/ distinct（`d_*`）——
+- **21 条规则**（3 类 × 7）：count（`c_*`）/ guard（`g_*`）/ distinct（`d_*`）——
   三类在规则墙上成本不同，验证墙梯能区分；
 - **sink**：`infra.d/perf_sentinel.toml` 把哨兵告警落盘 `data/perf_sentinel.ndjson`。
 
