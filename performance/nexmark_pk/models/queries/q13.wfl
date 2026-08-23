@@ -9,15 +9,19 @@ use "nexmark.wfs"
 // ⚠ 近似：键不同（权威 mod(auction,10000) 查文件 side_input；本地 bidder 查
 // person 窗口），但「流 + 有界侧输入 enrichment」形状对齐（person 流近静态 2%，
 // 侧输入近似成立）。
+//
+// 执行形态：`on each b`（2026-08-23 RSS/EPS 归因后从 match 形态改写）。旧
+// `match<bidder:10m> { on event { b | count >= 1 } }` 每事件必匹配，输出与
+// `on each` 完全等价（每 bid 一条 alert），但走 CEP 行式路径（advance + exec +
+// emit 90% CPU）→ 消费 1.7M/s < 推入 3M/s → ack floor 落后 → bid 窗口持积压
+// → q13 30M RSS 22GB。each 形态列式直通 + 索引 join ≈ 2.5M/s、RSS -70%。
+// 快照 join miss 时事件保留（无富化），与 match 形态一致。
 rule q13_bid_person_join {
     events { b : bid_events }
-    match<bidder:10m> {
-        on event { b | count >= 1; }
-    } -> score(10.0)
+    on each b -> score(10.0)
     join person_events snapshot on b.bidder == person_events.id
     entity(digit, b.bidder)
     yield nexmark_alerts (id = b.bidder, alert_type = "q13_sidejoin", detail = "bid joined person", request_count = 1)
-    limits { max_memory = "512MB" }
 }
 
 test q13_hit for q13_bid_person_join {
