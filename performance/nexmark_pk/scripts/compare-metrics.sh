@@ -1,7 +1,7 @@
 #!/bin/bash
 # 指标偏离检测——当前 bench 结果 vs 预期基线（VVR/OSS）
 #
-# 读 data/bench_*_replay.txt 的 EPS/RSS/CPU，与 OSS_VVR_BASELINE.md 的
+# 读 data/bench_*_replay.txt 的 EPS/RSS/CPU，与 docs/OSS_VVR_BASELINE.md 的
 # VVR/OSS RPS 对比，输出偏离表：< 0.5×VVR 标 ⚠（性能需优化）。
 #
 # 用法：scripts/compare-metrics.sh [data目录]
@@ -11,7 +11,7 @@
 set -e
 cd "$(dirname "$0")/.."
 DATA_DIR="${1:-data}"
-BASE="OSS_VVR_BASELINE.md"
+BASE="docs/OSS_VVR_BASELINE.md"
 
 python3 - "$DATA_DIR" "$BASE" <<'PYEOF'
 import os, re, sys
@@ -21,7 +21,7 @@ data_dir, base = sys.argv[1:3]
 def num(s):
     return int(s.replace(",", ""))
 
-# 预期基线：OSS_VVR_BASELINE.md 表格（| qN | OSS ms | OSS RPS | VVR ms | VVR RPS | × |）
+# 预期基线：docs/OSS_VVR_BASELINE.md 表格（| qN | OSS ms | OSS RPS | VVR ms | VVR RPS | × |）
 expect = {}
 with open(base) as f:
     for line in f:

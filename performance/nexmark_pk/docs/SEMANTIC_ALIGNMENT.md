@@ -3,7 +3,7 @@
 > 用途：PK 对比前必须先确认"比的是同一个查询"。本文记录 wfusion 各 NEXMark 查询
 > 与标准 NEXMark / 阿里白皮书（Flink）的**语义对齐状态、对齐逻辑与验证锚点**，
 > 防止拿错语义的数字做 PK 结论（q3 曾因此出现 1.4× 假象，见 §5）。
-> 与 `README.md`（套件结构）、`OSS_VVR_BASELINE.md`（OSS/VVR 基线）、
+> 与 `../README.md`（套件结构）、`OSS_VVR_BASELINE.md`（OSS/VVR 基线）、
 > `NEXMARK.md`（基准背景/数据/正确性）互为配套。
 
 ## 1. 为什么需要语义对齐
@@ -68,7 +68,7 @@ wfgen verify-nexmark <N> --query qN
 | q21 | ✅ 对齐（2026-08-21 重写） | **Add channel id**：每 bid 输出 channel_id（CASE WHEN 热通道 0/1/2/3 + REGEXP_EXTRACT url） | `on each` 投影 `b.channel_id`（数据侧计算） | 见 §5.9：旧 anti join 能力面作废；wfl 无 CASE WHEN/正则，channel_id 在 wfgen 生成时计算（等价 SQL 值） |
 | q22 | ✅ 对齐（2026-08-21 重写） | **URL Directories**：每 bid 取 url split('/') 索引 3/4/5 | `on each` + `split(b.url,"/")` + `mvindex` 投影 | 语义对齐（0 基 split + mvindex 等价 SPLIT_INDEX） |
 
-> 判定依据：各 `models/queries/*.wfl` 头部注释 + 对拍验证。q4/q6/q9 三类未完全对齐
+> 判定依据：各 `../models/queries/*.wfl` 头部注释 + 对拍验证。q4/q6/q9 三类未完全对齐
 > 的查询，PK 表格中须标注（见 §6）。
 
 ## 5. 案例：Q3 语义对齐全过程（2026-08-21）

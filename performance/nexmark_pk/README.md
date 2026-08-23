@@ -2,7 +2,7 @@
 
 与 Flink 对齐的 PK case：**同一份权威基准数据（NEXMark）+ 同一批查询（Q1~Q22）+ 同输出
 口径（blackhole 丢弃）**，跑引擎实测吞吐与输出正确性，对照阿里 Nexmark 白皮书发布的
-OSS Flink / VVR 基线。查询覆盖与语义对齐判定见 `CAPABILITY_GAP_MATRIX.md`（22 条全实现）；
+OSS Flink / VVR 基线。查询覆盖与语义对齐判定见 `docs/CAPABILITY_GAP_MATRIX.md`（22 条全实现）；
 **性能数字以当次跑批 `data/bench_*_replay.txt` 为准**（历史实测报告已清理，见 git 历史）。
 
 ## 目录结构
@@ -36,17 +36,17 @@ data/                    # 运行产物（gitignore）：帧文件、bench 结�
 随机生成（官方数组与 nextString）、extra 补齐到 avgByteSize（200/500/100）。
 **同一 count + seed 的生成结果字节级确定**（`wfgen gen-nexmark`，确定性已验证）。
 与 Flink 官方定义的**逐项对照（含残余差异说明）**见
-[`NEXMARK_CONFORMANCE.md`](./NEXMARK_CONFORMANCE.md)；`gen-nexmark --check` 与
+[`NEXMARK_CONFORMANCE.md`](./docs/NEXMARK_CONFORMANCE.md)；`gen-nexmark --check` 与
 `verify-nexmark` 会在报告尾部自动输出符合性摘要。
 
 ## 查询：与 Flink Nexmark 测试集的逻辑匹配度
 
 Flink 参照系 = 官方 `nexmark/nexmark` 测试集 **Q1~Q22 全部 22 条查询**（`qN.sql`，
-权威原文见 `NEXMARK_AUTHORITATIVE_SEMANTICS.md`）。22 条已全部实现（`models/queries/`），
+权威原文见 `docs/NEXMARK_AUTHORITATIVE_SEMANTICS.md`）。22 条已全部实现（`models/queries/`），
 逐条判定（18 已有 / Q12 待补强 / Q6·Q11·Q13 特殊口径）见
-[`CAPABILITY_GAP_MATRIX.md`](./CAPABILITY_GAP_MATRIX.md)，复核见
-[`REVIEW_FLINK_CONFORMANCE_2026-08-23.md`](./REVIEW_FLINK_CONFORMANCE_2026-08-23.md)，
-各查询语义对齐细节见 `SEMANTIC_ALIGNMENT.md` / `SEMANTIC_SUPPORT_MATRIX.md`。
+[`CAPABILITY_GAP_MATRIX.md`](./docs/CAPABILITY_GAP_MATRIX.md)，复核见
+[`REVIEW_FLINK_CONFORMANCE_2026-08-23.md`](./docs/REVIEW_FLINK_CONFORMANCE_2026-08-23.md)，
+各查询语义对齐细节见 `docs/SEMANTIC_ALIGNMENT.md` / `docs/SEMANTIC_SUPPORT_MATRIX.md`。
 
 ### 正确性验证（30M replay，seed=1）
 
@@ -55,14 +55,14 @@ Flink 参照系 = 官方 `nexmark/nexmark` 测试集 **Q1~Q22 全部 22 条查�
 （git-diff 同款分层：L1 哈希 → L2 Myers → L3 明细，退出码 0=一致 / 1=有差异）。
 
 - **全量 30M replay**：22 查询全部 `[clean]`（appended 30M/30M + 致命计数器归零），
-  登记见 `CAPABILITY_GAP_MATRIX.md` §一。
+  登记见 `docs/CAPABILITY_GAP_MATRIX.md` §一。
 - **`--verify` oracle 对拍**：Q8 已修复并对拍一致（10M = 82,446 identical；三处根因：
   到期 miss 的 join 目标 append 滞后 → EOS 重试补出、shutdown flush 的 EMIT 指标尾部导出、
   flush 按最终事件水位收口不误扫尾部桶）；Q9 同口径一致；其余查询的 daemon 级对拍
   **待跑**（Q19 stats oracle 未接入 = known-diff，标 ⚠ 不判失败）。
 - 逐 alert 明细对拍（旧 28k 探针 `alerts.ndjson` 方案）随引擎 sink 改造已由计数级对拍替代。
 - 各查询 EMIT 期望值 / 已知波动 / 特殊口径（Q11 分片、Q12 处理时间近似、Q13 形状对齐）
-  见 `CAPABILITY_GAP_MATRIX.md` §一·§二 与 `SEMANTIC_ALIGNMENT.md` §5~§6。
+  见 `docs/CAPABILITY_GAP_MATRIX.md` §一·§二 与 `docs/SEMANTIC_ALIGNMENT.md` §5~§6。
 
 > **100M 吞吐跑批的正确性侧证（2026-08-17 记录）**：当时 Q1-Q9 全 clean、
 > q2=747,816（0.8129%）、q9=6,000,000（记录见 git 历史）。

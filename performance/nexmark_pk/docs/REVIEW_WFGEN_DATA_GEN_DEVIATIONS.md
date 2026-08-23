@@ -128,4 +128,4 @@ let ns = BASE_NS + event_id * INTER_EVENT_DELAY_NS;
 3. **[低] #3/#4/#6** ✅ 已按官方 `nextExtra`/`nextString`/`nextExactString` 重写。
 4. **[低] #5 冷渠道** ✅ 改为均匀随机 + `Integer.reverse(i)`，`channel_id` 字段与 URL 参数一致并加自检。
 
-> 注：本审查不评价 wfgen 查询侧 (`q*.wfl`) 与官方 SQL 的语义对齐——那部分见 `REVIEW_FLINK_SEMANTIC_ALIGNMENT.md`。本文件只针对**数据生成器**。
+> 注：本审查不评价 wfgen 查询侧 (`q*.wfl`) 与官方 SQL 的语义对齐——那部分见 `REVIEW_FLINK_CONFORMANCE_2026-08-23.md`。本文件只针对**数据生成器**。

@@ -288,5 +288,5 @@ public static String nextExtra(SplittableRandom random, int currentSize, int des
 
 - 本文件"权威"指官方 `nexmark/nexmark` 仓库 `nexmark-flink` 模块的生成器源码。这是 Flink NexMark 基准中**数据如何产生**的唯一可执行定义。
 - 与原始 NEXMark 论文（2002）的关系：本生成器是 Flink 对论文基准的**实现**，部分常量（州/城市列表、价格对数分布、`numActivePeople` 等）为 Flink 版特有，以源码为准。
-- 我们的 `nexmark_pk` 自有数据生成器若要对齐 Flink-test，须满足上述：ID 基线（1000/1000/10）、事件比例（1:3:46）、价格对数分布、热拍卖/热卖家/热买家/热渠道概率、确定性时间戳（baseTime + eventNumber*100µs）、类别取值 10..14、三流 PK/FK 可 join 等。具体对齐核对见 `REVIEW_FLINK_SEMANTIC_ALIGNMENT.md`（数据生成对齐部分）。
+- 我们的 `nexmark_pk` 自有数据生成器若要对齐 Flink-test，须满足上述：ID 基线（1000/1000/10）、事件比例（1:3:46）、价格对数分布、热拍卖/热卖家/热买家/热渠道概率、确定性时间戳（baseTime + eventNumber*100µs）、类别取值 10..14、三流 PK/FK 可 join 等。具体对齐核对见 `REVIEW_WFGEN_DATA_GEN_DEVIATIONS.md`（数据生成对齐部分）。
 - 若需核对最新原文，以仓库 raw URL 为准（本文件为 2026-08-21 快照）。

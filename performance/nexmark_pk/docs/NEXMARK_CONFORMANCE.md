@@ -67,7 +67,7 @@
 3+rand(max-3)+special、cold 通道均匀随机 + `abs(Integer.reverse(i))` 且 90% 追加
 （官方 `random.nextInt(10)>0`，10% 无参数）、URL 目录可含 '_'。**数据跨度随
 count 线性增长**（30M → 3000s ≈ 50min），30s 时间桶数动态；30M 帧指纹
-`25e75749…` 再次变化，`data/bench_30m_v2.frames` 与 `verify_*.txt` 锚点需重新
+`25e75749…` 再次变化，`../data/bench_30m_v2.frames` 与 `verify_*.txt` 锚点需重新
 生成。oracle 对拍（`verify-nexmark`）的 eos 水位与桶序同步改为动态跨度口径。
 Q21 输出量随 cold 无参 10% 调整为 **95%** 的 bid（官方 WHERE 语义，`q21.wfl`
 加 `channel_id != ""` 过滤）。

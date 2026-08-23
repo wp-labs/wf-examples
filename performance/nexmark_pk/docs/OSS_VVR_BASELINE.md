@@ -2,7 +2,7 @@
 
 > 独立存档阿里云 Nexmark 性能白皮书的 **OSS（开源 Flink）与 VVR（实时计算 Flink）逐查询吞吐数据**，
 > 以及 wfusion 的对照情况。供 PK 对比、报告引用、查询能力评估使用。
-> 与 `README.md`（套件结构）、`NEXMARK.md`（基准背景/数据/正确性）、`CAPABILITY_GAP_MATRIX.md`
+> 与 `../README.md`（套件结构）、`NEXMARK.md`（基准背景/数据/正确性）、`CAPABILITY_GAP_MATRIX.md`
 > （查询能力/语义判定）、`SEMANTIC_ALIGNMENT.md`（各查询语义对齐状态）互为配套。
 
 ## 1. 数据来源与口径
@@ -52,7 +52,7 @@
 
 ## 3. 与 wfusion 的对照（最新跑批为准）
 
-wfusion 对照数字随引擎版本演进，**最新结果以当次跑批 `data/bench_*_replay.txt` 为准**。
+wfusion 对照数字随引擎版本演进，**最新结果以当次跑批 `../data/bench_*_replay.txt` 为准**。
 2026-08-23 全量 30M replay（wfl 同版本，两轮取稳）：vs OSS 全面领先（3-76×）；
 vs VVR 20/21 项领先（1.5-20×），唯一落后 q14（0.9×，待 100M 重测）。查询形态与能力面
 见 `CAPABILITY_GAP_MATRIX.md`。

@@ -1,7 +1,7 @@
 # NEXMark 基准：背景、查询、数据与正确性标准
 
 > 配套文档：
-> - `README.md` —— 套件结构、bench.sh 用法、测量纪律
+> - `../README.md` —— 套件结构、bench.sh 用法、测量纪律
 > - `CAPABILITY_GAP_MATRIX.md` —— 22 查询逐条能力/语义判定（当前权威）
 
 本文回答五个问题：**Nexmark 是什么？Q1~Q22 做什么测试？数据有什么要求？我们如何准备数据？正确的标准是什么？**
@@ -47,7 +47,7 @@ Flink OSS / VVR、Kafka Streams、Spark Streaming 等）。
 
 NEXMark 标准数据的要求，本实现（`wfgen gen-nexmark`）全部满足：
 
-1. **三流结构**：person/auction/bid 各字段与 NEXMark 事件模型一致（见 `models/schemas/nexmark.wfs`），
+1. **三流结构**：person/auction/bid 各字段与 NEXMark 事件模型一致（见 `../models/schemas/nexmark.wfs`），
    事件时间字段为 `dateTime`（Timestamp）。
 2. **事件时间跨度 ∝ count**：`dateTime = BASE_NS + event_id × 100µs`（官方 `interEventDelayUs=100`
    固定速率）——30M → 3000s ≈ 50min，10m 窗口可完整滑动与过期（窗口聚合/状态机语义可被真实触发）。
@@ -67,19 +67,19 @@ NEXMark 标准数据的要求，本实现（`wfgen gen-nexmark`）全部满足�
 `bench.sh` 的 `feed=replay`（PK 口径）数据准备管线，产物全部可缓存复用：
 
 ```
-1. 生成        wfgen gen-nexmark <N>                     → data/burst_bench.jsonl（N 条 JSONL 事件流）
-2. 预编码帧    wfgen dump-frames --scenario nexmark.wfg   → data/bench_<N>[_mb<bytes>].frames
+1. 生成        wfgen gen-nexmark <N>                     → ../data/burst_bench.jsonl（N 条 JSONL 事件流）
+2. 预编码帧    wfgen dump-frames --scenario nexmark.wfg   → ../data/bench_<N>[_mb<bytes>].frames
                    --input burst_bench.jsonl --max-frame-bytes <MAX_FRAME_BYTES>（默认 8MiB）
                    （事件流编码成 Arrow IPC 帧文件，跨查询复用，存在即不重生成）
 3. 按键分片（仅 CONNECTIONS>1）：
                wfgen shard-frames --shards <C> --shard-keys "bid_events:auction,auction_events:id,person_events:id"
-                   → data/shard_<N>_c<C>_k<md5>.frames（同 key 同分片，键闭包）
+                   → ../data/shard_<N>_c<C>_k<md5>.frames（同 key 同分片，键闭包）
 4. 回放        send-arrow --shard-files …（CONNECTIONS 条 TCP 连接并发推，每连接一份分片）
-                   → 引擎 daemon（conf/wfusion.toml，端口 9800）
+                   → 引擎 daemon（../conf/wfusion.toml，端口 9800）
 ```
 
 **要点**：
-- **帧文件缓存**：`data/bench_<total>.frames` 跨查询/跨跑复用（预编码避免每次重复生成）。
+- **帧文件缓存**：`../data/bench_<total>.frames` 跨查询/跨跑复用（预编码避免每次重复生成）。
 - **键闭包分片**：`SHARD_KEYS` 让同一 key 的事件走同一连接，保证**有状态规则并发安全**
   （实测 emitted 与单连接逐位一致）。
 - **正确性另有 `feed=stream`**（wfgen 实时生成注入）用于长稳/正确性，非吞吐 PK。
@@ -192,7 +192,7 @@ q5 30m 432MB < 512MB 不触发 ✅——这就是 30m 对拍只有 q17/q19/q20 �
   `--no-sort` 保留旧 phase-major）。
 - **`bench.sh` 默认单连接**（`CONNECTIONS=1`、`SHARD_KEYS` 空）+ 帧缓存带 `DATA_VER`（默认
   v2）指纹，旧乱序缓存自动失效。
-- **窗口字节预算按查询显式配置**（`models/schemas/windows.toml`：bid_events 256MB，
+- **窗口字节预算按查询显式配置**（`../models/schemas/windows.toml`：bid_events 256MB，
   2026-08-23，远端 `over_cap` 保留）——**有状态/join 查询的 join 目标窗口数据不可调小**，
   否则被驱逐破坏正确性。
 - 多连接（key 分片）仅在有状态负载需要键闭包时使用；引用内存数字必须标注注入方式与 DATA_VER。
