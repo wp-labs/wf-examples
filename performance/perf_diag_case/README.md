@@ -72,3 +72,12 @@ cat data/perf_diag_wall.txt            # 墙表：EPS 单调 + 增量成本
 - [ ] 每档完成信号（sentinel emit）出现后 `perf_point` 推进到下一档（无超时卡死）；
 - [ ] 墙表三档 EPS 单调 `floor ≥ rules ≥ full`，增量成本非负（噪声容差 ±10%）；
 - [ ] 全程单 daemon 未重启（pid 不变）。
+
+## 质量门禁（实现验收）
+
+1. **新增代码单测覆盖率 ≥ 90%**：`PerfConfig` 解析、门控切口（cut_rules/cut_output）、
+   内置哨兵窗口/规则/指标、诊断点状态机、`wfgen perf-diag`（EPS 计算与哨兵读取逻辑
+   抽成库函数以便单测）——按 `cargo llvm-cov` 行覆盖率口径；
+2. **case 下性能 ≥ 10M EPS**：`floor` 档（管道净段）用 **N ≥ 1M** 验收（100k 太小受
+   固定开销影响）——单流小字段的管道吞吐应高于 qradar 6 流 floor（9.7M），目标 10M+。
+   verify.sh 增断言：`--n-list "100k,1m"` 的 1m floor EPS ≥ 10M。
