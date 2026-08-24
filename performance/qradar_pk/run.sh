@@ -52,12 +52,16 @@ if [ -z "$WFUSION" ] || [ -z "$WFGEN" ]; then
 fi
 [ "$FROM_REPO" = 1 ] || echo "   （未找到 $PROFILE 构建，回退 PATH：${WFUSION} / ${WFGEN}）" >&2
 PY=${PYTHON:-python3}
+LIB="../scripts/bench_lib.py"   # 共享度量工具库（comma/引擎游标/告警摘要，两 case 共用）
 PORT=9800
 N="${1:-200000}"
 case "$N" in
   ''|*[!0-9]*) echo "用法: ./run.sh [事件数]（默认 200000；环境变量 CHUNK/RATE_MS/PLATEAU 可调）" >&2; exit 1;;
 esac
 METRICS=data/metrics.ndjson
+
+# 千分位显示（macOS bash 3.2 无 printf %'d）；纯逻辑在 bench_lib.py
+comma() { "$PY" "$LIB" comma "$1" 2>/dev/null || echo "$1"; }
 
 # PLATEAU=送达后继续采样 RSS 的秒数（默认 8：实例存活至窗口关闭，送达即杀进程
 # 会严重低估 RSS——README 2026-08-11 口径为"送达后平台期峰值"）。
@@ -66,8 +70,14 @@ PLATEAU="${PLATEAU:-8}"
 # send-arrow 注入（方向 B）：dump-frames 预编码 + 多连接 raw-copy，绕开 `wfgen send`
 # 的 JSONL 实时编码客户端墙。CONNECTIONS>1 是多连接注入；SHARD_KEYS 按流指定
 # match key 做键闭包分片（同 key 同连接，保证有状态规则正确）。
+#
+# 注入路径（2026-08-23 修正）：CONNECTIONS>1 时走 `shard-frames` 预分片 +
+# `send-arrow --shard-files` 纯 copy（nexmark bench.sh 同款，零解码）。已弃用
+# `send-arrow --shard-keys` 动态分片路径：其连接 0 承载全部未分片流（此前
+# SHARD_KEYS 漏了 file_events）+ shard-0 桶，可阻塞整条发送链，且该路径忽略
+# `--rate-bytes`（1M 实测卡死在 711k、file_events=0，TEST_PLAN §7.3 已知边界）。
 CONNECTIONS="${CONNECTIONS:-4}"
-SHARD_KEYS="${SHARD_KEYS:-conn_events:sip,dns_events:sip,proxy_events:sip,firewall_events:sip,auth_events:source_ip}"
+SHARD_KEYS="${SHARD_KEYS:-conn_events:sip,dns_events:sip,proxy_events:sip,firewall_events:sip,auth_events:source_ip,file_events:user}"
 # RATE_BYTES：send-arrow 持续注入速率（bytes/秒），默认 0=不限速（nexmark 用）。
 # 对 qradar 测速务必设 >0（持续注入，禁用 burst——burst 会窗口积压失真，见 TEST_PLAN §3.4）。
 # 注入速率 ≈ 目标EPS × 每事件字节(~244B)。脚本输出「注入墙钟 vs 全墙钟」判断引擎是否跟上。
@@ -83,7 +93,7 @@ done
 echo "==> 0. 启动 daemon（TCP 源 + 指标，report_interval=1s） profile=$PROFILE"
 "$WFUSION" daemon --config conf/wfusion.toml --work-dir . > data/daemon.log 2>&1 &
 DAEMON_PID=$!
-trap 'kill $DAEMON_PID $SAMPLER_PID 2>/dev/null || true' EXIT
+trap 'kill ${SEND_PID:-} $DAEMON_PID $SAMPLER_PID 2>/dev/null || true' EXIT
 
 # RSS 采样循环：优先 macOS footprint；Linux 用 /proc/<pid>/status VmRSS；兜底 ps -o rss=。
 # 每 1s 采样峰值落盘（字节）。送达后由 PLATEAU 控制继续采样时长。
@@ -103,7 +113,7 @@ rss_bytes() {
         K) MULT=1024 ;;
         *) MULT=1 ;;
       esac
-      "$PY" -c "print(int($NUM * $MULT))" 2>/dev/null || echo 0
+      echo $(( NUM * MULT )) 2>/dev/null || echo 0
       return
     fi
   fi
@@ -146,21 +156,9 @@ echo "==> 2b. 预编码帧（dump-frames → ${FRAMES}）"
   --chunk 10000 --max-frame-bytes 8388608 --max-frame-rows 100000 > /dev/null 2>&1
 rm -f data/burst.jsonl
 
-# 送达计数（metrics 中 rows_total 为每区间 delta，累加得总送达）
+# 送达计数（metrics 中 rows_total 为每区间 delta，累加得总送达；逻辑在 bench_lib.py）
 received() {
-  "$PY" - "$METRICS" <<'EOF'
-import json, sys
-s = 0
-try:
-    for line in open(sys.argv[1]):
-        try: o = json.loads(line)
-        except Exception: continue
-        if o.get("name") == "rows_total" and o.get("label") == "ingress":
-            s += int(o.get("value", 0))
-except FileNotFoundError:
-    pass
-print(s)
-EOF
+  "$PY" "$LIB" received "$METRICS" ingress
 }
 
 # 引擎消化信号（pull 模型，与 nexmark bench.sh 同口径）：
@@ -170,77 +168,86 @@ EOF
 # 注意：新引擎 metrics 为区间差值，append_total/emitted_total 均须**全文件求和**
 # （旧版读尾部 2MB + emitted 停滞判定在 30MB 级文件下恒判停滞，2026-08-23 修复）。
 STREAMS="auth_events conn_events dns_events file_events firewall_events proxy_events"
+STREAMS_CSV="$(echo "$STREAMS" | tr ' ' ',')"
 engine_appended() {
-  "$PY" - "$METRICS" "$STREAMS" <<'EOF'
-import json, sys
-path, streams = sys.argv[1], set(sys.argv[2].split())
-s = 0
-try:
-    for line in open(path, errors="replace"):
-        try: o = json.loads(line)
-        except Exception: continue
-        if o.get("name") == "append_total" and o.get("label") in streams:
-            s += int(o.get("value", 0))
-except FileNotFoundError:
-    pass
-print(s)
-EOF
+  "$PY" "$LIB" appended "$METRICS" "$STREAMS_CSV"
 }
 engine_acked_lag() {
-  "$PY" - "$METRICS" "$STREAMS" <<'EOF'
-import json, sys
-path, streams = sys.argv[1], set(sys.argv[2].split())
-lag = {}
-try:
-    for line in open(path, errors="replace"):
-        try: o = json.loads(line)
-        except Exception: continue
-        if o.get("name") == "acked_lag" and o.get("label") in streams:
-            lag[o["label"]] = int(o.get("value", 0))
-except FileNotFoundError:
-    pass
-print(sum(lag.values()))
-EOF
+  "$PY" "$LIB" acked-lag "$METRICS" "$STREAMS_CSV"
 }
 
-# send-arrow 多连接注入（raw-copy，瞬时推完），再等引擎消化（emitted 累计停滞）。
-if [ "$CONNECTIONS" -gt 1 ]; then
-  echo "==> 3. send-arrow ${CONNECTIONS} 连接注入（SHARD_KEYS=${SHARD_KEYS%%:*},... raw-copy）"
-else
-  echo "==> 3. send-arrow 单连接注入（raw-copy）"
-fi
-START=$($PY -c 'import time; print(time.time())')
+# send-arrow 多连接注入（后台化），再等引擎消化（append 追平 + acked_lag 归零）。
+# CONNECTIONS>1：shard-frames 预分片（键闭包，同 key 同连接）→ send-arrow --shard-files
+# 纯 copy 零解码（分片文件按 N×CONNECTIONS×shard-keys 指纹缓存，换键不静默复用）。
+# CONNECTIONS=1：单连接 raw-copy（无需分片，顺序天然保证键闭包）。
 # rate 参数：RATE_BYTES>0 时加 --rate-bytes（限速匀速注入）；否则不限速。
 RATE_ARG=""
 if [ "$RATE_BYTES" -gt 0 ]; then RATE_ARG="--rate-bytes $RATE_BYTES"; fi
-if [ "$CONNECTIONS" -gt 1 ] && [ -n "$SHARD_KEYS" ]; then
+if [ "$CONNECTIONS" -gt 1 ]; then
+  echo "==> 3. shard-frames(${CONNECTIONS} 分片) + send-arrow --shard-files 注入（SHARD_KEYS=${SHARD_KEYS%%:*},...）"
+  SHARD_KEY_FP=$("$PY" "$LIB" md5 "$SHARD_KEYS")
+  SHARD_PREFIX="data/shard_${N}_c${CONNECTIONS}_k${SHARD_KEY_FP}"
+  SHARD_FILES=""
+  i=0
+  while [ "$i" -lt "$CONNECTIONS" ]; do
+    [ -s "${SHARD_PREFIX}.s${i}.frames" ] || { SHARD_FILES=""; break; }
+    SHARD_FILES="${SHARD_FILES:+$SHARD_FILES,}${SHARD_PREFIX}.s${i}.frames"
+    i=$(( i + 1 ))
+  done
+  if [ -z "$SHARD_FILES" ]; then
+    echo "    预分片 → ${SHARD_PREFIX}.s0..s$(( CONNECTIONS - 1 )).frames"
+    "$WFGEN" shard-frames --input "$FRAMES" --shards "$CONNECTIONS" \
+      --shard-keys "$SHARD_KEYS" --output-prefix "$SHARD_PREFIX" > /dev/null 2>&1 || {
+      echo "ERROR: shard-frames 失败（检查 SHARD_KEYS 的 key 字段是否在对应流 schema）" >&2
+      exit 1
+    }
+    SHARD_FILES=""
+    i=0
+    while [ "$i" -lt "$CONNECTIONS" ]; do
+      SHARD_FILES="${SHARD_FILES:+$SHARD_FILES,}${SHARD_PREFIX}.s${i}.frames"
+      i=$(( i + 1 ))
+    done
+  fi
   "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT \
-    --connections "$CONNECTIONS" --shard-keys "$SHARD_KEYS" $RATE_ARG > /dev/null 2>&1 \
-    || "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT --connections "$CONNECTIONS" $RATE_ARG > /dev/null 2>&1
-elif [ "$CONNECTIONS" -gt 1 ]; then
-  "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT --connections "$CONNECTIONS" $RATE_ARG > /dev/null 2>&1
+    --shard-files "$SHARD_FILES" $RATE_ARG > /dev/null 2>&1 &
 else
-  "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT $RATE_ARG > /dev/null 2>&1
+  echo "==> 3. send-arrow 单连接注入（raw-copy）"
+  "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT $RATE_ARG > /dev/null 2>&1 &
 fi
-SEND_DONE=$($PY -c 'import time; print(time.time())')
+SEND_PID=$!
+START=$("$PY" "$LIB" now)
 # 等引擎消化：append 追平 N 且 acked_lag 归零（超时保护：上限按最低能力外推）。
+# 长等待期每 10s 报一次进度（0.5s 轮询），避免全程静默像挂死。
+# INJ_END = append 首次追平 N（注入+append 完成）——注入墙钟的计时点；
+# END = 再等 acked_lag 归零（规则全部消化）——全墙钟的计时点。
 MAX_SEC=$(( N / 100000 + 600 ))
-TIMEOUT=0; END=""; DRAINED=1
+TIMEOUT=0; END=""; INJ_END=""; DRAINED=1
 for i in $(seq 1 $((MAX_SEC * 2))); do
   APP=$(engine_appended)
   DRAINED=$(engine_acked_lag)
+  if [ -z "$INJ_END" ] && [ "${APP:-0}" -ge "$N" ]; then
+    INJ_END=$("$PY" "$LIB" now)
+  fi
   if [ "${APP:-0}" -ge "$N" ] && [ "${DRAINED:-1}" = "0" ]; then
-    END=$($PY -c 'import time; print(time.time())'); break
+    END=$("$PY" "$LIB" now); break
+  fi
+  if [ $(( i % 20 )) -eq 0 ]; then
+    echo "  ingest: ${APP:-0}/${N} ack_lag=${DRAINED:-1}（等待引擎消化，超时上限 ${MAX_SEC}s）"
   fi
   sleep 0.5
 done
-[ -n "$END" ] || { END=$($PY -c 'import time; print(time.time())'); TIMEOUT=1; }
-ELAPSED=$($PY -c "print($END - $START)")
+[ -n "$END" ] || { END=$("$PY" "$LIB" now); TIMEOUT=1; }
+[ -n "$INJ_END" ] || INJ_END="$END"
+# 追平后收掉注入客户端（多连接分片路径已推完；保险清理，防端口占用）。
+# sender 可能已自行退出（kill 返回 1）；wait 返回信号退出码——两者都必须 || true，
+# 否则 set -e 会在此处杀掉脚本、丢掉结果输出。
+kill "$SEND_PID" 2>/dev/null || true; wait "$SEND_PID" 2>/dev/null || true
+ELAPSED=$("$PY" "$LIB" diff-ns "$END" "$START")
 D=$(received)
 APP=$(engine_appended)
-EPS=$($PY -c "print(int($APP / $ELAPSED))" 2>/dev/null || echo 0)
+EPS=$("$PY" "$LIB" eps "$APP" "$START" "$END")
 TO_MARK=""; [ "$TIMEOUT" = 1 ] && TO_MARK=" ⚠TIMEOUT(appended未追平,EPS=实际处理速率)"
-INJ_S=$($PY -c "print(f'{$SEND_DONE-$START:.1f}')")
+INJ_S=$("$PY" "$LIB" diff-ns "$INJ_END" "$START")   # 注入墙钟 = INJ_END−START
 echo "    接收 $D / $N 事件：注入墙钟 ${INJ_S}s，全墙钟(引擎消化完)${ELAPSED}s (appended=$APP, acked_lag=$DRAINED, 限速=${RATE_BYTES}B/s)$TO_MARK"
 echo "    EPS = $EPS events/sec (send-arrow ${CONNECTIONS}连接 / 引擎消化口径)"
 
@@ -254,24 +261,7 @@ sleep "$PLATEAU"
 echo ""
 echo "==> #18 回归检查（object 大批次是否被窗口内存驱逐丢弃）"
 EVICT=$(grep -c "in memory eviction" data/wfusion.log 2>/dev/null || true)
-ALERT_SUMMARY=$("$PY" <<'EOF'
-import json, collections
-tot = 0
-c = collections.Counter()
-for line in open("data/metrics.ndjson"):
-    try:
-        o = json.loads(line)
-    except Exception:
-        continue
-    if o.get("name") == "emitted_total":
-        tot += int(o.get("value", 0))
-    elif o.get("name") == "emitted_detail":
-        c[o.get("label", "?")] += int(o.get("value", 0))
-conn = sum(v for k, v in c.items()
-           if not k.startswith(("auth_", "dns_", "pr_", "fw_", "fl_")))
-print(f"emitted={tot} conn_rules={conn} rules_seen={len(c)}")
-EOF
-)
+ALERT_SUMMARY=$("$PY" "$LIB" alert-summary "$METRICS")
 EMITTED=$(echo "$ALERT_SUMMARY" | grep -o 'emitted=[0-9]*' | cut -d= -f2)
 echo "    内存驱逐告警: $EVICT"
 echo "    告警(metrics): $ALERT_SUMMARY"
@@ -289,7 +279,7 @@ fi
 
 echo ""
 PEAK_RSS_BYTES=$(cat "$RSS_FILE" 2>/dev/null || echo 0)
-RSS_MB=$("$PY" -c "print(round($PEAK_RSS_BYTES / 1048576, 1))" 2>/dev/null || echo "?")
+RSS_MB=$("$PY" "$LIB" mb "$PEAK_RSS_BYTES")
 echo "==> 结果：EPS=$EPS  target=10000  RSS_peak=${RSS_MB}MB（footprint 平台期口径）"
 if [ "${EPS:-0}" -ge 10000 ]; then
   echo "OK: 吞吐达标（EPS=${EPS} ≥ 目标 10000）"

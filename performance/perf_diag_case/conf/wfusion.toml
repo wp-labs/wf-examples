@@ -1,0 +1,25 @@
+# perf_diag_case — 诊断机制验证最小 daemon 配置
+# 诊断模式由启动参数进入：wfusion daemon --perf-diag conf/perf-diag.toml（本文件不含诊断配置）
+
+sources_dir = "topology/sources"
+sinks = "topology/sinks"
+windows = "models/schemas/windows.toml"
+
+[runtime]
+parse_parallelism = 2
+# rule_parallelism=1：21 条规则单 worker 串行处理全量事件——让"规则墙"在
+# N=1M 时成为瓶颈（并行 2 时引擎/客户端都 ~20M/s，规则成本被淹没在噪声里）。
+rule_parallelism = 1
+parse_buffer_bytes = 2147483648
+rule_exec_timeout = "30s"
+schemas = "models/schemas/*.wfs"
+rules = "models/rules/*.wfl"
+
+[metrics]
+enabled = true
+report_interval = "100ms"
+
+[logging]
+level = "info"
+format = "plain"
+file = "data/wfusion.log"

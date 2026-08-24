@@ -1,0 +1,27 @@
+# 诊断模式配置（wfusion daemon --perf-diag conf/perf-diag.toml 加载）
+#
+# 入口是 --perf-diag 启动参数本身；本文件只承载诊断档列表。诊断档状态机：
+# sentinel(round=k) emit 后自动应用档 k+1（门控翻转 + 规则 reload），写
+# stage{current=k+1} 切换完成信号。wfgen perf-diag 与 daemon 读同一份。
+# 详见 wp-reactor/docs/design/perf-diag-mode-design.md。
+
+# 诊断档列表（墙梯：尾部向前切，叠加式）
+#   floor = 管道净段（注入+解码+窗口）   rules = +规则求值   full = +输出链
+# 启动即应用 stages[0]（floor）的门控。
+[[stages]]
+name = "floor"
+cut_rules = true
+cut_output = true
+rules = ""               # 空 = 保持当前规则文件
+
+[[stages]]
+name = "rules"
+cut_rules = false
+cut_output = true
+rules = ""
+
+[[stages]]
+name = "full"
+cut_rules = false
+cut_output = false
+rules = ""

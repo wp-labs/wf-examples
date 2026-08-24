@@ -74,6 +74,71 @@ CHUNK=1000 RATE_MS=50 ./run.sh 200000  # 受控持续入流速率（~20k/s）
 （对齐 Flink Nexmark discarding sink 口径，只测处理吞吐不落盘），门禁计数取引擎侧
 metrics 发射计数（`emitted_total` / `emitted_detail` 按规则明细），不依赖落盘文件。
 
+## 性能墙定位：diag.sh
+
+`run.sh` 回答「吞吐是多少」，`diag.sh` 回答「**墙在哪一段/哪一族**」——把
+`RULE_SET_BISECTION.md` 里手工做的规则集二分**机制化**（引擎内置 perf-diag 诊断模式，
+单 daemon 不重启、哨兵驱动自切换）：
+
+```bash
+./diag.sh 200000                          # 三档墙梯：floor → rules → full（预热档默认开）
+WARMUP=0 ./diag.sh 200000                 # 关预热（仅粗看方向时用）
+FAMILIES=c,dist,close,pipe ./diag.sh 200000   # 规则家族档（哪一族贵）
+./diag.sh --list-families                      # 列出 17 个可用家族前缀 + 规则数
+```
+
+- **三档墙梯**（叠加式，尾部向前切）：`floor`=注入+解码+窗口 / `rules`=+450 规则求值 /
+  `full`=+输出链；每档增量 = 该段成本。
+- **家族档**：按 rule 名前缀抽子集（`data/diag_rules_<fam>.wfl`）经 `runtime.rules`
+  热 reload 切换，各家族增量**一律相对 floor**（家族之间非叠加）；报告同时给出
+  「每规则 ns」——125 条的 `c` 族与 3 条的 `pipe` 族不能直接比总量。
+- 输出 `data/diag_<N>.txt`：每档 EPS/耗时/每事件 ns/增量成本/占全链/CPU%/RSS + 墙判定
+  （主墙附基线占比；CPU 占核比 >50% = 忙墙、<15% = 等/供给墙并细分 RSS 堆积/供给侧，
+  方法论 §2.4）+ 健康校验（`appended` 追平、致命计数器）。预热档只占位、不显示数字。
+- **度量逻辑在共享库** `../scripts/bench_lib.py` + `../scripts/diag_analyze.py`（与
+  nexmark_pk 的 bench.sh/diag.sh 共用）：run.sh / diag.sh 只做流程编排，不内嵌代码。
+
+### 实测（2026-08-24，M3 Max 12 核，N=200k，预热档开）
+
+| 档 | EPS | 每事件 ns | 增量 ns | 占比 | CPU 占用 | 判定 |
+|---|---|---|---|---|---|---|
+| floor（管道净段） | 2,798k | 357 | — | — | — | — |
+| rules（+450 规则） | 31,398 | 31,849 | **+31,491** | **72%** | 94% | **忙墙**（计算密集） |
+| full（+输出链） | 22,904 | 43,660 | +11,811 | 27% | 68% | 次墙（输出链真实成本） |
+
+家族档（增量相对 floor）：
+
+| 家族 | 规则数 | 增量 ns/事件 | 每规则 ns |
+|---|---|---|---|
+| `dist`（distinct 去重） | 17 | 31,946 | 1,879 |
+| `c`（conn count） | 125 | 30,998 | 248 |
+| `close`（and-close） | 7 | 30,867 | 4,410 |
+| `pipe`（pipeline） | 3 | 587 | 196 |
+
+> **反直觉但重要的发现**：`dist`(17 条)、`c`(125 条)、`close`(7 条) 三族的增量几乎相等
+> （31.0-31.9k ns，±3%），而 `pipe`(3 条) 只有 587ns。说明规则墙的主体**不是「每条规则
+> 成本累加」，而是一个与规则数几乎无关的 per-event 固定成本**——只要有 ≥1 条走 match
+> 实例路径的规则就要付（`pipe` 不走该路径故便宜）。下一步该收敛的是 match 路径的共享
+> 部分（实例查找/窗口扫描/物化），而不是「减少规则数」。这与 `RULE_SET_BISECTION.md`
+> 的子集定位结论互补。
+
+### 诊断纪律（qradar_pk 特有，违反会得出假结论）
+
+1. **必须解除 `max_ingest_rate`**（diag.sh 默认解除，`KEEP_RATE=1` 可保留）：150k 限速会把
+   三档**全部封顶在 150k**，墙梯彻底失去区分度（测量纪律 §3 的同一条）。
+2. **`report_interval` 保持 1s，不要改 100ms**（与 nexmark_pk 的 diag.sh 相反）：450 规则下
+   每区间导出 ~8.7k 行指标，改 100ms 会让 exporter 自己成为负载并**丢样本**——实测 40s 跑批
+   只导出 52 个区间（≈5.2s），`append_total` 求和只到 19.5%，健康校验误报。哨兵口径不依赖
+   metrics 粒度（这正是设计文档 §4.5 引入哨兵的理由），保持 1s 对 EPS 无影响。
+3. **绝对 EPS 不可与 run.sh 比较**：`wfgen perf-diag` 是**单连接**发送（`send_payload` 只开一条
+   TCP），而 run.sh 用 4 连接键闭包分片注入 → source `instances=4` 只激活 1 个。实测 `rules` 档
+   31.4k vs run.sh 200k 口径 ~96.7k。**相对增量（墙归属）仍成立**，因为各档同为单连接。
+4. **必须 `WARMUP=1`**：墙梯在单 daemon 内顺序跑，首档独自承担窗口冷分配/page fault
+   （nexmark 实测偏差可达 25%，大于弱段的真实成本）。脚本在出现负增量时会报警提示。
+5. **家族档的 reload 校验看 EPS 单调性，不看 `emitted_detail`**：`emitted_detail` 是抽样指标
+   （实测 450 条只采到 7 条）。热 reload 是否生效的强证据是各档 EPS 随规则集变化
+   （`pipe` 3 条 1,068k vs `c` 125 条 31.9k，差 33 倍）+ `appended` 仍 100%（reload 未破坏 ack 链）。
+
 ## 实测结果（release，**450 规则**，2026-08-17）
 
 引擎历经 each 批式向量化（wp-reactor 7382048）、window actor 化、预读有界化、
