@@ -209,9 +209,12 @@ def correctness_summary(metrics_path):
 # ---------------------------------------------------------------------------
 
 def rss_sampler(pid, out_path, interval_s=1.0):
-    """采样进程 RSS + 瞬时 CPU%，输出 "RSS_MB CPU_PCT" 每行。
+    """采样进程 RSS + 瞬时 CPU%，输出 "epoch_ns RSS_MB CPU_PCT" 每行。
 
     - ps %cpu 是生命周期平均，无意义；这里取 cputime 差分/墙钟差分 = 瞬时核占。
+    - 首样本只初始化差分基线（无输出行），第 2 样本起每行都有 CPU 值。
+    - epoch_ns 与哨兵 start_ns/emit_ns 同域（wall-clock）——调用方按引擎活跃窗
+      过滤样本，否则粗采样 + 空闲期稀释会把亚秒级突发报成 0%（实测假象）。
     - ps 被权限拒绝时回退 macOS `footprint`（输出 "Footprint: 912 KB"）。
     - 静默跳过失败样本（不打印 traceback，避免污染输出文件）。
     """
@@ -249,12 +252,14 @@ def rss_sampler(pid, out_path, interval_s=1.0):
                     now = time.time()
                     if prev_ct is not None and now > prev_t:
                         cpu = (ct - prev_ct) / (now - prev_t) * 100.0
-                        print(f"{rss_kb // 1024} {cpu:.1f}", file=out, flush=True)
+                        print(f"{int(now * 1e9)} {rss_kb // 1024} {cpu:.1f}",
+                              file=out, flush=True)
                     prev_ct, prev_t = ct, now
                 else:
                     rss = footprint_rss_kb()
                     if rss is not None:
-                        print(f"{rss // 1024} n/a", file=out, flush=True)
+                        print(f"{int(time.time() * 1e9)} {rss // 1024} n/a",
+                              file=out, flush=True)
                     prev_ct, prev_t = None, time.time()
             except Exception:
                 prev_ct, prev_t = None, time.time()

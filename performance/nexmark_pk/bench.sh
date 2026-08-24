@@ -188,7 +188,13 @@ case "$FEED" in
 esac
 
 mkdir -p data
-CORES=$(sysctl -n hw.ncpu 2>/dev/null || echo "?")
+# 核数探测：Linux 用 nproc（sysctl hw.ncpu 是 macOS 专属，Linux 下会报错 → cores=?
+# 的假象）；macOS 无 nproc 命令，回落 sysctl。
+if command -v nproc >/dev/null 2>&1; then
+  CORES=$(nproc 2>/dev/null || echo "?")
+else
+  CORES=$(sysctl -n hw.ncpu 2>/dev/null || echo "?")
+fi
 echo "== bench: query=$QUERY feed=$FEED total=$(comma "$TOTAL_N") rate=$(comma "$RATE") slice_ms=$SLICE_MS cores=$CORES =="
 
 # 等 daemon 释放端口（kill 后优雅关闭可能慢，尤其高内存 daemon）。否则下一个
@@ -243,18 +249,37 @@ cleanup_daemons
 # 对被中断命令的 trap 行为），残留 daemon 会继续占端口/烧 CPU。
 trap cleanup_daemons EXIT INT TERM
 
-# RSS + 瞬时 CPU% 采样（后台，1s 周期，调用方 kill 结束）。
+# RSS + 瞬时 CPU% 采样（后台，100ms 周期，调用方 kill 结束）。
 # 纯逻辑在 bench_lib.py（rss-sampler）：ps %cpu 是生命周期平均，取 cputime 差分/
 # 墙钟差分 = 瞬时核占数%；ps 被权限拒绝时回退 macOS footprint；静默跳过失败样本。
+# 每行带 epoch_ns（与哨兵 start_ns/emit_ns 同域），stat_samples 按引擎活跃窗过滤——
+# 1s 粗采样对 q2 这类亚秒级突发会漏采/稀释（实测报 CPU 0% 假象）。
 start_rss() {
-  "$PY" "$LIB" rss-sampler "$1" /tmp/bench_rss.txt 1.0 > /dev/null 2>&1 &
+  "$PY" "$LIB" rss-sampler "$1" /tmp/bench_rss.txt 0.1 > /dev/null 2>&1 &
 }
 
-# 从采样文件提取 PEAK_RSS / CPU_AVG / CPU_MAX（缺样本时给 n/a）
+# 从采样文件提取 PEAK_RSS / CPU_AVG / CPU_MAX（缺样本时给 n/a）。
+# 采样行 = "epoch_ns RSS_MB CPU_PCT"。CPU 只统计引擎活跃窗 [CPU_WIN_START,
+# CPU_WIN_END]（wall-clock ns，调用方按哨兵 start_ns/emit_ns ± 松弛设置）内的
+# 样本——粗采样 + 空闲期（启动/等流/收尾 sleep）稀释会让 CPU% 失真；窗内无样本
+# 时回退全样本，宁粗勿空。CPU_PCT 是核占数（多核并行可 >100%）。
 stat_samples() {
-  PEAK=$(awk 'NF==2 && $1>m {m=$1} END {print (m?m:"n/a")}' /tmp/bench_rss.txt)
-  CPU_AVG=$(awk 'NF==2 && $2 ~ /^[0-9.]+$/ {s+=$2;n++} END {if(n) printf "%d", s/n; else print "n/a"}' /tmp/bench_rss.txt)
-  CPU_MAX=$(awk 'NF==2 && $2 ~ /^[0-9.]+$/ && $2>m {m=$2} END {if(m) printf "%d", m; else print "n/a"}' /tmp/bench_rss.txt)
+  local WS="${CPU_WIN_START:-}" WE="${CPU_WIN_END:-}"
+  PEAK=$(awk 'NF>=2 && $2>m {m=$2} END {print (m?m:"n/a")}' /tmp/bench_rss.txt)
+  local FILT=""
+  if [ -n "$WS" ] && [ -n "$WE" ]; then
+    FILT="-v ws=$WS -v we=$WE -v filt=1"
+  fi
+  CPU_AVG=$(awk $FILT 'filt { if (!($1>=ws && $1<=we)) next }
+    NF==3 && $3 ~ /^[0-9.]+$/ {s+=$3;n++} END {if(n) printf "%.0f", s/n; else print "n/a"}' /tmp/bench_rss.txt)
+  CPU_MAX=$(awk $FILT 'filt { if (!($1>=ws && $1<=we)) next }
+    NF==3 && $3 ~ /^[0-9.]+$/ {if($3>m) m=$3; n++} END {if(n) printf "%.0f", m; else print "n/a"}' /tmp/bench_rss.txt)
+  # 窗内无样本（采样器起晚/窗太窄/时钟域异常）→ 回退全样本；若连全样本都没有，
+  # CPU_MAX 的 n 计数为 0 → n/a，与 CPU_AVG 保持一致（修掉了旧版全 0 时 max 报 n/a 的 bug）
+  if [ "$CPU_AVG" = "n/a" ] || [ "$CPU_MAX" = "n/a" ]; then
+    CPU_AVG=$(awk 'NF==3 && $3 ~ /^[0-9.]+$/ {s+=$3;n++} END {if(n) printf "%.0f", s/n; else print "n/a"}' /tmp/bench_rss.txt)
+    CPU_MAX=$(awk 'NF==3 && $3 ~ /^[0-9.]+$/ {if($3>m) m=$3; n++} END {if(n) printf "%.0f", m; else print "n/a"}' /tmp/bench_rss.txt)
+  fi
 }
 
 # ---- 写查询 conf：基于 conf/wfusion.toml，覆盖 rules + 并行度（+ 可选限速） ----
@@ -353,7 +378,13 @@ report_result() {
   # loadavg（1-min）随结果记录：本机是常载开发机（Zed/VM/WorkBuddy 等后台 ~6-7），
   # 同一配置的 EPS 随后台干扰在 43↔55M 间摆动（见 q1-throughput-bisection.md §9），
   # 结果行不带负载上下文无法解释相位差异。
-  local LD; LD=$(sysctl -n vm.loadavg 2>/dev/null | awk '{printf "%.1f", $2}')
+  local LD
+  # loadavg（1-min）：Linux 读 /proc/loadavg（$1=1min）；macOS 走 sysctl vm.loadavg（$2=1min）。
+  if [ -r /proc/loadavg ]; then
+    LD=$(awk '{printf "%.1f", $1}' /proc/loadavg)
+  else
+    LD=$(sysctl -n vm.loadavg 2>/dev/null | awk '{printf "%.1f", $2}')
+  fi
   local CTX="p=${PARSE_V_EFF} r=${RULE_V_EFF} c=${CONNECTIONS}${SHARD_KEYS:+" s=${SHARD_KEYS%%:*}"} frame_mb=$((MAX_FRAME_BYTES/1048576)) load=${LD:-n/a} · $(date +%m-%d_%H:%M:%S)"
   { echo "$BODY · $CTX"; echo "-- correctness --"; correctness_summary; } >> "$OUT"
   # SUMMARY 行回显到 stdout（EMIT 行只进文件）
@@ -407,6 +438,7 @@ fi
 run_replay_one() {
   local Q="$1" OUT_TAG="${2:-replay}"
   local OUT="data/bench_${Q}_${OUT_TAG}.txt"
+  local SSTART="" SEMIT=""   # 哨兵窗（wall-clock ns），供 CPU 统计窗使用；函数内必须重置防残留
   write_conf "$Q" replay
   local D
   D=$(start_daemon) || exit 1
@@ -507,6 +539,14 @@ run_replay_one() {
   sleep 3
   kill $SP 2>/dev/null; wait $SP 2>/dev/null; kill_daemon $D; wait_port_free
 
+  # CPU 统计窗 = 哨兵活跃窗 ±0.5s（引擎实际消化时段，剔除启动/等流/收尾空闲稀释）；
+  # 哨兵时间缺失（TIMEOUT 兑底/metrics 口径）时退回 [T0, T2]。stat_samples 只统计窗内样本。
+  if [ -n "$SSTART" ] && [ -n "$SEMIT" ]; then
+    CPU_WIN_START=$(( SSTART - 500000000 ))
+    CPU_WIN_END=$(( SEMIT + 500000000 ))
+  else
+    CPU_WIN_START="$T0"; CPU_WIN_END="$T2"
+  fi
   stat_samples
   # grep -c 无匹配时退出码 1 但仍输出 0——`|| echo 0` 会叠出双 0，改为兜底默认
   local EV=$(grep -c 'memory eviction' data/wfusion.log 2>/dev/null || true); EV=${EV:-0}
@@ -520,6 +560,7 @@ run_replay_one() {
 run_stream_one() {
   local Q="$1"
   local OUT="data/bench_${Q}_stream.txt"
+  local SSTART="" SEMIT=""   # 哨兵窗（wall-clock ns），供 CPU 统计窗使用；函数内必须重置防残留
   write_conf "$Q" stream
   local D
   D=$(start_daemon) || exit 1
@@ -582,6 +623,13 @@ run_stream_one() {
   sleep 3
   kill $SP 2>/dev/null; wait $SP 2>/dev/null; kill_daemon $D; wait_port_free
 
+  # CPU 统计窗：哨兵活跃窗 ±0.5s（引擎实际消化时段）；哨兵时间缺失时退回 [T0, T2]。
+  if [ -n "$SSTART" ] && [ -n "$SEMIT" ]; then
+    CPU_WIN_START=$(( SSTART - 500000000 ))
+    CPU_WIN_END=$(( SEMIT + 500000000 ))
+  else
+    CPU_WIN_START="$T0"; CPU_WIN_END="$T2"
+  fi
   stat_samples
   local EV=$(grep -c 'memory eviction' data/wfusion.log 2>/dev/null || true); EV=${EV:-0}
   : > "$OUT"

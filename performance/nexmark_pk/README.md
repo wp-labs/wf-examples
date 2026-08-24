@@ -112,7 +112,11 @@ MAX_FRAME_BYTES=1048576 ./bench.sh all replay 30m    # 指定帧 cap（默认 8M
 3. **A/B 必须不限速**：`RATE=10000000`（限速会把 EPS 封顶在 RATE）。
 4. **同时段交错对比**：bench 机 EPS 与 RSS_peak 呈双峰相位强相关（同配置差 ±8%），
    结论必须按 RSS 相位配对；单轮数字只能作量级参考。
-5. 消费侧计数器提取：`python3 scripts/extract_emitted.py data/metrics.ndjson`
+5. **CPU 口径（2026-08-24 起）**：`CPU X%avg/Y%max` 是**引擎活跃窗**（哨兵
+   start_ns/emit_ns ± 0.5s）内的核占数（多核可 >100%），100ms 采样。此前 1s
+   粗采样 + 全生命周期统计会把亚秒级突发（如 q2 26M EPS ≈ 0.4s）稀释/漏采成
+   0%（实测假象）——新口径下 0% 才是真的空闲；短跑（<2s）读数仍只宜作量级参考。
+6. 消费侧计数器提取：`python3 scripts/extract_emitted.py data/metrics.ndjson`
    （counter 跨 1s 区间求和；gauge 取峰值，不可混用）。
 
 ## 性能墙定位工具：diag.sh
