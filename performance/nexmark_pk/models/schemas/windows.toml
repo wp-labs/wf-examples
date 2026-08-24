@@ -22,10 +22,17 @@ over_cap = "2d"
 
 [window.bid_events]
 mode = "local"
-# 2GB：deferred join（q9/q4a）的右窗数据必须保留到 expiry 评估时刻——
-# 256MB 只够 ~140s 的 bid，10M 数据 920 万行 bid（~1.8GB）被驱逐滚动后，
-# 规则任务（处理滞后）评估早期 auction 时其 bid 已被驱逐 → 全 miss
-# （q9 10M 引擎 81,974 vs oracle 557,204 根因）。over=1h 时间语义要求全保留。
+# 2GB：字节预算不再承担正确性——D4 保留 pin（wp-reactor
+# `WindowProgress::register_retention_pin`）已落地：deferred join（q9/q4a）向右窗
+# 发布「还需要的最早事件时间」（= 存活挂起实例的 min(lo_ns)），内存驱逐宁可
+# 让窗口瞬时超预算，也不丢这些行。
+#
+# 历史（pin 落地前，字节上限就是正确性旋钮，join 目标读者无 ack 槽位 → 驱逐
+# 自由丢行 → 静默少输出）：
+#   - 256MB：只够 ~140s bid → q9 10M 引擎 81,974 vs oracle 557,204；
+#   - 2GB：10M 的 920 万行（~1.8GB）刚好装下 → evict=0 → 对；但 30M 的 2760 万行
+#     需 ~5.4GB → 驱逐 17,180,418 行（62.2%）→ q9/q4a 偏差 −62%。
+# 注：`over`（nexmark.wfs = 1h）仍是语义边界，pin **不**覆盖时间驱逐。
 max_window_bytes = "2GB"
 over_cap = "2d"
 

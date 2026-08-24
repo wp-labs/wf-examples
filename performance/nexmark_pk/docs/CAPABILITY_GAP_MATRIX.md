@@ -5,6 +5,10 @@
 > 2026-08-23 三次修订：全量 30M replay 完成——22 查询全部 `[clean]`（appended 追平 + 致命计数器归零），
 > 验证 §一 各查询的端到端可跑性；10M 全量 `bench.sh all replay 10m --verify` 已跑（21/22 与 oracle 完全一致，
 > 仅 Q12 known-diff；Q19 oracle 未接 stats）。
+> 2026-08-24 修订：30M oracle 对拍（17 个非 stats 查询，5% 容差）**13 个 0% 偏差**；超差 4 个中
+> **Q4/Q9 的 −62% 已根治**（D4 保留 pin：join 目标窗口字节上限驱逐不再静默丢行，30M 与 oracle
+> identical）——q4a/q9 各 1,672,559 = 1,672,559。剩余：**Q3 30M −16%**（独立 bug 待查，与驱逐/pin
+> 无关）与 **Q12 known-diff**（fixed+close 尾桶）。
 > 三档定义：
 > - **已有**：能力已落地且端到端可跑，输出与 Flink 语义/基数一致。
 > - **待接通**：算子已实现，但规则装配/计划连线未端到端激活（纸面符合，跑不通或未被规则引擎调度）。
@@ -17,26 +21,26 @@
 | 查询 | Flink 语义 | 依赖能力 | 档位 | 缺口说明 |
 |------|-----------|----------|------|----------|
 | **Q1** | 货币换算(0.908×price)+过滤 | CEP on-each | ✅ 已有 | — |
-| **Q2** | 每拍卖计数 | CEP each | ✅ 已有 | 每满足 `MOD(auction,123)=0` 的 bid 一行（per-bid，`on each` + bind filter） |
-| **Q3** | 按州过滤(IN OR/ID/CA) | CEP filter | ✅ 已有 | — |
-| **Q4** | 分类均价（累积窗口） | deferred reduce + stats avg 双规则链 | ✅ 已有 | avg-of-max 双规则链 2026-08-23 落地（q4a deferred reduce maxrow → 中间窗口 auction_finals → q4b stats avg）；内层 oracle 可对拍（10k=455 条胜出价，同 q9）；外层 stats oracle 待接入（known-diff） |
+| **Q2** | 选择 MOD(auction,123)=0 的 bid | CEP each | ✅ 已有 | 每满足 `MOD(auction,123)=0` 的 bid 一行（per-bid，`on each` + bind filter） |
+| **Q3** | 按州过滤(IN OR/ID/CA) | CEP filter | ✅ 已有 | 10M 对拍一致；**30M 对拍 −16%（150,992 vs 180,304，超 5% 容差）**——规模相关独立 bug 待查（已排除：字节上限驱逐无关，person 快照窗口全保留后无变化） |
+| **Q4** | 分类均价（累积窗口） | deferred reduce + stats avg 双规则链 | ✅ 已有 | avg-of-max 双规则链 2026-08-23 落地（q4a deferred reduce maxrow → 中间窗口 auction_finals → q4b stats avg）；内层 oracle 可对拍；外层 stats oracle 待接入（known-diff）。**q4a 30M identical（D4 pin 修复：字节上限驱逐曾丢 62% join 目标行，2026-08-24）** |
 | **Q5** | 热门新商品（top-1 by count） | hop(10s, 2s) + conv top_ties(1) | ✅ 已有 | HOP 算子落地（2026-08-23）：窗口形状/基数与权威一致（30M 数据 1500 窗 vs 旧 fixed 300 桶，5× 修正）；`top_ties(1)` 并列最高 count 的 auction 全输出（对齐权威 JOIN 并列语义，无残留） |
 | **Q6** | 卖家售出均价 | sliding 10m avg（能力面） | 🟡 特殊口径 | Flink 官方未实现 Q6（OVER WINDOW 不消费 retractions，权威 SQL 注释）；无对拍基线，当前为形状近似能力面 |
 | **Q7** | 时段最高出价 | CEP `match<auction:10s:fixed>` close max + conv top_ties(1) | ✅ 已有 | 并列全输出（RANK 语义 `top_ties`，2026-08-23 与 Q5 同落地）：同窗口最高价并列 auction 全出；残留 = auction 粒度 vs 权威 bid 行粒度（同 auction 内多条并列 bid 需窗口内行集算子） |
 | **Q8** | 新用户+其拍卖（TUMBLE join） | deferred exists join | ✅ 已有 | 端到端激活 + 10M replay 对拍一致（2026-08-23 修复：到期 miss 的 join 目标 append 滞后 → EOS 重试补出；shutdown flush 的 EMIT 指标尾部导出；flush 按最终事件水位收口不误扫尾部桶）；auction 恰在桶边界归下桶（上开界） |
-| **Q9** | 中标出价（asof join） | deferred reduce join | ✅ 已有 | 同上（200k 实测 10986 行）；`maxrow(price) tie(dateTime asc)` 与 ROW_NUMBER 第 1 名等价 |
+| **Q9** | 中标出价（asof join） | deferred reduce join | ✅ 已有 | `maxrow(price) tie(dateTime asc)` 与 ROW_NUMBER 第 1 名等价。**30M oracle identical（1,672,559 = 1,672,559；D4 pin 修复字节上限驱逐丢 62% 输出，2026-08-24）** |
 | **Q10** | 全量 bid 按时间分区落盘（每 bid 一行） | CEP on-each | ✅ 已有 | 2026-08-21 从「auction%7 子集」能力面重写为全量落盘（旧版只处理 1/7 事件，工作负载差 ~7×）；dt/hm 分区列本地 sink 省略（30m 数据恒同一天，无查询语义） |
 | **Q11** | 用户会话统计（session） | session 窗口 + 分片 | ✅ 已有 | 10M 对拍 197,095 = 197,095 identical（2026-08-23 三处收口语义修复：close_all 未超时会话不发射 / scan_timeouts 不叠加墙钟 / flush 按全局末尾补扫，分片 shard 水位落后不再误判）；bidder 分片 + session 正确组合 |
 | **Q12** | 每 bidder × 10s 处理时间窗的 bid 计数 | CEP `match<bidder:10s:fixed>`（+ stats 双形态）事件时间近似 | 🔶 待补强 | 处理时间窗缺失（产品特性，非合规缺口）；事件时间近似在 paced stream 下等价；EMIT 与 Flink 不可确定性对拍（墙钟依赖，harness 已列 known-diff） |
 | **Q13** | 有界侧输入 join | snapshot join | ✅ 已有 | 权威语义对齐（2026-08-23）：`mod(auction,10000)⋈side_input.key` 双规则链（q13a 物化 mod_key → q13b snapshot join 富化 value），EMIT 每 bid 一行（1m=920k/920k、10m=9.2M/9.2M，oracle identical）；provider 窗口 join 索引 O(1)（修复：knowdb CSV 数字列类型推断，Str→Number，索引键与 lookup 键同类型才命中） |
 | **Q14** | 时间戳换算+价格过滤 | CEP calc + filter | ✅ 已有 | — |
-| **Q15** | 按日历天的分类统计 | stats + 日历天窗口 | ✅ 已有 | `1d:fixed`（epoch 对齐 = UTC 午夜 = 日历天），30m 数据 1 桶 |
-| **Q16** | 按日历天的竞价统计 | stats + 日历天窗口 | ✅ 已有 | 同上 |
+| **Q15** | 按日历天的出价统计（Bidding） | stats + 日历天窗口 | ✅ 已有 | `1d:fixed`（epoch 对齐 = UTC 午夜 = 日历天），30m 数据 1 桶 |
+| **Q16** | 按日历天的渠道统计（Channel） | stats + 日历天窗口 | ✅ 已有 | 同上（minute 列数据侧恒定省略） |
 | **Q17** | 按日历天的拍卖统计 | stats + 日历天窗口 | ✅ 已有 | 同上 |
 | **Q18** | 每 (bidder,auction) 最后一条 bid | stats last + 1d 桶 | ✅ 已有 | ★标准形态 `q18.wfl` = `1d:fixed` + 4 个 last 度量：值语义（最后一条字段值）+ 基数（每键 1 行）双对齐（last 序 = 到达序，有序数据 = max dateTime）；CEP 版（q18-verify.wfl）为基数对齐近似（值语义缺失） |
 | **Q19** | 拍卖 Top-10 价格 | stats<> top-N | ✅ 已有 | stats<> 编译/装配/执行器测试确认（`stats_top_keeps_top_n_desc`）；bench daemon 对拍待跑（oracle 不执行 stats 规则） |
-| **Q20** | 每卖家最高价出价 | CEP maxrow | ✅ 已有 | — |
-| **Q21** | 按渠道监控新用户 | CEP monitor | ✅ 已有 | wfgen 已输出 channel_id（cmd_gen_nexmark.rs:279） |
+| **Q20** | 展开 bid 关联 auction（category=10 filter join） | snapshot join + join 后 where | ✅ 已有 | `on each` + `join auction_events snapshot on b.auction==id` + `where category==10`（对齐权威 INNER JOIN + 过滤，miss/过滤均抑制）；展开字段受 sink 四列限制省略 |
+| **Q21** | 附加 channel id（热通道映射 + cold url 提取） | CEP on-each 投影 + 过滤 | ✅ 已有 | 权威 CASE 映射 0/1/2/3 + url `channel_id` 提取；wfgen 数据侧已计算 `channel_id`（cmd_gen_nexmark.rs:279），规则侧 `channel_id!=""` 过滤等价官方 WHERE（输出 95% bid）；无状态投影 |
 | **Q22** | URL 目录投影 | CEP projection | ✅ 已有 | — |
 
 **汇总**：已有 20 · 待接通 0 · 待补强 1 (Q12) · 已知差异 0 · 特殊口径 1 (Q6 Flink 未落地)。
@@ -45,7 +49,20 @@
 
 ---
 
-## 二、能力缺口（截至 2026-08-23 仍存在）
+## 二、能力缺口（截至 2026-08-24，Q13 对齐后复核）
+
+### 剩余语义 GAP（真正会让输出与 Flink 对不上，仅 2 类）
+
+1. **Q12 处理时间窗（唯一真·语义 GAP）**：引擎为事件时间引擎，无 `PROCTIME()`；用事件时间 10s 固定桶近似。replay/paced 下等价，实时流下分桶边界不同 → EMIT 不可确定性对拍。
+2. **Q7 行粒度残留**：权威输出所有 price==窗口最高价的 **bid 行**（同 auction 内并列也全出）；本地为每 auction 一条的 auction 粒度。随机数据下并列罕见、对拍几乎无差，严格存在（需窗口内行集输出算子）。
+
+### 结构性前提 / 验证类（非语义 GAP，不影响对齐结论）
+
+- **Q6 形状近似**：Flink 官方亦未落地（OVER WINDOW 不支持 retractions，权威 SQL 注释 TODO），双方都无权威实现；wfusion 提供 `match<seller:10m> avg` 能力面。
+- **Q11 分片前提**：session 在 `SHARD_KEYS` 分片下为 per-shard 会话；全局会话语义须 `CONNECTIONS=1` 或 bidder 分片。
+- **Q15/16/17 非 UTC 时区日切**：`1d:fixed` 桶边界落 UTC 午夜 = UTC 日历天；非 UTC session 时区日切需 `align_to` 偏移（P2，非 NEXMark 合规需求）。
+- **Q4/Q19 stats oracle 未接**：daemon 级串联对拍待跑（验证 GAP，非语义 GAP）。
+- **Q9/Q16 fixed+close 尾收口非确定**：引擎 EOF 确定性收口待修（known-diff，见 SEMANTIC_ALIGNMENT §6.1）。
 
 ### 引擎级潜在缺口（NEXMark 当前无查询受影响）
 
@@ -99,9 +116,9 @@
 
 wfusion 当前架构**能覆盖 NEXMark 绝大多数查询的"意图"**，但**无法逐条复现 Flink 测试集输出**：
 
-- **真正符合（可独立验证）**：20/22（Q1 Q2 Q3 Q4 Q5 Q7 Q8 Q9 Q10 Q11 Q13 Q14 Q15 Q16 Q17 Q18 Q19 Q20 Q21 Q22）—— CEP 类投影/过滤/标量计算 + `1d:fixed` UTC 日历天统计 + deferred reduce join（Q9）+ deferred exists join（Q8）+ stats<> top-N/last + HOP 滑动窗口（Q5）+ conv `top_ties` 并列全输出（Q7）+ session 窗口（Q11）+ Q4 avg-of-max 双规则链 + 有界侧输入 snapshot join 富化（Q13）。
+- **真正符合（可独立验证）**：20/22（Q1 Q2 Q3 Q4 Q5 Q7 Q8 Q9 Q10 Q11 Q13 Q14 Q15 Q16 Q17 Q18 Q19 Q20 Q21 Q22）—— CEP 类投影/过滤/标量计算 + `1d:fixed` UTC 日历天统计 + deferred reduce join（Q9）+ deferred exists join（Q8）+ stats<> top-N/last + HOP 滑动窗口（Q5）+ conv `top_ties` 并列全输出（Q7）+ session 窗口（Q11）+ Q4 avg-of-max 双规则链 + 有界侧输入 snapshot join 富化（Q13）。其中 Q7 行粒度、Q11 分片为次要前提（见 §二「剩余语义 GAP」）。
 - **已知差异**：+0（Q8/Q11 已于 2026-08-23 修复并对拍一致：82,446 = 82,446 / 197,095 = 197,095 identical）。
 - **需补强语义才达标**：+1（Q12）—— 处理时间窗（产品特性向，Flink 侧亦墙钟不确定）。
 - **特殊口径**：1（Q6 Flink 官方未实现无基线）。
 
-**完整支持 Flink 测试集的最短路径**：① Q4 双规则链 daemon 级串联对拍（外层 stats oracle 接入后即可全链对拍）；② Q12 处理时间窗为产品特性（实时流场景）；③ Q5 flush 528/529 竞态定位（conv 跨批聚合）。通用确认项：全量 30M replay 已完成（22 查询 `[clean]`，§一 各查询端到端可跑性验证）；10M 全量 `--verify` 已完成（21/22 identical，仅 Q12 known），30M 全量对拍待跑（bid 右窗 2GB 预算只覆盖 10M，30M 需 ~5.5GB）。
+**完整支持 Flink 测试集的最短路径**：① Q4 双规则链 daemon 级串联对拍（外层 stats oracle 接入后即可全链对拍）；② Q12 处理时间窗为产品特性（实时流场景）；③ Q5 flush 528/529 竞态定位（conv 跨批聚合）。通用确认项：全量 30M replay 已完成（22 查询 `[clean]`，2026-08-24 复跑，§一 各查询端到端可跑性验证）；10M 全量 `--verify` 已完成（21/22 identical，仅 Q12 known）；30M 全量 `--verify` 对拍待跑（64G 机器 30M replay 已跑通，RSS 峰值 ~18GB，oracle 对拍需接入 stats 规则后跑）。
