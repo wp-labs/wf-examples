@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # perf_diag_case — 诊断机制验证驱动
 #
-# 依赖引擎实现：`--perf-diag` 启动参数、内置 __wf_sentinel 窗口、诊断点状态机、
+# 依赖引擎实现：`--perf-diag` 启动参数、内置 __wf_sentinel 窗口、诊断档状态机、
 #    `wfgen perf-diag` 子命令（见 wp-reactor/docs/design/perf-diag-mode-design.md §8
 #    落地清单）。
 #
@@ -17,7 +17,7 @@ PY=python3; PORT=9800; N="${1:-100000}"
 [ -x "$WF" ] && [ -x "$GEN" ] || { echo "错误: 缺少 release wfusion/wfgen（先构建 warp-fusion）"; exit 1; }
 
 mkdir -p data
-# 哨兵文件必须清空：daemon 启动即写 point{current=0}，旧记录会干扰切换等待。
+# 哨兵文件必须清空：daemon 启动即写 stage{current=0}，旧记录会干扰切换等待。
 rm -f data/perf_sentinel.ndjson data/perf_diag_wall.txt
 pkill -9 -f "wfusion daemon" 2>/dev/null; sleep 1
 
@@ -40,9 +40,9 @@ echo "== 2. dump 帧 =="
   --chunk 10000 --max-frame-bytes 8388608 --max-frame-rows 100000 || {
   echo "FAIL: dump-frames（若报 schema/握手错，说明 --perf-diag 窗口未注册）"; tail -20 data/daemon.log; exit 1; }
 
-echo "== 3. 驱动诊断（3 诊断点 × N=${N}）=="
-# rounds=1：sentinel 驱动的切换在首个哨兵后即发生，同点的重复轮次会吃到
-# 下一个点的门控——每点只测一轮（去噪靠 --n-list 递增 N）。
+echo "== 3. 驱动诊断（3 诊断档 × N=${N}）=="
+# rounds=1：sentinel 驱动的切换在首个哨兵后即发生，同档的重复轮次会吃到
+# 下一档的门控——每档只测一轮（去噪靠 --n-list 递增 N）。
 "$GEN" perf-diag --diag conf/perf-diag.toml \
   --frames data/evt.frames --addr 127.0.0.1:$PORT \
   --n-list "$N" --rounds 1 --timeout-secs 90 || {
@@ -50,7 +50,7 @@ echo "== 3. 驱动诊断（3 诊断点 × N=${N}）=="
 
 echo "== 4. 验收检查 =="
 FAILED=0
-# 4.1 哨兵记录：行数 ≥ 诊断点数(3) × 轮数(1)，四元组完整
+# 4.1 哨兵记录：行数 ≥ 诊断档数(3) × 轮数(1)，四元组完整
 CNT=$(wc -l < data/perf_sentinel.ndjson 2>/dev/null || echo 0)
 [ "$CNT" -ge 3 ] || { echo "FAIL: perf_sentinel.ndjson 行数 $CNT < 3"; FAILED=1; }
 "$PY" - data/perf_sentinel.ndjson <<'EOF' || FAILED=1

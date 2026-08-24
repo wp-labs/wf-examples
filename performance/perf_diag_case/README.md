@@ -10,9 +10,9 @@
 |---|---|---|---|
 | 1 | 诊断模式进入 | `wfusion daemon --perf-diag conf/perf-diag.toml` | 启动成功，`__wf_sentinel` 窗口注册 |
 | 2 | 门控生效 | `cut_rules` 档（floor） | 规则求值直通（emit=0），append 追平（管道照跑） |
-| 3 | 哨兵记录 | 每批帧尾追加 sentinel | `data/perf_sentinel.ndjson` 每点一条，四元组 `{round, n, start_ns, emit_ns}` 完整 |
-| 4 | 状态机自切换 | sentinel 处理后自动推进 | `point{current=k+1}` 记录出现（先于 sentinel 记录），无外部控制指令 |
-| 5 | 墙梯形状 | floor → rules → full 三点 | 每档 EPS 可算且单调 `floor ≥ rules ≥ full`（相对增量有意义） |
+| 3 | 哨兵记录 | 每批帧尾追加 sentinel | `data/perf_sentinel.ndjson` 每档一条，四元组 `{round, n, start_ns, emit_ns}` 完整 |
+| 4 | 状态机自切换 | sentinel 处理后自动推进 | `stage{current=k+1}` 记录出现（先于 sentinel 记录），无外部控制指令 |
+| 5 | 墙梯形状 | floor → rules → full 三档 | 每档 EPS 可算且单调 `floor ≥ rules ≥ full`（相对增量有意义） |
 
 ## 结构与数据
 
@@ -30,7 +30,7 @@
 perf_diag_case/
 ├── conf/
 │   ├── wfusion.toml        # 最小 daemon 配置（rule_parallelism=1：规则墙可见）
-│   └── perf-diag.toml      # 诊断点：floor → rules → full
+│   └── perf-diag.toml      # 诊断档：floor → rules → full
 ├── models/
 │   ├── schemas/evt.wfs     # 1 流 schema（evt_events + network_alerts）
 │   └── schemas/windows.toml
@@ -65,10 +65,10 @@ N=1M（`--rounds 1`，机制验证 + 10M 门禁）：
 ## 验收清单（verify.sh 断言）
 
 - [x] daemon 以 `--perf-diag` 启动成功，日志无 sentinel 相关报错；
-- [x] `perf_sentinel.ndjson` 行数 = 诊断点数 × 轮数，每行四元组
+- [x] `perf_sentinel.ndjson` 行数 = 诊断档数 × 轮数，每行四元组
       `round/n/start_ns/emit_ns` 齐全且 `emit_ns > start_ns`；
 - [x] `floor` 档规则 emit = 0（cut_rules 生效），append 追平（管道未断）；
-- [x] 每档完成信号（`point{current=k}`）出现后推进下一档（无超时卡死）；
+- [x] 每档完成信号（`stage{current=k}`）出现后推进下一档（无超时卡死）；
 - [x] 墙表单调：`floor ≥ rules ≥ full`——规则墙（floor→rules，~60×）严格断言
       ±10%；输出墙（rules→full，blackhole 近无成本）容差 ±20%（噪声内）；
 - [x] 全程单 daemon 未重启（pid 不变）；
