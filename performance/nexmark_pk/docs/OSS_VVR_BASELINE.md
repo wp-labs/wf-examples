@@ -54,6 +54,10 @@
 
 wfusion 对照数字随引擎版本演进，**最新结果以当次跑批 `../data/bench_*_replay.txt` 为准**。
 
+**2026-08-24 夜 Linux 10M replay（8 核机，哨兵 EPS 精确口径；22/22 `[clean]`）**：
+vs OSS **3.70×~191.39× 全面领先**；vs VVR **1.07×~33.05×，20/20 有基线查询全部达 VVR**。
+逐查询 PK 表与口径说明见 `BENCH_RESULTS.md`（2026-08-24 Linux 节）；本机 30M Mac 跑批见下。
+
 **2026-08-24 四次全量 30M replay（merge perf-diag 后 + q4/q9 deferred 分片，哨兵 EPS 精确口径；22/22 `[clean]`）**：
 vs OSS **7.41×~211.87× 全面领先**；vs VVR **1.90×~56.25×，20/20 有基线查询全部达 VVR**。
 逐查询明细用 `scripts/compare-metrics.sh` 生成（读当次 `data/bench_*_replay.txt` 对拍本表）。
