@@ -1,5 +1,6 @@
-# 哨兵（批末完成信号）记录 —— 诊断模式专用业务路由组
+# 哨兵（批末完成信号）记录 —— 性能诊断模式（perf-diag）固定业务路由组
 #
+# 与 wfadm init 自动生成的 business.d/sentinel.toml 同源（wfadm init 模板）；
 # sentinel 事件走内置 __wf_sentinel 窗口 + 哨兵规则（豁免 perf 门控），emit 时
 # 写四元组记录 {round, n, start_ns, emit_ns} → 本 sink 落盘 data/perf_sentinel.ndjson。
 # wfgen perf-diag 从该文件读完成信号，EPS = n/(emit_ns−start_ns) 直接可算。
