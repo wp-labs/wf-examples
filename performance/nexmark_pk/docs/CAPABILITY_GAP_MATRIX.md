@@ -34,7 +34,7 @@
 | **Q12** | 每 bidder × 10s 处理时间窗的 bid 计数 | CEP `match<bidder:10s:fixed>`（+ stats 双形态）事件时间近似 | 🔶 待补强 | 处理时间窗缺失（产品特性，非合规缺口）；事件时间近似在 paced stream 下等价；EMIT 与 Flink 不可确定性对拍（墙钟依赖，harness 已列 known-diff） |
 | **Q13** | 有界侧输入 join | snapshot join | ✅ 已有 | 权威语义对齐（2026-08-23）：`mod(auction,10000)⋈side_input.key` 双规则链（q13a 物化 mod_key → q13b snapshot join 富化 value），EMIT 每 bid 一行（1m=920k/920k、10m=9.2M/9.2M，oracle identical）；provider 窗口 join 索引 O(1)（修复：knowdb CSV 数字列类型推断，Str→Number，索引键与 lookup 键同类型才命中） |
 | **Q14** | 时间戳换算+价格过滤 | CEP calc + filter | ✅ 已有 | — |
-| **Q15** | 按日历天的出价统计（Bidding） | stats + 日历天窗口 | ✅ 已有 | `1d:fixed`（epoch 对齐 = UTC 午夜 = 日历天），30m 数据 1 桶 |
+| **Q15** | 按日历天的出价统计（Bidding） | stats + 日历天窗口 | ✅ 已有 | `1d:fixed`（epoch 对齐 = UTC 午夜 = 日历天），30m 数据 1 桶。**性能（2026-08-24）：空键 stats 输入分区分片 + EOS 归并后 30M 4.42M→7.75M EPS（1.75×）、CPU 72%→563%（多核）、verify 全部一致**（foldhash hasher +31% 先行；归并 = count 相加 + distinct 集 union 精确） |
 | **Q16** | 按日历天的渠道统计（Channel） | stats + 日历天窗口 | ✅ 已有 | 同上（minute 列数据侧恒定省略） |
 | **Q17** | 按日历天的拍卖统计 | stats + 日历天窗口 | ✅ 已有 | 同上 |
 | **Q18** | 每 (bidder,auction) 最后一条 bid | stats last + 1d 桶 | ✅ 已有 | ★标准形态 `q18.wfl` = `1d:fixed` + 4 个 last 度量：值语义（最后一条字段值）+ 基数（每键 1 行）双对齐（last 序 = 到达序，有序数据 = max dateTime）；CEP 版（q18-verify.wfl）为基数对齐近似（值语义缺失） |

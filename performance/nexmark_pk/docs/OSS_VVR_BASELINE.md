@@ -113,6 +113,12 @@ vs OSS **3.35×~203.65× 全面领先**；vs VVR **1.91×~54.07×，20/20 有基
 > RSS 10.0GB→4.5GB、CPU 618%→260%。verify：q13 全部一致；q20 偏差 0.97~1.65%
 > （<5% 容差，原设计「批快照+行时复查」固有竞态，方向恒为少发）。
 >
+> **2026-08-24 傍晚：q15 空键 stats 输入分区分片 + EOS 归并**——归因 distinct_set
+> HashSet insert 占 98%（单核封顶）；先换 foldhash hasher（4.22M→5.53M），再按行号
+> `row % N` 输入分区 N 任务、close 时协调片归并（count 相加 + distinct 集 union 精确）
+> → **7.75M（1.75×）、CPU 72%→563%、verify 全部一致**。已知瓶颈：协调片 EOS 归并
+> ~883ms 串行 + 每片对全批 mask 的 10× 冗余。
+>
 > **2026-08-24 傍晚：q5 hop conv 分片（P2c 延伸）**——conv top_ties 是窗口级聚合
 > （跨 auction），原 inline 单核 998k；给 hop 生成 conv_window（桶对齐 = slide、
 > 封口 = size）+ conv stage 分片后 **6,479,375（6.5×）**、CPU 602%、oracle identical。
