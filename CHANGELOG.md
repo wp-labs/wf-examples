@@ -16,6 +16,8 @@ All notable changes to the wf-examples performance / verification scenarios will
 
 - **诊断口径守卫（由实测假象驱动）**：初版 `diag.sh` 在缺 `data/bench_10m_v5.frames` 时自动复用 `bench_10m_v6.frames`，旧版本帧的 Arrow schema 与当前 `nexmark.wfs` 不符（person 缺 `creditCard`、bid 缺 `channel_id`、多 `wp_src_ip`）→ window actor `schema mismatch` **整批丢弃**、只剩哨兵被处理 → 三档全报 ~50M EPS 假象。修正：**不再跨 `DATA_VER` 自动复用帧**（只列出候选，需显式 `FRAMES=`），并强制校验 `appended = N × 档数`，不追平即判失败并给出根因（含日志中的 schema mismatch 计数）。
 - **脚本内嵌 Python 全部抽离（脚本里生成脚本问题）**：nexmark_pk `bench.sh`/`diag.sh` 与 qradar_pk `run.sh`/`diag.sh` 曾把 10 余处度量逻辑用 heredoc 内嵌在 bash（comma/采样器/引擎游标/哨兵汇总/正确性摘要/分析器）——无法单独测试、改一行要重跑整个基准。现已抽成**共享库** `performance/scripts/bench_lib.py`（子命令分派，可单独验证）+ `performance/scripts/diag_analyze.py`（墙表/墙判定/健康分析，输入走环境变量），四个 shell 脚本只做流程编排、零内嵌。顺带修掉两个抽离时引入的回归：CSV 流名 `split()` 不拆逗号导致 `append_total` 恒为 0；`now` 秒/纳秒口径不统一导致 EPS 数量级错误（统一为 epoch 纳秒，`diff-ns`/`eps` 配套）。
+- **qradar_pk 家族档修复（reload Blocked 污染，结论修正）**：家族档原用「全量启动 + `runtime.rules` 热 reload 切子集」——但子集引用窗口 < 全量时 reload 必 Blocked（`hot_reload/topology.rs`：编译后 schema 集合有移除 → requires restart），实际跑全量 450 规则，**所有家族测出同一个 ~31k 的「全量墙」**（早期「所有 match 家族等成本、规则数无关、chain 每规则最贵」的错误结论即由此而来）。修复：**每家族独立 daemon 会话启动即加载子集**（`data/diag_rules_<fam>.wfl`，无 reload）。修正后的真实结论：**`c`（conn count）家族 125 条 +8.8µs/事件是绝对主墙，`g`（guard）45 条 +3.9µs 第二**，前 4 大家族（c/g/dist/avg）占 450 规则总成本一半；**删规则有效**（删 c 家族省 ~27%）；`chain` 并不贵（强 action 绑定过滤触发率低）。
+- **输出墙消失（055d330 引擎更新后）**：qradar 三档墙梯 `full` 档从 43.6µs（输出墙 +11.8k = 27%）降到 31.2µs（输出墙 ≈0）——输出链成本已被引擎 emit 路径优化吸收，墙梯现为纯规则墙（100%）。
 
 ## [2026-08-17]
 

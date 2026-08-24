@@ -114,8 +114,9 @@ print(len(keep))
 EOF
 }
 
-# ---- 墙梯配置：默认 committed 三档 + 预热；FAMILIES/STAGES/WARMUP 时生成临时档 ----
+# ---- 墙梯配置：默认 committed 三档 + 预热；STAGES/WARMUP 时生成临时档 ----
 FAM_COUNTS=""     # "fam:规则数 ..." 供报告用
+FAMILIES_LIST=""
 if [ -n "$FAMILIES" ] || [ -n "${STAGES:-}" ] || [ "$WARMUP" = "1" ]; then
   DIAG_TOML=data/perf-diag-wall.toml
   : > "$DIAG_TOML"
@@ -123,15 +124,18 @@ if [ -n "$FAMILIES" ] || [ -n "${STAGES:-}" ] || [ "$WARMUP" = "1" ]; then
   # 预热档：全链路（不切），把窗口缓冲/规则状态/输出链跑热，分析时丢弃（数字不显示）。
   [ "$WARMUP" = "1" ] && printf '\n[[stages]]\nname = "warmup"\ncut_rules = false\ncut_output = false\nrules = ""\n' >> "$DIAG_TOML"
   if [ -n "$FAMILIES" ]; then
-    # 家族档模式：floor（净管道基线）+ 每族一档（cut_output 切掉输出链，只量规则求值）
-    printf '\n[[stages]]\nname = "floor"\ncut_rules = true\ncut_output = true\nrules = ""\n' >> "$DIAG_TOML"
+    # 家族档模式：**每家族独立 daemon 会话**（启动即加载子集规则，见主流程）。
+    # 不用多档 reload 切规则——子集引用窗口 < 全量 → reload 必 Blocked
+    # （hot_reload/topology.rs: 编译后 schema 集合有移除 → requires restart），
+    # 实际跑的是全量 450 规则的墙（2026-08-24 实测：fam_c 单跑 reload blocked，
+    # 31k 是全量墙；启动加载子集后才测出真实值 1.9µs/条）。
     for fam in $(echo "$FAMILIES" | tr ',' ' '); do
       CNT=$(write_family_rules "$fam" "data/diag_rules_${fam}.wfl")
       [ "${CNT:-0}" -gt 0 ] || { echo "错误: 家族 '${fam}' 无匹配规则（./diag.sh --list-families 看可用前缀）" >&2; exit 1; }
       FAM_COUNTS="${FAM_COUNTS}${FAM_COUNTS:+ }${fam}:${CNT}"
-      printf '\n[[stages]]\nname = "fam_%s"\ncut_rules = false\ncut_output = true\nrules = "data/diag_rules_%s.wfl"\n' "$fam" "$fam" >> "$DIAG_TOML"
-      echo "  家族 ${fam}: ${CNT} 条 → data/diag_rules_${fam}.wfl"
+      echo "  家族 ${fam}: ${CNT} 条 → data/diag_rules_${fam}.wfl（每家族独立 daemon）"
     done
+    FAMILIES_LIST="$FAMILIES"
   else
     for st in $(echo "${STAGES:-floor,rules,full}" | tr ',' ' '); do
       case "$st" in
@@ -144,14 +148,16 @@ if [ -n "$FAMILIES" ] || [ -n "${STAGES:-}" ] || [ "$WARMUP" = "1" ]; then
     done
   fi
 fi
-[ -f "$DIAG_TOML" ] || { echo "错误: 墙梯配置 ${DIAG_TOML} 不存在" >&2; exit 1; }
-STAGE_NAMES=$(grep '^name = ' "$DIAG_TOML" | sed 's/name = "\(.*\)"/\1/' | tr '\n' ',' | sed 's/,$//')
-STAGE_COUNT=$(echo "$STAGE_NAMES" | tr ',' '\n' | grep -c .)
-[ "$STAGE_COUNT" -ge 2 ] || { echo "错误: ${DIAG_TOML} 至少需 2 档才有墙梯（当前 ${STAGE_COUNT}）" >&2; exit 1; }
+if [ -z "$FAMILIES_LIST" ]; then
+  [ -f "$DIAG_TOML" ] || { echo "错误: 墙梯配置 ${DIAG_TOML} 不存在" >&2; exit 1; }
+  STAGE_NAMES=$(grep '^name = ' "$DIAG_TOML" | sed 's/name = "\(.*\)"/\1/' | tr '\n' ',' | sed 's/,$//')
+  STAGE_COUNT=$(echo "$STAGE_NAMES" | tr ',' '\n' | grep -c .)
+  [ "$STAGE_COUNT" -ge 2 ] || { echo "错误: ${DIAG_TOML} 至少需 2 档才有墙梯（当前 ${STAGE_COUNT}）" >&2; exit 1; }
+fi
 
 CORES=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 0)
 TIMEOUT_SECS="${TIMEOUT_SECS:-$(( N / 20000 + 120 ))}"
-echo "== diag: N=$(comma "$N") 档=${STAGE_NAMES} cores=${CORES} timeout=${TIMEOUT_SECS}s =="
+echo "== diag: N=$(comma "$N") 档=${STAGE_NAMES:-${FAMILIES_LIST:-default}} cores=${CORES} timeout=${TIMEOUT_SECS}s =="
 
 # ---- daemon 生命周期（与 run.sh/bench.sh 同款纪律）----
 wait_port_free() {
@@ -180,9 +186,12 @@ cleanup; trap cleanup EXIT INT TERM
 # 指标，改 100ms 会让 exporter 自己成为负载并**丢样本**（实测 40s 跑批只导出 52 个区间，
 # append_total 求和只到 19.5%）。哨兵口径不依赖 metrics 粒度，保持 1s 对 EPS 无影响。
 write_conf() {
+  # $1 = 启动加载的规则文件（家族档模式传子集文件；默认 conf 的 models/rules/*.wfl）
+  local RULES_FILE="${1:-models/rules/*.wfl}"
   PARSE_EFF="${PARSE:-$(sed -n 's/^parse_parallelism = *//p' conf/wfusion.toml | head -1 | tr -d ' ')}"
   RULE_EFF="${RULE:-$(sed -n 's/^rule_parallelism = *//p' conf/wfusion.toml | head -1 | tr -d ' ')}"
-  sed -e "s|^parse_parallelism = .*|parse_parallelism = ${PARSE_EFF}|" \
+  sed -e "s|^rules = .*|rules = \"${RULES_FILE}\"|" \
+      -e "s|^parse_parallelism = .*|parse_parallelism = ${PARSE_EFF}|" \
       -e "s|^rule_parallelism = .*|rule_parallelism = ${RULE_EFF}|" \
       conf/wfusion.toml > "$CONF_TMP"
   if [ "$KEEP_RATE" != "1" ]; then
@@ -245,10 +254,12 @@ ensure_frames() {
 }
 
 # ---- 单次墙梯 ----
+# $2 = 启动加载的规则文件（家族档模式传子集；空 = 全量）。家族模式每家族一套
+# 独立 daemon（TOML = warmup?+floor+fam_X，无 reload——避免 schema 移除 Blocked）。
 run_ladder() {
-  local OUT="$1"
+  local OUT="$1" RULES_FILE="${2:-}"
   local LOG="data/diag_daemon.log"
-  write_conf
+  write_conf "$RULES_FILE"
   # 哨兵文件必须在 daemon 启动**前**清空：daemon 启动即写 stage{current=0}，
   # 启动后再删会擦掉这行 → wfgen 首个 wait_for_stage 直接超时（设计文档 §7 坑）。
   : > data/perf_sentinel.ndjson; : > data/perf_diag_wall.txt
@@ -267,11 +278,12 @@ run_ladder() {
   kill_daemon "$DAEMON_PID"; DAEMON_PID=""; wait_port_free
 
   local LD; LD=$(sysctl -n vm.loadavg 2>/dev/null | awk '{printf "%.1f", $2}')
-  local CTX="p=${PARSE_EFF} r=${RULE_EFF} ingest=${RATE_CTX} rules=$(grep -c '^rule ' "$RULES_SRC") load=${LD:-n/a} · $(date +%m-%d_%H:%M:%S)"
+  local RULES_N; RULES_N=$(grep -c '^rule ' "${RULES_FILE:-$RULES_SRC}" 2>/dev/null || grep -c '^rule ' "$RULES_SRC")
+  local CTX="p=${PARSE_EFF} r=${RULE_EFF} ingest=${RATE_CTX} rules=${RULES_N} load=${LD:-n/a} · $(date +%m-%d_%H:%M:%S)"
   # 分析：共享 diag_analyze.py（哨兵四元组 × CPU/RSS 采样 × metrics 健康），
   # 输入走环境变量；stdout = 报告，退出码 0=健康 / 1=硬失败。
   QUERY="qradar" N="$N" CTX="$CTX" \
-  RULES_COUNT="$(grep -c '^rule ' "$RULES_SRC")" \
+  RULES_COUNT="$RULES_N" \
   STAGE_NAMES="$STAGE_NAMES" CORES="$CORES" \
   SENT_PATH="data/perf_sentinel.ndjson" SAMPLES_PATH="$SAMPLES" \
   METRICS_PATH="data/metrics.ndjson" LOG_PATH="$LOG" \
@@ -284,7 +296,23 @@ run_ladder() {
 ensure_frames || exit 1
 OUT="data/diag_${N}.txt"
 : > "$OUT"
-run_ladder "$OUT"
-RC=$?
+FAILED=0
+if [ -n "$FAMILIES_LIST" ]; then
+  # 家族档：每家族独立 daemon 会话，启动即加载子集（绕开 reload Blocked）。
+  for fam in $(echo "$FAMILIES_LIST" | tr ',' ' '); do
+    DIAG_TOML="data/perf-diag-wall-${fam}.toml"
+    : > "$DIAG_TOML"
+    echo "# diag.sh 家族档 ${fam}（启动即加载子集，无 reload）——勿手改" >> "$DIAG_TOML"
+    [ "$WARMUP" = "1" ] && printf '\n[[stages]]\nname = "warmup"\ncut_rules = false\ncut_output = false\nrules = ""\n' >> "$DIAG_TOML"
+    printf '\n[[stages]]\nname = "floor"\ncut_rules = true\ncut_output = true\nrules = ""\n' >> "$DIAG_TOML"
+    printf '\n[[stages]]\nname = "fam_%s"\ncut_rules = false\ncut_output = true\nrules = ""\n' "$fam" >> "$DIAG_TOML"
+    STAGE_NAMES="$( [ "$WARMUP" = "1" ] && echo -n 'warmup,' )floor,fam_${fam}"
+    echo "== 家族 ${fam}（独立 daemon，启动加载 data/diag_rules_${fam}.wfl）=="
+    run_ladder "$OUT" "data/diag_rules_${fam}.wfl" || FAILED=1
+  done
+else
+  run_ladder "$OUT" || FAILED=1
+fi
+RC=$FAILED
 echo "  → 报告: ${OUT}"
 if [ "$RC" = 0 ]; then echo "== diag 完成 =="; else echo "== diag 完成（存在告警/失败项，见报告）==" >&2; exit 1; fi
