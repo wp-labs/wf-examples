@@ -425,16 +425,24 @@ if [ "$FEED" = "replay" ] && [ ! -s "$FRAMES" ]; then
   # 帧缓存必须非空（-s）：上次失败/中断可能留下 0 字节或截断文件，存在不等于有效，
   # 否则会跳过生成→ send-arrow 推空帧→空等 MAX_SEC（之前 30m 空等 15 分钟无输出）。
   rm -f "$FRAMES"
-  "$WFGEN" gen-nexmark "$TOTAL_N" --check > data/burst_bench.jsonl || {
-    echo "    错误: gen-nexmark 失败（确认 wfgen 含 --check：$WFGEN）" >&2
-    rm -f data/burst_bench.jsonl
-    exit 1
-  }
   write_conf q1 replay
   local_dummy=$(start_daemon) || exit 1
-  "$WFGEN" dump-frames --scenario scenarios/nexmark.wfg --input data/burst_bench.jsonl \
-    --ws models/schemas/nexmark.wfs --addr 127.0.0.1:$PORT --output "$FRAMES" --chunk 1000000 \
-    --max-frame-bytes "$MAX_FRAME_BYTES" --max-frame-rows "$MAX_FRAME_ROWS" > /dev/null 2>&1
+  # 管道直连 gen→dump-frames（--input - 读 stdin）：不再落 data/burst_bench.jsonl
+  # 中间文件——100M 的 JSONL ~30GB，是磁盘峰值大头（os error 28 实测根因）。
+  # 注意：sorted 模式（默认，事件时间有序→窗口驱逐生效）仍写 60 桶临时文件到
+  # $TMPDIR（同盘），100M ~30GB；想换盘可 TMPDIR=<大数据盘> 指走。
+  # gen 的 --check 报告走 stderr 透传终端；pipefail 保证 gen 失败也能报错。
+  ( set -o pipefail
+    "$WFGEN" gen-nexmark "$TOTAL_N" --check | \
+      "$WFGEN" dump-frames --scenario scenarios/nexmark.wfg --input - \
+        --ws models/schemas/nexmark.wfs --addr 127.0.0.1:$PORT --output "$FRAMES" --chunk 1000000 \
+        --max-frame-bytes "$MAX_FRAME_BYTES" --max-frame-rows "$MAX_FRAME_ROWS" > /dev/null 2>&1
+  ) || {
+    echo "    错误: gen-nexmark/dump-frames 失败（确认 wfgen 含 --check：$WFGEN）" >&2
+    rm -f "$FRAMES"
+    kill_daemon "$local_dummy"; wait_port_free
+    exit 1
+  }
   # kill_daemon（非裸 kill）：只等端口会漏掉"端口已释放但进程未退出"的孤儿，
   # 孤儿继续烧 CPU 会污染本轮首跑测量
   kill_daemon "$local_dummy"; wait_port_free
