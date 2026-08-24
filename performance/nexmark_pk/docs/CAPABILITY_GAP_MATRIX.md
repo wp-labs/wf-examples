@@ -39,7 +39,7 @@
 | **Q17** | 按日历天的拍卖统计 | stats + 日历天窗口 | ✅ 已有 | 同上 |
 | **Q18** | 每 (bidder,auction) 最后一条 bid | stats last + 1d 桶 | ✅ 已有 | ★标准形态 `q18.wfl` = `1d:fixed` + 4 个 last 度量：值语义（最后一条字段值）+ 基数（每键 1 行）双对齐（last 序 = 到达序，有序数据 = max dateTime）；CEP 版（q18-verify.wfl）为基数对齐近似（值语义缺失） |
 | **Q19** | 拍卖 Top-10 价格 | stats<> top-N | ✅ 已有 | stats<> 编译/装配/执行器测试确认（`stats_top_keeps_top_n_desc`）；bench daemon 对拍待跑（oracle 不执行 stats 规则） |
-| **Q20** | 展开 bid 关联 auction（category=10 filter join） | snapshot join + join 后 where | ✅ 已有 | `on each` + `join auction_events snapshot on b.auction==id` + `where category==10`（对齐权威 INNER JOIN + 过滤，miss/过滤均抑制）；展开字段受 sink 四列限制省略 |
+| **Q20** | 展开 bid 关联 auction（category=10 filter join） | snapshot join + join 后 where | ✅ 已有 | `on each` + `join auction_events snapshot on b.auction==id` + `where category==10`（对齐权威 INNER JOIN + 过滤，miss/过滤均抑制）；展开字段受 sink 四列限制省略。**性能（2026-08-24）：Arc<JoinRow> 消除每行 clone/drop 后 30M 4.63M→20.87M EPS（4.5×）**；verify 偏差 0.97~1.65%（<5% 容差）——原设计「批快照+行时复查」固有竞态（join 目标窗按全量已提交状态读，fill 快慢改变可见集），方向恒为少发，见 wp-reactor 接力手记 |
 | **Q21** | 附加 channel id（热通道映射 + cold url 提取） | CEP on-each 投影 + 过滤 | ✅ 已有 | 权威 CASE 映射 0/1/2/3 + url `channel_id` 提取；wfgen 数据侧已计算 `channel_id`（cmd_gen_nexmark.rs:279），规则侧 `channel_id!=""` 过滤等价官方 WHERE（输出 95% bid）；无状态投影 |
 | **Q22** | URL 目录投影 | CEP projection | ✅ 已有 | — |
 
