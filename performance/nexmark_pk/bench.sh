@@ -38,10 +38,12 @@
 #   + 口径上下文（并行度/帧大小/时间戳）+ 正确性计数器摘要
 # 计时终点/完成信号 = 哨兵四元组（data/perf_sentinel.ndjson）：daemon 以
 # --perf-diag conf/perf-diag.toml 启动（无档 = 门控全 false，性能零影响，仅注册
-# __wf_sentinel 哨兵窗口），send-arrow/stream 以 --sentinel <n> 在数据末尾追加
-# 哨兵帧；引擎等**数据窗排空**后写 {round,n,start_ns,emit_ns}，EPS = n/
-# (emit_ns−start_ns) 精确可算（无 metrics 轮询的 ±200ms 误差）。哨兵超时退回
-# metrics append+acked_lag 轮询兑底（TIMEOUT 标注）。
+# __wf_sentinel 哨兵窗口），send-arrow/stream 以 --sentinel 启用哨兵——**分连接**
+# 发送：每条连接 copy 完自己的数据后追加哨兵帧（round=连接号, n=该连接实际行数,
+# start_ns=该连接开始），单连接 = 1 条（round=0）；引擎等**数据窗排空**后写
+# {round,n,start_ns,emit_ns}，EPS = Σn/(max emit_ns − min start_ns) 精确可算
+# （无 metrics 轮询的 ±200ms 误差）。哨兵超时退回 metrics append+acked_lag
+# 轮询兑底（TIMEOUT 标注）。
 # 结果写 data/bench_<query>_<feed>.txt（含完整 correctness 明细附录）
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -389,19 +391,25 @@ for line in open('data/metrics.ndjson'):
 print(sum(lag.values()))"
 }
 
-# 哨兵四元组 "n start_ns emit_ns"：引擎等**数据窗排空**后写 perf_sentinel.ndjson
-# （round=0 = send-arrow/stream --sentinel 追加的完成信号）。空 = 尚未出现。
-# EPS = n/(emit_ns − start_ns)：start_ns 由发送端在数据开始推时记录，emit_ns 为
-# 引擎全部处理完时刻，两者同机时钟——无 metrics 轮询粒度误差。
+# 哨兵汇总 "total_n min_start max_emit count"：读**全部** sentinel 记录——
+# 多连接分连接哨兵（round=连接号，4-1..4-4）聚合为批级完成信号：单连接 1 条
+# （round=0，兼容旧语义）；多连接 N 条，Σn = 该批总行数，min start = 最先开始
+# 的连接，max emit = 最后完成（引擎等全部数据窗排空后写）。
+# EPS = Σn / (max_emit − min_start)。空 = 尚未出现。
 sentinel_tuple() {
   "$PY" -c "
 import json
+rows=[]
 for line in open('data/perf_sentinel.ndjson'):
     try: o=json.loads(line)
     except Exception: continue
-    if o.get('record_type')=='sentinel' and o.get('round')==0:
-        print(o.get('n'), o.get('start_ns'), o.get('emit_ns'))
-        break"
+    if o.get('record_type')=='sentinel':
+        rows.append(o)
+if rows:
+    total_n=sum(int(r['n']) for r in rows)
+    min_start=min(int(r['start_ns']) for r in rows)
+    max_emit=max(int(r['emit_ns']) for r in rows)
+    print(total_n, min_start, max_emit, len(rows))"
 }
 
 # ---- 正确性摘要：emitted_total（按规则）+ 致命计数器 ----
@@ -499,6 +507,7 @@ run_replay_one() {
   local T0=$("$PY" -c 'import time; print(time.time())')
   # 哨兵 n = 引擎应消化的目标行数：多连接 raw（每连接推完整文件）→ CONNECTIONS×TOTAL；
   # 分片（shard-files/shard-keys，合计 = TOTAL）或单连接 → TOTAL。
+  local SHARD_FILES="${SHARD_FILES:-}"
   local SENT_N="$TOTAL_N"
   if [ "$CONNECTIONS" -gt 1 ] && [ -z "$SHARD_KEYS" ] && [ -z "$SHARD_FILES" ]; then
     SENT_N=$(( TOTAL_N * CONNECTIONS ))
@@ -547,7 +556,7 @@ run_replay_one() {
   for j in $(seq 1 $(( MAX_SEC * 10 ))); do
     SENT_TUPLE=$(sentinel_tuple)
     if [ -n "$SENT_TUPLE" ]; then
-      read -r SN SSTART SEMIT <<< "$SENT_TUPLE"
+      read -r SN SSTART SEMIT SCOUNT <<< "$SENT_TUPLE"
       EPS=$("$PY" -c "print(int($SN*1e9/($SEMIT-$SSTART)))")
       T2=$("$PY" -c "print($SEMIT/1e9)")
       APP=$SN
@@ -580,7 +589,7 @@ run_replay_one() {
     sleep 0.5
     SENT_TUPLE=$(sentinel_tuple)
     if [ -n "$SENT_TUPLE" ]; then
-      read -r SN SSTART SEMIT <<< "$SENT_TUPLE"
+      read -r SN SSTART SEMIT SCOUNT <<< "$SENT_TUPLE"
       EPS=$("$PY" -c "print(int($SN*1e9/($SEMIT-$SSTART)))")
       EPS_MODE="sentinel"
     else
@@ -596,7 +605,7 @@ run_replay_one() {
   : > "$OUT"   # 预清空，防追加残留上一轮
   local TO=""; [ "$TIMEOUT" = 1 ] && TO=" ⚠TIMEOUT(哨兵超时,EPS=metrics-append 兑底)"
   report_result "$Q" replay "$OUT" \
-    "$Q/replay: EPS=$(comma "$EPS") · RSS_peak=$(comma "$PEAK")MB · CPU ${CPU_AVG}%avg/${CPU_MAX}%max · evict=$EV · appended=$(comma "$APP")/$(comma "$SENT_N") · eps_mode=${EPS_MODE}$TO"
+    "$Q/replay: EPS=$(comma "$EPS") · RSS_peak=$(comma "$PEAK")MB · CPU ${CPU_AVG}%avg/${CPU_MAX}%max · evict=$EV · appended=$(comma "$APP")/$(comma "$SENT_N") · eps_mode=${EPS_MODE}${SCOUNT:+" · conns=$SCOUNT"}$TO"
 }
 
 # ---- feed=stream：wfgen stream 实时生成（事件时间推进） ----
@@ -625,7 +634,7 @@ run_stream_one() {
   for j in $(seq 1 $(( MAX_SEC * 2 ))); do
     SENT_TUPLE=$(sentinel_tuple)
     if [ -n "$SENT_TUPLE" ]; then
-      read -r SN SSTART SEMIT <<< "$SENT_TUPLE"
+      read -r SN SSTART SEMIT SCOUNT <<< "$SENT_TUPLE"
       EPS=$("$PY" -c "print(int($SN*1e9/($SEMIT-$SSTART)))")
       T2=$("$PY" -c "print($SEMIT/1e9)")
       APP=$SN
@@ -654,7 +663,7 @@ run_stream_one() {
     sleep 1
     SENT_TUPLE=$(sentinel_tuple)
     if [ -n "$SENT_TUPLE" ]; then
-      read -r SN SSTART SEMIT <<< "$SENT_TUPLE"
+      read -r SN SSTART SEMIT SCOUNT <<< "$SENT_TUPLE"
       EPS=$("$PY" -c "print(int($SN*1e9/($SEMIT-$SSTART)))")
       EPS_MODE="sentinel"
     else
@@ -670,7 +679,7 @@ run_stream_one() {
   : > "$OUT"
   local TO=""; [ "$TIMEOUT" = 1 ] && TO=" ⚠TIMEOUT(哨兵超时,EPS=metrics-append 兑底)"
   report_result "$Q" stream "$OUT" \
-    "$Q/stream: EPS=$(comma "$EPS") · RSS_peak=$(comma "$PEAK")MB · CPU ${CPU_AVG}%avg/${CPU_MAX}%max · evict=$EV · appended=$(comma "$APP")/$(comma "$TOTAL_N") · target_rate=$(comma "$RATE") · eps_mode=${EPS_MODE}$TO"
+    "$Q/stream: EPS=$(comma "$EPS") · RSS_peak=$(comma "$PEAK")MB · CPU ${CPU_AVG}%avg/${CPU_MAX}%max · evict=$EV · appended=$(comma "$APP")/$(comma "$TOTAL_N") · target_rate=$(comma "$RATE") · eps_mode=${EPS_MODE}${SCOUNT:+" · conns=$SCOUNT"}$TO"
 }
 
 # ---- 预热轮（WARMUP=1）：stash 重建后首跑系统性偏低（曾三次复现），须剔除 ----

@@ -94,9 +94,11 @@ MAX_FRAME_BYTES=1048576 ./bench.sh all replay 30m    # 指定帧 cap（默认 8M
 
 1. **计时口径 = 哨兵四元组**（2026-08-24 起）：daemon 以 `--perf-diag
    conf/perf-diag.toml` 启动（无档 = 门控全 false，性能零影响，仅注册
-   `__wf_sentinel` 窗口），`send-arrow/stream --sentinel <n>` 在数据末尾追加
-   哨兵帧；引擎等**数据窗排空**后写 `{round,n,start_ns,emit_ns}`，EPS =
-   n/(emit_ns−start_ns)——无 metrics 轮询（±200ms）粒度误差，短跑读数同样可信。
+   `__wf_sentinel` 窗口），`send-arrow/stream --sentinel` 启用**分连接哨兵**：
+   每条连接 copy 完自己的数据后追加哨兵帧（round=连接号，单连接 1 条 round=0）；
+   引擎等**数据窗排空**后写 `{round,n,start_ns,emit_ns}`，EPS =
+   Σn/(max emit_ns − min start_ns)——无 metrics 轮询（±200ms）粒度误差，短跑
+   读数同样可信，且多连接时各连接 dt 可对比（连接均衡/慢连接诊断）。
    哨兵超时退回 append_total 轮询兑底（`eps_mode=metrics-append`，TIMEOUT 标注）。
    （旧口径：metrics 三输入流 append 计数器求和追平 TOTAL 的时刻。）
 2. **RSS 口径（2026-08-17 起）**：`parse_buffer_bytes` 默认值已改为 128MB
