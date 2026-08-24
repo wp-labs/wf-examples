@@ -1,0 +1,13 @@
+# 性能诊断（perf-diag）配置 —— nexmark_pk bench 的精确 EPS 统计用
+#
+# 无档（空列表）：诊断模式仅注册 __wf_sentinel 哨兵窗口，初始门控全 false
+# （cut_rules/cut_output 均不切，性能零影响）——bench 只为拿哨兵完成信号：
+#   wfgen send-arrow/stream --sentinel <n> 在数据末尾追加哨兵帧，
+#   引擎等数据窗排空后写 data/perf_sentinel.ndjson 四元组，
+#   EPS = n / (emit_ns − start_ns)（替代轮询 metrics 的 ±200ms 近似）。
+#
+# 需要逐段切墙诊断时（如 q1 throughput bisection），在此追加 [[stages]]：
+#   [[stages]]
+#   name = "full"        # 单档 = 只测全量，不切换
+#   cut_rules = false
+#   cut_output = false

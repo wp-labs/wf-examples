@@ -85,13 +85,20 @@ MAX_FRAME_BYTES=1048576 ./bench.sh all replay 30m    # 指定帧 cap（默认 8M
   replay 的追赶式）；② 长时稳定性/内存有界（中低速持续跑几十分钟~几小时，看
   RSS 是否有界、不泄漏）；③ 生产形态模拟（事件时间=现在，验证 late/`allowed_lateness`
   行为）。**不用于**吞吐对比与短时跑批。
-- 输出每查询 `data/bench_<q>_<feed>.txt`：EPS + RSS 峰值 + 驱逐数；
-  `data/metrics.ndjson` 为计数器流，`data/{wfusion,daemon}.log` 为引擎日志。
+- 输出每查询 `data/bench_<q>_<feed>.txt`：EPS + RSS 峰值 + 驱逐数 + 口径标注
+  （`eps_mode=sentinel|metrics-append`）；`data/perf_sentinel.ndjson` 为哨兵
+  四元组流（完成信号 + EPS 数据源），`data/metrics.ndjson` 为计数器流，
+  `data/{wfusion,daemon}.log` 为引擎日志。
 
 ### 测量纪律（违反会得出假结论）
 
-1. **计时口径 = append_total**：metrics 三输入流 append 计数器求和追平 TOTAL 的时刻
-   （旧 ingress 预读游标口径已作废）。
+1. **计时口径 = 哨兵四元组**（2026-08-24 起）：daemon 以 `--perf-diag
+   conf/perf-diag.toml` 启动（无档 = 门控全 false，性能零影响，仅注册
+   `__wf_sentinel` 窗口），`send-arrow/stream --sentinel <n>` 在数据末尾追加
+   哨兵帧；引擎等**数据窗排空**后写 `{round,n,start_ns,emit_ns}`，EPS =
+   n/(emit_ns−start_ns)——无 metrics 轮询（±200ms）粒度误差，短跑读数同样可信。
+   哨兵超时退回 append_total 轮询兑底（`eps_mode=metrics-append`，TIMEOUT 标注）。
+   （旧口径：metrics 三输入流 append 计数器求和追平 TOTAL 的时刻。）
 2. **RSS 口径（2026-08-17 起）**：`parse_buffer_bytes` 默认值已改为 128MB
    （P0-② content 记账，18 槽）——q1 100M ≈ 6.1M / RSS ~5.9GB，旧默认
    （256MB 解码记账）为 5.93M / 4.4GB。吞吐优先场景显式调大预算（bench 默认

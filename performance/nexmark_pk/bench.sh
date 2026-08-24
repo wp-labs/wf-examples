@@ -34,9 +34,14 @@
 #   CONNECTIONS=4 SHARD_KEYS="bid_events:auction,auction_events:id,person_events:id" ./bench.sh q2 replay 30m  # 有状态:键闭包多连接
 #   DATA_VER=old ./bench.sh q1 replay 100m   # 强制用旧乱序数据复现对比
 #
-# 输出每查询: EPS（引擎 append 数/墙钟，端到端口径）+ RSS 峰值 + 驱逐数
+# 输出每查询: EPS + RSS 峰值 + 驱逐数
 #   + 口径上下文（并行度/帧大小/时间戳）+ 正确性计数器摘要
-# 计时终点 = window append_total 三输入流追平 TOTAL（非 receiver 预读游标）
+# 计时终点/完成信号 = 哨兵四元组（data/perf_sentinel.ndjson）：daemon 以
+# --perf-diag conf/perf-diag.toml 启动（无档 = 门控全 false，性能零影响，仅注册
+# __wf_sentinel 哨兵窗口），send-arrow/stream 以 --sentinel <n> 在数据末尾追加
+# 哨兵帧；引擎等**数据窗排空**后写 {round,n,start_ns,emit_ns}，EPS = n/
+# (emit_ns−start_ns) 精确可算（无 metrics 轮询的 ±200ms 误差）。哨兵超时退回
+# metrics append+acked_lag 轮询兑底（TIMEOUT 标注）。
 # 结果写 data/bench_<query>_<feed>.txt（含完整 correctness 明细附录）
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -59,7 +64,7 @@ if [ "${1:-}" = "clean" ]; then
       # 日志/临时：运行残留（start_daemon 每次 rm -f 重写，可任意删）
       rm -f data/metrics.ndjson data/wfusion.log data/daemon.log data/stream.log \
             data/error.ndjson data/burst_bench.jsonl data/bench_q1q21_100m.log \
-            data/daemon_file.log data/wfusion_file.log \
+            data/daemon_file.log data/wfusion_file.log data/perf_sentinel.ndjson \
             /tmp/bench_rss.txt /tmp/bench_conf.toml /tmp/bench_conf.toml.tmp \
             /tmp/bench_gt_verify.json /tmp/bench_warmup_q1.txt
       if [ "$CLEAN_MODE" = "all" ]; then
@@ -325,8 +330,11 @@ write_conf() {
 }
 
 start_daemon() {
-  rm -f data/metrics.ndjson data/wfusion.log data/daemon.log data/stream.log
-  "$WFUSION" daemon --config /tmp/bench_conf.toml --work-dir . > data/daemon.log 2>&1 &
+  rm -f data/metrics.ndjson data/wfusion.log data/daemon.log data/stream.log data/perf_sentinel.ndjson
+  # --perf-diag conf/perf-diag.toml：无档配置，仅注册 __wf_sentinel 哨兵窗口
+  # （初始门控全 false，性能零影响）——bench 用哨兵四元组做精确完成信号/EPS。
+  "$WFUSION" daemon --config /tmp/bench_conf.toml --work-dir . \
+    --perf-diag conf/perf-diag.toml > data/daemon.log 2>&1 &
   local D=$!
   local i
   for i in $(seq 1 40); do
@@ -379,6 +387,21 @@ for line in open('data/metrics.ndjson'):
     if o.get('name')=='acked_lag' and o.get('label') in ('auction_events','bid_events','person_events'):
         lag[o.get('label')]=int(o.get('value',0))
 print(sum(lag.values()))"
+}
+
+# 哨兵四元组 "n start_ns emit_ns"：引擎等**数据窗排空**后写 perf_sentinel.ndjson
+# （round=0 = send-arrow/stream --sentinel 追加的完成信号）。空 = 尚未出现。
+# EPS = n/(emit_ns − start_ns)：start_ns 由发送端在数据开始推时记录，emit_ns 为
+# 引擎全部处理完时刻，两者同机时钟——无 metrics 轮询粒度误差。
+sentinel_tuple() {
+  "$PY" -c "
+import json
+for line in open('data/perf_sentinel.ndjson'):
+    try: o=json.loads(line)
+    except Exception: continue
+    if o.get('record_type')=='sentinel' and o.get('round')==0:
+        print(o.get('n'), o.get('start_ns'), o.get('emit_ns'))
+        break"
 }
 
 # ---- 正确性摘要：emitted_total（按规则）+ 致命计数器 ----
@@ -474,6 +497,12 @@ run_replay_one() {
   start_rss "$D"; local SP=$!
 
   local T0=$("$PY" -c 'import time; print(time.time())')
+  # 哨兵 n = 引擎应消化的目标行数：多连接 raw（每连接推完整文件）→ CONNECTIONS×TOTAL；
+  # 分片（shard-files/shard-keys，合计 = TOTAL）或单连接 → TOTAL。
+  local SENT_N="$TOTAL_N"
+  if [ "$CONNECTIONS" -gt 1 ] && [ -z "$SHARD_KEYS" ] && [ -z "$SHARD_FILES" ]; then
+    SENT_N=$(( TOTAL_N * CONNECTIONS ))
+  fi
   if [ -n "$SHARD_KEYS" ] && [ "$CONNECTIONS" -gt 1 ]; then
     # 生成时分片(shard-frames)→ 纯 copy 多连接发送(键闭包,零解码):
     # 先检查分片文件缓存(同 TOTAL×CONNECTIONS×shard-keys 复用),缺则 shard-frames
@@ -499,51 +528,75 @@ run_replay_one() {
         SHARD_FILES="${SHARD_FILES:+$SHARD_FILES,}${SHARD_PREFIX}.s${i}.frames"
       done
     fi
-    "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT --shard-files "$SHARD_FILES" > /dev/null 2>&1 &
+    "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT --shard-files "$SHARD_FILES" \
+      --sentinel "$SENT_N" > /dev/null 2>&1 &
   elif [ -n "$SHARD_KEYS" ]; then
     # 单连接 + shard-keys:无需分区,退化为普通发送
-    "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT > /dev/null 2>&1 &
+    "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT --sentinel "$SENT_N" > /dev/null 2>&1 &
   else
-    "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT --connections "$CONNECTIONS" > /dev/null 2>&1 &
+    "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT --connections "$CONNECTIONS" \
+      --sentinel "$SENT_N" > /dev/null 2>&1 &
   fi
   local CLIENT=$!
-  # 等引擎真正消化完（append 追平 TOTAL 且所有规则 ack 追平，而非 ingress 预读）。
+  # 等引擎真正消化完：完成信号 = 哨兵四元组出现（引擎等数据窗排空后写
+  # perf_sentinel.ndjson，无 metrics 轮询粒度误差）。哨兵超时退回 metrics 兑底。
   # 超时自适应：按 100k/s 诚实下限 + 600s 余量（on-each 单线程 ~0.3M/s，
   # 100M 需 ~333s；旧的 300s 上限会在真实负载下提前超时）。
   local MAX_SEC=$(( TOTAL_N / 100000 + 600 ))
-  local T2=0 APP=0 TIMEOUT=0
-  # 轮询 0.1s：metrics exporter 100ms 落盘（conf/wfusion.toml report_interval），
-  # T2 误差 ≤ exporter 间隔 + 轮询间隔 ≈ 200ms——短跑（~1s feed）读数才可信
-  # （旧 1s 落盘 + 0.5s 轮询把 EPS 量化成 43/55/84M 伪档，见 wp-reactor §12）。
+  local T2=0 APP=0 TIMEOUT=0 EPS_MODE="sentinel" SENT_TUPLE=""
   for j in $(seq 1 $(( MAX_SEC * 10 ))); do
+    SENT_TUPLE=$(sentinel_tuple)
+    if [ -n "$SENT_TUPLE" ]; then
+      read -r SN SSTART SEMIT <<< "$SENT_TUPLE"
+      EPS=$("$PY" -c "print(int($SN*1e9/($SEMIT-$SSTART)))")
+      T2=$("$PY" -c "print($SEMIT/1e9)")
+      APP=$SN
+      break
+    fi
     APP=$(engine_appended)
     DRAINED=$(engine_acked_lag)
     if [ "${APP:-0}" -ge "$TOTAL_N" ] && [ "${DRAINED:-1}" = "0" ]; then
+      EPS_MODE="metrics-append"
       T2=$("$PY" -c 'import time; print(time.time())')
       break
     fi
     # 长等待期每 10s 报一次进度，避免全程静默看起来像挂死
     if [ $(( j % 100 )) -eq 0 ]; then
-      echo "  ingest: $(comma "${APP:-0}")/$(comma "$TOTAL_N") ack_lag=${DRAINED:-1}（等待引擎消化，超时上限 ${MAX_SEC}s）"
+      echo "  ingest: $(comma "${APP:-0}")/$(comma "$TOTAL_N") ack_lag=${DRAINED:-1}（等待哨兵/引擎消化，超时上限 ${MAX_SEC}s）"
     fi
     sleep 0.1
   done
   # 追平后 kill 客户端：CONNECTIONS>1 时客户端会推 CONNECTIONS×TOTAL 事件，
   # 引擎只需消化 TOTAL（口径统一）；单连接时客户端已推完，kill 无害。
   kill "$CLIENT" 2>/dev/null; wait "$CLIENT" 2>/dev/null
-  if [ "$T2" = 0 ]; then T2=$("$PY" -c 'import time; print(time.time())'); TIMEOUT=1; fi
+  if [ "$EPS_MODE" = "sentinel" ] && [ -z "$SENT_TUPLE" ]; then
+    # 哨兵未出现（daemon 无 --perf-diag / 引擎卡死）：退回 metrics 口径 + TIMEOUT 标注
+    T2=$("$PY" -c 'import time; print(time.time())')
+    EPS=$("$PY" -c "print(int($APP/($T2-$T0)))")
+    TIMEOUT=1
+  elif [ "$EPS_MODE" = "metrics-append" ]; then
+    # metrics 追平完成但哨兵未先到：哨兵帧在数据尾几 ms 后才发（send-arrow 推完
+    # 数据再追加），等一拍看是否落盘——读到即升级为哨兵口径（更精确）。
+    sleep 0.5
+    SENT_TUPLE=$(sentinel_tuple)
+    if [ -n "$SENT_TUPLE" ]; then
+      read -r SN SSTART SEMIT <<< "$SENT_TUPLE"
+      EPS=$("$PY" -c "print(int($SN*1e9/($SEMIT-$SSTART)))")
+      EPS_MODE="sentinel"
+    else
+      EPS=$("$PY" -c "print(int($APP/($T2-$T0)))")
+    fi
+  fi
   sleep 3
   kill $SP 2>/dev/null; wait $SP 2>/dev/null; kill_daemon $D; wait_port_free
 
-  # EPS 按 append 计：追平时 == TOTAL；超时时 = 实际处理速率（不含预读水分）
-  local EPS=$("$PY" -c "print(int($APP/($T2-$T0)))")
   stat_samples
   # grep -c 无匹配时退出码 1 但仍输出 0——`|| echo 0` 会叠出双 0，改为兜底默认
   local EV=$(grep -c 'memory eviction' data/wfusion.log 2>/dev/null || true); EV=${EV:-0}
   : > "$OUT"   # 预清空，防追加残留上一轮
-  local TO=""; [ "$TIMEOUT" = 1 ] && TO=" ⚠TIMEOUT(appended未追平,EPS=实际速率)"
+  local TO=""; [ "$TIMEOUT" = 1 ] && TO=" ⚠TIMEOUT(哨兵超时,EPS=metrics-append 兑底)"
   report_result "$Q" replay "$OUT" \
-    "$Q/replay: EPS=$(comma "$EPS") · RSS_peak=$(comma "$PEAK")MB · CPU ${CPU_AVG}%avg/${CPU_MAX}%max · evict=$EV · appended=$(comma "$APP")/$(comma "$TOTAL_N")$TO"
+    "$Q/replay: EPS=$(comma "$EPS") · RSS_peak=$(comma "$PEAK")MB · CPU ${CPU_AVG}%avg/${CPU_MAX}%max · evict=$EV · appended=$(comma "$APP")/$(comma "$SENT_N") · eps_mode=${EPS_MODE}$TO"
 }
 
 # ---- feed=stream：wfgen stream 实时生成（事件时间推进） ----
@@ -558,41 +611,66 @@ run_stream_one() {
   local T0=$("$PY" -c 'import time; print(time.time())')
   "$WFGEN" stream --scenario-dir scenarios --ws models/schemas/nexmark.wfs \
     --wfl models/queries/$Q.wfl --addr 127.0.0.1:$PORT \
-    --rate "$RATE" --slice-ms "$SLICE_MS" > data/stream.log 2>&1 &
+    --rate "$RATE" --slice-ms "$SLICE_MS" --sentinel "$TOTAL_N" > data/stream.log 2>&1 &
   local S=$!
 
-  # 等引擎消化完（append 追平 TOTAL 且规则 ack 追平）。若引擎持续能力 < RATE，backlog 会
-  # 一直堆积、append 永远追不上 → 超时退出，此时 EPS 按实际 append 数计算，
-  # 即"撑不住目标速率"的诚实信号。
+  # 等引擎消化完：完成信号 = 哨兵四元组（stream 发满 TOTAL 后追加哨兵帧，引擎
+  # 等数据窗排空写记录）。哨兵超时退回 metrics append+acked_lag 兑底。
+  # 若引擎持续能力 < RATE，backlog 会一直堆积、哨兵永不出现 → 超时退出，此时
+  # EPS 按 metrics-append 实际数计算，即"撑不住目标速率"的诚实信号。
   local MAX_SEC=900
   if [ "$RATE" -gt 0 ] 2>/dev/null; then MAX_SEC=$(( TOTAL_N / RATE * 3 + 60 ))
   else MAX_SEC=$(( TOTAL_N / 100000 + 600 )); fi   # 不限速：与 replay 同款自适应
-  local T2=0 APP=0 TIMEOUT=0
+  local T2=0 APP=0 TIMEOUT=0 EPS_MODE="sentinel" SENT_TUPLE=""
   for j in $(seq 1 $(( MAX_SEC * 2 ))); do
+    SENT_TUPLE=$(sentinel_tuple)
+    if [ -n "$SENT_TUPLE" ]; then
+      read -r SN SSTART SEMIT <<< "$SENT_TUPLE"
+      EPS=$("$PY" -c "print(int($SN*1e9/($SEMIT-$SSTART)))")
+      T2=$("$PY" -c "print($SEMIT/1e9)")
+      APP=$SN
+      break
+    fi
     APP=$(engine_appended)
     DRAINED=$(engine_acked_lag)
     if [ "${APP:-0}" -ge "$TOTAL_N" ] && [ "${DRAINED:-1}" = "0" ]; then
+      EPS_MODE="metrics-append"
       T2=$("$PY" -c 'import time; print(time.time())')
       break
     fi
     # 长等待期每 10s 报一次进度，避免全程静默看起来像挂死
     if [ $(( j % 20 )) -eq 0 ]; then
-      echo "  ingest: $(comma "${APP:-0}")/$(comma "$TOTAL_N") ack_lag=${DRAINED:-1}（等待引擎消化，超时上限 ${MAX_SEC}s）"
+      echo "  ingest: $(comma "${APP:-0}")/$(comma "$TOTAL_N") ack_lag=${DRAINED:-1}（等待哨兵/引擎消化，超时上限 ${MAX_SEC}s）"
     fi
     sleep 0.5
   done
-  if [ "$T2" = 0 ]; then T2=$("$PY" -c 'import time; print(time.time())'); TIMEOUT=1; fi
+  if [ "$EPS_MODE" = "sentinel" ] && [ -z "$SENT_TUPLE" ]; then
+    T2=$("$PY" -c 'import time; print(time.time())')
+    EPS=$("$PY" -c "print(int($APP/($T2-$T0)))")
+    TIMEOUT=1
+  elif [ "$EPS_MODE" = "metrics-append" ]; then
+    # 哨兵帧在数据尾几 ms 后才发（stream 发满预算再追加）；等一拍看是否落盘，
+    # 读到即升级哨兵口径（更精确）。kill $S 在其后，不影响哨兵帧发送。
+    sleep 1
+    SENT_TUPLE=$(sentinel_tuple)
+    if [ -n "$SENT_TUPLE" ]; then
+      read -r SN SSTART SEMIT <<< "$SENT_TUPLE"
+      EPS=$("$PY" -c "print(int($SN*1e9/($SEMIT-$SSTART)))")
+      EPS_MODE="sentinel"
+    else
+      EPS=$("$PY" -c "print(int($APP/($T2-$T0)))")
+    fi
+  fi
   kill $S 2>/dev/null; wait $S 2>/dev/null
   sleep 3
   kill $SP 2>/dev/null; wait $SP 2>/dev/null; kill_daemon $D; wait_port_free
 
-  local EPS=$("$PY" -c "print(int($APP/($T2-$T0)))")
   stat_samples
   local EV=$(grep -c 'memory eviction' data/wfusion.log 2>/dev/null || true); EV=${EV:-0}
   : > "$OUT"
-  local TO=""; [ "$TIMEOUT" = 1 ] && TO=" ⚠TIMEOUT(未追平,引擎撑不住目标速率或超时)"
+  local TO=""; [ "$TIMEOUT" = 1 ] && TO=" ⚠TIMEOUT(哨兵超时,EPS=metrics-append 兑底)"
   report_result "$Q" stream "$OUT" \
-    "$Q/stream: EPS=$(comma "$EPS") · RSS_peak=$(comma "$PEAK")MB · CPU ${CPU_AVG}%avg/${CPU_MAX}%max · evict=$EV · appended=$(comma "$APP")/$(comma "$TOTAL_N") · target_rate=$(comma "$RATE")$TO"
+    "$Q/stream: EPS=$(comma "$EPS") · RSS_peak=$(comma "$PEAK")MB · CPU ${CPU_AVG}%avg/${CPU_MAX}%max · evict=$EV · appended=$(comma "$APP")/$(comma "$TOTAL_N") · target_rate=$(comma "$RATE") · eps_mode=${EPS_MODE}$TO"
 }
 
 # ---- 预热轮（WARMUP=1）：stash 重建后首跑系统性偏低（曾三次复现），须剔除 ----
