@@ -67,6 +67,7 @@ if [ "${1:-}" = "clean" ]; then
       rm -f data/metrics.ndjson data/wfusion.log data/daemon.log data/stream.log \
             data/error.ndjson data/burst_bench.jsonl data/bench_q1q21_100m.log \
             data/daemon_file.log data/wfusion_file.log data/perf_sentinel.ndjson \
+            data/bench_*_rss.txt \
             /tmp/bench_rss.txt /tmp/bench_conf.toml /tmp/bench_conf.toml.tmp \
             /tmp/bench_gt_verify.json /tmp/bench_warmup_q1.txt
       if [ "$CLEAN_MODE" = "all" ]; then
@@ -255,7 +256,22 @@ trap cleanup_daemons EXIT INT TERM
 # 每行带 epoch_ns（与哨兵 start_ns/emit_ns 同域），stat_samples 按引擎活跃窗过滤——
 # 1s 粗采样对 q2 这类亚秒级突发会漏采/稀释（实测报 CPU 0% 假象）。
 start_rss() {
+  : > /tmp/bench_rss.txt   # 先截断：wait_sampler_baseline 的 -s 判断只认本轮采样器写出的行
   "$PY" "$LIB" rss-sampler "$1" /tmp/bench_rss.txt 0.1 > /dev/null 2>&1 &
+}
+
+# 等采样器产出首个 cputime 差分（文件出现第一行 = 第 2 次 tick 完成）。
+# 必须在启动客户端前调用：首 tick 只初始化基线，第一个差分要等第 2 次 ps；
+# 若采样器起得晚（python 启动/ps 开销在慢机上 ~0.5-1s），亚秒级突发
+# （q2/q8 ≈ 0.4s 活跃窗）会在首个差分前烧完 → 活跃窗内全是空闲样本，
+# CPU 恒报 0%（两轮实测复现，与查询无关的确定性失败）。等完基线后突发
+# 一定被某个后续差分跨住。超时不阻塞（采样器异常时继续，全样本兑底）。
+wait_sampler_baseline() {
+  local i
+  for i in $(seq 1 40); do   # 最多 ~4s
+    [ -s /tmp/bench_rss.txt ] && return 0
+    sleep 0.1
+  done
 }
 
 # 从采样文件提取 PEAK_RSS / CPU_AVG / CPU_MAX（缺样本时给 n/a）。
@@ -443,6 +459,7 @@ run_replay_one() {
   local D
   D=$(start_daemon) || exit 1
   start_rss "$D"; local SP=$!
+  wait_sampler_baseline   # 先拿 cputime 差分基线，再启动客户端（防亚秒突发 0% 假象）
 
   local T0=$("$PY" "$LIB" now)
   # 哨兵 n = 引擎应消化的目标行数：多连接 raw（每连接推完整文件）→ CONNECTIONS×TOTAL；
@@ -548,6 +565,7 @@ run_replay_one() {
     CPU_WIN_START="$T0"; CPU_WIN_END="$T2"
   fi
   stat_samples
+  cp /tmp/bench_rss.txt "data/bench_${Q}_${OUT_TAG}_rss.txt" 2>/dev/null || true   # 留档采样行，供 0%/异常自查
   # grep -c 无匹配时退出码 1 但仍输出 0——`|| echo 0` 会叠出双 0，改为兜底默认
   local EV=$(grep -c 'memory eviction' data/wfusion.log 2>/dev/null || true); EV=${EV:-0}
   : > "$OUT"   # 预清空，防追加残留上一轮
@@ -565,6 +583,7 @@ run_stream_one() {
   local D
   D=$(start_daemon) || exit 1
   start_rss "$D"; local SP=$!
+  wait_sampler_baseline   # 先拿 cputime 差分基线，再启动流（防亚秒突发 0% 假象）
 
   local T0=$("$PY" "$LIB" now)
   "$WFGEN" stream --scenario-dir scenarios --ws models/schemas/nexmark.wfs \
@@ -631,6 +650,7 @@ run_stream_one() {
     CPU_WIN_START="$T0"; CPU_WIN_END="$T2"
   fi
   stat_samples
+  cp /tmp/bench_rss.txt "data/bench_${Q}_stream_rss.txt" 2>/dev/null || true   # 留档采样行，供 0%/异常自查
   local EV=$(grep -c 'memory eviction' data/wfusion.log 2>/dev/null || true); EV=${EV:-0}
   : > "$OUT"
   local TO=""; [ "$TIMEOUT" = 1 ] && TO=" ⚠TIMEOUT(哨兵超时,EPS=metrics-append 兑底)"

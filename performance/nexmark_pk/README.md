@@ -4,6 +4,8 @@
 口径（blackhole 丢弃）**，跑引擎实测吞吐与输出正确性，对照阿里 Nexmark 白皮书发布的
 OSS Flink / VVR 基线。查询覆盖与语义对齐判定见 `docs/CAPABILITY_GAP_MATRIX.md`（22 条全实现）；
 **性能数字以当次跑批 `data/bench_*_replay.txt` 为准**（历史实测报告已清理，见 git 历史）。
+**度量口径（EPS 哨兵机制 / RSS / CPU 活跃窗 / 正确性对拍）见 `docs/TEST_PLAN.md`；
+实测结果归档（含 Linux 跑批）见 `docs/BENCH_RESULTS.md`。**
 
 ## 目录结构
 
@@ -104,6 +106,7 @@ MAX_FRAME_BYTES=1048576 ./bench.sh all replay 30m    # 指定帧 cap（默认 8M
    读数同样可信，且多连接时各连接 dt 可对比（连接均衡/慢连接诊断）。
    哨兵超时退回 append_total 轮询兑底（`eps_mode=metrics-append`，TIMEOUT 标注）。
    （旧口径：metrics 三输入流 append 计数器求和追平 TOTAL 的时刻。）
+   完整链路（哨兵帧生成/引擎落盘/聚合/兑底）见 `docs/TEST_PLAN.md` §1。
 2. **RSS 口径（2026-08-17 起）**：`parse_buffer_bytes` 默认值已改为 128MB
    （P0-② content 记账，18 槽）——q1 100M ≈ 6.1M / RSS ~5.9GB，旧默认
    （256MB 解码记账）为 5.93M / 4.4GB。吞吐优先场景显式调大预算（bench 默认
@@ -113,9 +116,10 @@ MAX_FRAME_BYTES=1048576 ./bench.sh all replay 30m    # 指定帧 cap（默认 8M
 4. **同时段交错对比**：bench 机 EPS 与 RSS_peak 呈双峰相位强相关（同配置差 ±8%），
    结论必须按 RSS 相位配对；单轮数字只能作量级参考。
 5. **CPU 口径（2026-08-24 起）**：`CPU X%avg/Y%max` 是**引擎活跃窗**（哨兵
-   start_ns/emit_ns ± 0.5s）内的核占数（多核可 >100%），100ms 采样。此前 1s
-   粗采样 + 全生命周期统计会把亚秒级突发（如 q2 26M EPS ≈ 0.4s）稀释/漏采成
-   0%（实测假象）——新口径下 0% 才是真的空闲；短跑（<2s）读数仍只宜作量级参考。
+   start_ns/emit_ns ± 0.5s）内的核占数（多核可 >100%），100ms 采样；采样器先
+   产出 cputime 差分基线才启动客户端（防亚秒突发在首个差分前烧完 → 假 0%）。
+   此前 1s 粗采样 + 全生命周期统计会把亚秒级突发（如 q2 26M EPS ≈ 0.4s）稀释/
+   漏采成 0%（实测假象）——新口径下 0% 才可信；短跑（<2s）读数仍只宜作量级参考。
 6. 消费侧计数器提取：`python3 scripts/extract_emitted.py data/metrics.ndjson`
    （counter 跨 1s 区间求和；gauge 取峰值，不可混用）。
 

@@ -2,6 +2,8 @@
 
 > 配套文档：
 > - `../README.md` —— 套件结构、bench.sh 用法、测量纪律
+> - `TEST_PLAN.md` —— 测试方案：EPS/RSS/CPU/正确性度量口径（哨兵机制）
+> - `BENCH_RESULTS.md` —— 基准实测结果归档（按跑批日期分节）
 > - `CAPABILITY_GAP_MATRIX.md` —— 22 查询逐条能力/语义判定（当前权威）
 
 本文回答五个问题：**Nexmark 是什么？Q1~Q22 做什么测试？数据有什么要求？我们如何准备数据？正确的标准是什么？**
