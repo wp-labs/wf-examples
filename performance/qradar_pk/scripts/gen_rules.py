@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""生成 450 条规则的综合压测 WFL（6 个窗口、多数据类型、多 key/阈值网格）。
+"""生成 376 条规则的综合压测 WFL（6 个窗口、多数据类型、多 key/阈值网格）。
 
-对标 IBM QRadar Event Processor 认证负载（80k EPS @ 451 条规则）：规则数 450 与
+对标 IBM QRadar Event Processor 认证负载（80k EPS @ 451 条规则）：规则数 376 与
 451 同量级。用法: python3 gen_rules.py > ../models/rules/throughput.wfl
 
 窗口：conn_events（含 object/bool/float/chars/array）、auth_events、dns_events、
@@ -9,7 +9,8 @@ proxy_events（含 hex）、firewall_events、file_events（chars 实体 user）
 
 规则类别：count / sum / avg / min / max / distinct / accu / guard（bool/float/
 object 嵌套/array/hex/字符串/数学函数）/ close / 多事件 / 序列 / pipeline，
-多 key × 阈值网格。生成数量不足 450 时用 count 规则补齐，保证正好 450 条。
+多 key × 阈值网格。历史 450 规则含 74 条 c_pad_* 补齐（2026-08-24 经 perf-diag
+家族档定位为冗余凑数，已移除，见 main()）。
 """
 import sys
 
@@ -441,7 +442,7 @@ def file_rules():
 
 
 # ===========================================================================
-# 450 规则补齐（对标 QRadar EP 80k EPS @ 451 规则规格）— ~150 条新增
+# 新增规则（对标 QRadar EP 80k EPS @ 451 规则规格）— ~76 条净新增
 # ===========================================================================
 
 def conn_extra_rules():
@@ -730,14 +731,18 @@ def main():
     multi_extra_rules()
 
     # Pad with count rules to exactly 450 (对标 QRadar EP 451 规则规格)。
-    pad = 0
-    while len(RULES) < 450:
-        pad += 1
-        n = pad * 2 + 3
-        emit(f"c_pad_{pad}", {"c": ("conn_events", None)}, "sip", f"{{ c | count >= {n}; }}", "c", "sip")
+    # ⚠ 已移除（2026-08-24 perf-diag 家族档定位）：pad 是无 guard 的冗余 conn count
+    # （阈值 5/7/9/11… 与 c_sip_3/8/20 重叠），125 条 c 家族里占 74 条（59%），实测
+    # 贡献 c 家族近半成本（7.65µs → 去 pad 3.95µs / 事件）。删掉后规则集 376 条。
+    # if len(RULES) < 450:
+    #     pad = 0
+    #     while len(RULES) < 450:
+    #         pad += 1
+    #         n = pad * 2 + 3
+    #         emit(f"c_pad_{pad}", {"c": ("conn_events", None)}, "sip", f"{{ c | count >= {n}; }}", "c", "sip")
 
-    if len(RULES) > 450:
-        sys.stderr.write(f"ERROR: generated {len(RULES)} rules (>450)\n")
+    if len(RULES) > 376:
+        sys.stderr.write(f"ERROR: generated {len(RULES)} rules (>376, pad 已删)\n")
         sys.exit(1)
 
     print('use "network.wfs"')

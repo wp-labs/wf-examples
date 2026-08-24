@@ -1,15 +1,20 @@
-# qradar_pk — 450 规则高压吞吐 + QRadar EP 对标
+# qradar_pk — 376 规则高压吞吐 + QRadar EP 对标
 
 > 性能结论与诚实边界见 `PK_REPORT_MAC.md`（16 核 M3 Max 口径）与 `PK_REPORT_LINUX.md`
 > （Linux 8 核对等口径），2026-08-17。
 > **规则成本分析（2026-08-23，当前引擎下性能回归排查）**：见 `RULE_SET_BISECTION.md`
 > ——规则集二分定位瓶颈子集（conn count ~30% + guard ~16%）+ stats<> 对照反证。
 
-生产环境的 CEP/SIEM 部署通常跑 50-500+ 条规则。本场景用 **450 条规则**验证高规则量下的
+生产环境的 CEP/SIEM 部署通常跑 50-500+ 条规则。本场景用 **376 条规则**验证高规则量下的
 引擎吞吐与内存扩展性，并作为 **wp-reactor#18**（object 字段内存驱逐）的回归门禁。
-生成器产出 450 条（引擎加载 ~453 条规则条目，含 pipeline
+生成器产出 376 条（引擎加载 ~379 条规则条目，含 pipeline
 拆分），**对标 IBM QRadar Event Processor 官方认证负载（80k EPS @ 451 条规则）**——
-规则数与 QRadar 认证规格同量级（450 vs 451）。
+规则数量级与 QRadar 认证规格同量级。
+
+> **规则集变更（2026-08-24）：450 → 376**。`diag.sh` 家族档定位出 74 条 `c_pad_*` 补齐
+> 规则（纯凑数、无 guard 的冗余 conn count，阈值与正式 `c_sip_*` 重叠）贡献 c 家族近半
+> 成本，已从 `gen_rules.py` 删除——全量规则墙 31.8 → 26.0µs/事件（−18%），EPS 31.4k →
+> 38.4k（+22%），语义零损失。
 
 ## 事件源（6 类）
 
@@ -25,10 +30,10 @@ chars/array/object/hex 富类型，并含 chars 实体（user）：
 | dns_events | 10% | DNS 查询（domain 实体） |
 | file_events | 5% | 第六类源，chars 实体（user） |
 
-## 规则（450 条）
+## 规则（376 条）
 
 `scripts/gen_rules.py` 从模板 + 参数网格生成 `models/rules/throughput.wfl`
-（450 条，引擎加载为 ~453 条规则条目，3 条 pipeline 各拆 2 阶段）：
+（376 条，引擎加载为 ~379 条规则条目，3 条 pipeline 各拆 2 阶段）：
 
 | 类别 | 数量 | 覆盖 |
 |---|---|---|
@@ -46,12 +51,12 @@ chars/array/object/hex 富类型，并含 chars 实体（user）：
 | conn close（and-close） | 7 | close 路径 |
 | 序列（seq） | 5 | 多步有序 |
 | pipeline（`|>`） | 3 | 两阶段 fixed 桶 |
-| count 补齐 | 74 | 凑足 450 |
 
-> 450 = 300（历史基线）+ 150 新增。新增集中在 conn action 过滤、更高阈值、
-> 聚合/guard/distinct 网格扩展、auth/dns/proxy/firewall/file 各源深化，以及
-> 6 条多事件 + 2 条序列——**对标 QRadar EP 认证负载的 451 条（定制规则+构建块）**，
-> 规则数与规格同量级、类别覆盖更广（QRadar 官方口径为 80k EPS @ 451 规则）。
+> 376 = 300（历史基线）+ 76 新增 − **74 补齐（2026-08-24 删除）**。新增集中在 conn
+> action 过滤、更高阈值、聚合/guard/distinct 网格扩展、auth/dns/proxy/firewall/file
+> 各源深化，以及 6 条多事件 + 2 条序列——**对标 QRadar EP 认证负载的 451 条（定制
+> 规则+构建块）**，规则数量级与规格同量级、类别覆盖更广（QRadar 官方口径为 80k EPS
+> @ 451 规则）。历史 450 规则口径（含补齐）记录保留于 git 历史与下方实测表。
 
 实体：conn/proxy/firewall 用 `sip`（ip）、auth 用 `source_ip`、dns 用 `sip`/`domain`，
 file 用 chars 实体 `user`。match key 独立变化。
@@ -87,7 +92,7 @@ FAMILIES=c,dist,close,pipe ./diag.sh 200000   # 规则家族档（哪一族贵�
 ./diag.sh --list-families                      # 列出 17 个可用家族前缀 + 规则数
 ```
 
-- **三档墙梯**（叠加式，尾部向前切）：`floor`=注入+解码+窗口 / `rules`=+450 规则求值 /
+- **三档墙梯**（叠加式，尾部向前切）：`floor`=注入+解码+窗口 / `rules`=+376 规则求值 /
   `full`=+输出链；每档增量 = 该段成本。
 - **家族档**：按 rule 名前缀抽子集（`data/diag_rules_<fam>.wfl`），**每家族独立 daemon
   会话启动即加载**（不是多档热 reload——子集引用窗口 < 全量时 reload 必 Blocked
@@ -99,52 +104,55 @@ FAMILIES=c,dist,close,pipe ./diag.sh 200000   # 规则家族档（哪一族贵�
 - **度量逻辑在共享库** `../scripts/bench_lib.py` + `../scripts/diag_analyze.py`（与
   nexmark_pk 的 bench.sh/diag.sh 共用）：run.sh / diag.sh 只做流程编排，不内嵌代码。
 
-### 实测（2026-08-24，M3 Max 12 核，N=200k，预热档开）
+### 实测（2026-08-24，M3 Max 12 核，N=200k，预热档开，规则集 376）
 
 | 档 | EPS | 每事件 ns | 增量 ns | 占比 | CPU 占用 | 判定 |
 |---|---|---|---|---|---|---|
-| floor（管道净段） | 2,632k | 380 | — | — | — | — |
-| rules（+450 规则） | 31,446 | 31,800 | **+31,420** | **100%** | 94% | **忙墙**（计算密集） |
-| full（+输出链） | 32,067 | 31,184 | −616 | ≈0 | — | 输出墙已消失（055d330 起） |
+| floor（管道净段） | 3,560k | 281 | — | — | — | — |
+| rules（+376 规则） | 38,389 | 26,049 | **+25,768** | **100%** | 94% | **忙墙**（计算密集） |
+| full（+输出链） | 37,719 | 26,512 | +463 | ≈0 | — | 输出墙已消失（055d330 起） |
 
-家族档（增量相对各自 floor，每家族独立 daemon 启动加载）：
+> 删 74 条 pad 前后：rules 档 31,800 → **26,049 ns/事件（−18%）**，EPS 31.4k → **38.4k（+22%）**。
+
+家族档（增量相对各自 floor，每家族独立 daemon 启动加载；`c` 家族已为删 pad 后的 51 条）：
 
 | 家族 | 规则数 | 增量 ns/事件 | 每规则 ns | 形态 |
 |---|---|---|---|---|
-| `c`（conn count） | 125 | **+8,806** | 70 | 无 guard，每事件真实计数 |
+| `c`（conn count） | 51 | **+3,086** | 61 | 无 guard，每事件真实计数 |
 | `g`（conn guard） | 45 | **+3,870** | 86 | guard 过滤后计数 |
 | `dist`（distinct） | 17 | +1,875 | 110 | 去重集合维护 |
 | `avg`（conn 聚合） | 13 | +1,336 | 103 | 聚合状态 |
 | `fw` / `s` / `pipe` / `pr` / `multi` | 3-47 | +600~1,100 | 17-269 | 中 |
 | `auth` / `accu` / `max` / `min` / `dns` / `close` / `chain` / `fl` | 5-34 | +200~500 | 6-64 | 便宜（强 guard/低源占比/低触发率） |
 
-> **修正后的关键结论（2026-08-24 二次验证）**：性能关键规则是 **`c`（conn count）家族**
-> ——125 条无 guard 的 conn 计数规则贡献 +8.8µs/事件，是绝对主墙；`g`（guard）45 条
-> +3.9µs 第二。前 4 大家族（c/g/dist/avg，共 200 条）合计 ~16µs，占 450 规则总成本
-> （~32µs）的一半。**删规则是有效的**（删 c 家族省 ~8.8µs ≈ 27%）；`chain` 并不贵
-> （+0.23µs，强 action 绑定过滤触发率低）——早期「所有 match 家族等成本 / 规则数无关 /
-> chain 每规则最贵」的结论是 reload Blocked 污染测成全量墙的假象，已废弃。
+> **关键结论（2026-08-24 家族档定位）**：性能关键规则是 **`c`（conn count）家族**
+> （无 guard 每事件全量计数）+ **`g`（guard）**。早期家族档里的 `c` 是 125 条（含 74 条
+> `c_pad_*` 凑数补齐），定位后**已删除 pad**：c 家族 8.8 → 3.1µs，全量墙 31.8 → 26.0µs。
+> `chain` 并不贵（+0.23µs，强 action 绑定过滤触发率低）——早期「所有 match 家族等成本 /
+> 规则数无关 / chain 每规则最贵」的结论是 reload Blocked 污染测成全量墙的假象，已废弃。
 
 ### 诊断纪律（qradar_pk 特有，违反会得出假结论）
 
 1. **必须解除 `max_ingest_rate`**（diag.sh 默认解除，`KEEP_RATE=1` 可保留）：150k 限速会把
    三档**全部封顶在 150k**，墙梯彻底失去区分度（测量纪律 §3 的同一条）。
-2. **`report_interval` 保持 1s，不要改 100ms**（与 nexmark_pk 的 diag.sh 相反）：450 规则下
-   每区间导出 ~8.7k 行指标，改 100ms 会让 exporter 自己成为负载并**丢样本**——实测 40s 跑批
-   只导出 52 个区间（≈5.2s），`append_total` 求和只到 19.5%，健康校验误报。哨兵口径不依赖
-   metrics 粒度（这正是设计文档 §4.5 引入哨兵的理由），保持 1s 对 EPS 无影响。
+2. **`report_interval` 保持 1s，不要改 100ms**（与 nexmark_pk 的 diag.sh 相反）：数百条规则下
+   每区间导出近万行指标（450 规则时实测 ~8.7k），改 100ms 会让 exporter 自己成为负载并**丢样本**
+   ——实测 40s 跑批只导出 52 个区间（≈5.2s），`append_total` 求和只到 19.5%，健康校验误报。
+   哨兵口径不依赖 metrics 粒度（这正是设计文档 §4.5 引入哨兵的理由），保持 1s 对 EPS 无影响。
 3. **绝对 EPS 不可与 run.sh 比较**：`wfgen perf-diag` 是**单连接**发送（`send_payload` 只开一条
    TCP），而 run.sh 用 4 连接键闭包分片注入 → source `instances=4` 只激活 1 个。实测 `rules` 档
-   31.4k vs run.sh 200k 口径 ~96.7k。**相对增量（墙归属）仍成立**，因为各档同为单连接。
+   38.4k（376 规则，见上表）vs run.sh 200k 口径 ~96.7k（450 规则历史实测）。**相对增量（墙归属）
+   仍成立**，因为各档同为单连接。
 4. **必须 `WARMUP=1`**：墙梯在单 daemon 内顺序跑，首档独自承担窗口冷分配/page fault
    （nexmark 实测偏差可达 25%，大于弱段的真实成本）。脚本在出现负增量时会报警提示。
 5. **家族档每家族独立 daemon，不要用多档热 reload 切规则子集**：子集引用窗口 < 全量时
    reload 必 Blocked（`reload blocked — requires restart blockers=1`，hot_reload/topology.rs：
-   编译后 schema 集合有移除）→ 实际跑全量 450 规则，所有家族测出同一个 ~31k 的「全量墙」
-   （早期「所有 match 家族等成本 / chain 最贵」的错误结论即由此而来）。diag.sh 已改为
+   编译后 schema 集合有移除）→ 实际跑全量规则而非子集，所有家族测出同一个「全量墙」
+   （450 规则时 ~31k、376 规则时 ~26k EPS；早期「所有 match 家族等成本 / chain 最贵」的
+   错误结论即由此而来）。diag.sh 已改为
    每家族独立 daemon 启动加载子集（`data/diag_rules_<fam>.wfl`），无需 reload。
 6. **看 EPS 随规则集变化，不看 `emitted_detail`**：`emitted_detail` 是抽样指标。家族档
-   可信度证据 = 各家族 EPS 显著不同（`c` 125 条 112k vs `chain` 5 条 3.2M）+ `appended` 仍 100%。
+   可信度证据 = 各家族增量显著不同（c 51 条 +3.1µs/事件 vs chain 5 条 +0.23µs）+ `appended` 仍 100%。
 
 ## 实测结果（release，**450 规则**，2026-08-17）
 
