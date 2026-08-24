@@ -50,106 +50,26 @@
 > q11 用户会话、q12/14 Top-N 类、q15+ 扩展场景（去重/session/多级聚合等）。
 > 白皮书未发布 **q6、q13**（表内无这两行）。
 
-## 3. 与 wfusion 的对照（最新跑批为准）
+## 3. 与 wfusion 的对照（以当次跑批为准）
 
-wfusion 对照数字随引擎版本演进，**最新结果以当次跑批 `../data/bench_*_replay.txt` 为准**。
+wfusion 对照数字随引擎版本演进，**最新结果以当次跑批 `../data/bench_*_replay.txt` 为准**；
+逐查询 PK 明细用 `scripts/compare-metrics.sh` 生成（读当次 `data/bench_*_replay.txt` 对拍本表）。
+跑批归档（逐查询 PK 表 + 环境/口径标注）见 `BENCH_RESULTS.md`；历史轮次（2026-08-14~24
+各次 30M/10M 跑批及优化过程）已清理，见 git 历史。
 
-**2026-08-25 Linux 30M replay（8 核机，采样基线前置修复后首跑；22/22 `[clean]`）**：
-vs OSS **3.79×~190.62× 全面领先**；vs VVR **1.10×~32.91×，20/20 全部达 VVR**（边缘项
-q14 1.10×、q17 1.67×、q22 1.75×）。⚠ **q19 规模退化 0.33×**（12.4M→4.1M，30M 驱逐触发）。
-逐查询 PK 表见 `BENCH_RESULTS.md`（2026-08-25 Linux 节）。
+**当前对照（2026-08-25 Linux 30M · 22/22 `[clean]` · 哨兵 EPS 口径）**：
+vs OSS **3.79×~190.62× 全面领先**；vs VVR **1.10×~32.91×，20/20 有基线查询全部达 VVR**。
 
-**2026-08-24 夜 Linux 10M replay（8 核机，哨兵 EPS 精确口径；22/22 `[clean]`）**：
-vs OSS **3.70×~191.39× 全面领先**；vs VVR **1.07×~33.05×，20/20 有基线查询全部达 VVR**。
-逐查询 PK 表与口径说明见 `BENCH_RESULTS.md`（2026-08-24 Linux 节）；本机 30M Mac 跑批见下。
-
-**2026-08-24 四次全量 30M replay（merge perf-diag 后 + q4/q9 deferred 分片，哨兵 EPS 精确口径；22/22 `[clean]`）**：
-vs OSS **7.41×~211.87× 全面领先**；vs VVR **1.90×~56.25×，20/20 有基线查询全部达 VVR**。
-逐查询明细用 `scripts/compare-metrics.sh` 生成（读当次 `data/bench_*_replay.txt` 对拍本表）。
+- 边缘项：**q14 vs VVR 1.10×**（Top-N，两轮 1.07/1.10× 稳定确认，为 vs VVR 最弱项）、
+  q17 1.67×、q22 1.75×。
+- ⚠ **q19 规模退化**（10M→30M：12.4M→4.1M，驱逐触发，待查）；q6/q13 白皮书无基线。
+- 对拍：Q4/Q9 30M identical（D4 保留 pin 修复）；Q12 fixed+close 尾桶、Q19 stats 为 known-diff。
 
 > **口径说明**：本表起 EPS 用**哨兵四元组**（`eps_mode=sentinel`，Σn/(max emit − min
-> start)，剔除了 ingest 等待与启动开销）；此前各轮为 metrics-append 口径（含部分
-> 等待）——**两口径不可直接逐位比较**，对照 OSS/VVR 基线以本表为准。
->
-> **本轮（q4/q9 deferred 分片 + EOS 全局尾部修复）**：deferred join 规则的路由键
-> 在驱动事件上（非 join-then-key）→ 整批轮转分片安全；EOS 用驱动窗口全局尾部
-> 评估（分片 worker 自身 watermark 不足的尾部 pending 修复）：
->
-> | 查询 | 分片前 | 本次 | vs VVR | vs OSS |
-> |------|--------|------|--------|--------|
-> | **q4** | 4,046,037 | **7,869,822** | **12.36×** | 43.55× |
-> | **q9** | 4,643,183 | **7,835,332** | **20.89×** | 182.13× |
-> | q5 | 6,628,512 | **6,886,614** | 24.62× | 25.18× |
->
-> q4/q9 对拍 identical ✅（30M oracle）；q5/q7/q8 同样 identical。**q6/q13 白皮书无
-> 基线**；q13 仍最慢（392k，双规则链 + 中间窗物化，RSS 15.5GB）。
-
-**2026-08-24 三次全量 30M replay（hop conv 分片 + review 后，工作区未提交；22/22 `[clean]`）**：
-vs OSS **7.25×~221.21× 全面领先**；vs VVR **1.89×~58.73×，20/20 有基线查询全部达 VVR**。
-逐查询明细用 `scripts/compare-metrics.sh` 生成（读当次 `data/bench_*_replay.txt` 对拍本表）。
-
-> **本轮（q5 hop conv 分片，P2c 延伸）**：conv top_ties 是窗口级聚合（跨 auction），
-> 原 inline 单核；给 hop 生成 conv_window（桶对齐 = slide、封口 = size）+ conv stage
-> 分片后：
->
-> | 查询 | 12:27 全量 | 本次 | vs VVR | vs OSS |
-> |------|----------|------|--------|--------|
-> | **q5** | 916,732 | **6,628,512** | **23.70×** | **24.24×** |
-> | q7 | 16,195,264 | **17,591,601** | 58.73× | 221.21× |
-> | q10 | 6,661,395 | **19,978,996** | 10.23× | 37.96× |
->
-> q5 从全量最慢梯队（~1M）跳到 6.6M（CPU 98%→580% 多核）；q10 提升 3× 为环境因素
-> （12:27 那次 sink 写盘被并行跑干扰，CPU 882% 但吞吐低）。其余查询在负载噪声内
-> 波动（q1 −9%、q19 −12% 等，load 2-5 波动）。**q6/q13 白皮书无基线**；q13 仍最慢
-> （410k，双规则链 + 中间窗物化，RSS 15.5GB）。
-
-**2026-08-24 二次全量 30M replay（D4 保留 pin 落地后，工作区未提交；22/22 `[clean]`）**：
-vs OSS **3.35×~203.65× 全面领先**；vs VVR **1.91×~54.07×，20/20 有基线查询全部达 VVR**。
-逐查询明细用 `scripts/compare-metrics.sh` 生成（读当次 `data/bench_*_replay.txt` 对拍本表）。
-
-> **本轮关键变化**：q9/q4 的 deferred join 正确性修复（D4 保留 pin——`bid_events` 字节上限
-> 驱逐不再静默丢 join 目标行，见 wp-reactor 接力手记）兼得大幅提速：
->
-> | 查询 | 修前 | 本次 30M | vs VVR | vs OSS |
-> |------|----------|----------|--------|--------|
-> | q9 | 939,682（−62% 错）| **4,632,016** | 12.35× | 107.67× |
-> | q4 | 3,887,727（8GB 上限绕过时）| **4,054,046** | 6.37× | 22.44× |
-> | q20 | 4,565,019 | **4,633,270** | 10.73× | 62.12× |
->
-> **2026-08-24 傍晚：q20 snapshot join 展开路径（Arc<JoinRow> 消除每行 clone/drop）**——
-> 采样归因 40% 线程时间在 JoinRow drop_glue（fill/recheck 每行 4 个 Arc bump，共享批
-> Arc 跨线程争用）；改 Arc<JoinRow> + recheck 零克隆后 **4.63M → 20.87M（4.5×）**、
-> RSS 10.0GB→4.5GB、CPU 618%→260%。verify：q13 全部一致；q20 偏差 0.97~1.65%
-> （<5% 容差，原设计「批快照+行时复查」固有竞态，方向恒为少发）。
->
-> **2026-08-24 傍晚：q15 空键 stats 输入分区分片 + EOS 归并**——归因 distinct_set
-> HashSet insert 占 98%（单核封顶）；先换 foldhash hasher（4.22M→5.53M），再按行号
-> `row % N` 输入分区 N 任务、close 时协调片归并（count 相加 + distinct 集 union 精确）
-> → **7.75M（1.75×）、CPU 72%→563%、verify 全部一致**。已知瓶颈：协调片 EOS 归并
-> ~883ms 串行 + 每片对全批 mask 的 10× 冗余。
->
-> **2026-08-24 傍晚：q5 hop conv 分片（P2c 延伸）**——conv top_ties 是窗口级聚合
-> （跨 auction），原 inline 单核 998k；给 hop 生成 conv_window（桶对齐 = slide、
-> 封口 = size）+ conv stage 分片后 **6,479,375（6.5×）**、CPU 602%、oracle identical。
-> 全量对照见 `scripts/compare-metrics.sh`（q5 现在 vs VVR 23.2×、vs OSS 23.7×）。
->
-> 机制：驱逐清扫原本在 append 热路径的 `log.write()` 写锁内 + 摘 1718 万行 join 索引，
-> 与 lookup 读锁死磕——这是此前 q9 「80% 无法归因」的性能黑洞（微基准测不到的部分），
-> 消除后 q9 不再是最慢查询。**q6/q13 白皮书无基线**；q13 仍是全量最慢（412,853 EPS，
-> 双规则链 + 中间窗物化，RSS 15.4GB，见 ⚠️ 观察 1）。
-
-**2026-08-24 首次全量 30M replay（wp-reactor `584852e`，merge 列式 List-Index guard 后；22/22 `[clean]`）**：
-vs OSS **3.05×~197.78× 全面领先**；vs VVR **1.44×~52.51×，20/20 有基线查询全部达 VVR**（此前 8-23 唯一落后的 q14 已从 0.9× 回升到 2.15×）。
-逐查询明细用 `scripts/compare-metrics.sh` 生成（读当次 `data/bench_*_replay.txt` 对拍本表）。
-
-> 本轮提升归因：wp-reactor merge 的列式代码（List-Index guard 及列式门控扩展），非日志级别（
-> `conf/wfusion.toml` 已由调试遗留的 debug 恢复为 info；debug 日志为节流输出，非每事件热路径）。
-> 口径差异（见 §4）：基线 1 亿条/8CU(VVR)/12vCPU(OSS)/Blackhole，本次 30M/16 核 Mac/本地文件 sink。
+> start)，剔除 ingest 等待与启动开销）；此前轮次为 metrics-append 口径（含部分等待）——
+> **两口径不可直接逐位比较**。白皮书基线为 100M 条/8CU(VVR)/12vCPU(OSS)/Blackhole，
+> wfusion 跑批为 10M/30M 条 × 本机核数 × 本地文件 sink，**作量级参照，非逐位比较**。
 > 查询形态与能力面见 `CAPABILITY_GAP_MATRIX.md`。
-
-历史对照（2026-08-14~21 旧构建，Q1~Q22 × 30M / 100M 快照）已随文档清理删除（记录见 git
-历史）；8-21 起的旧数字在缓存热度 / 输出链瓶颈修复前测得，**不可直接复现**（对比时必须带当次
-注入方式、`parse_buffer_bytes` 与机器负载）。
 
 ## 4. 引用注意
 

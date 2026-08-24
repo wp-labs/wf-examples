@@ -37,7 +37,7 @@ Flink OSS / VVR、Kafka Streams、Spark Streaming 等）。
 
 22 条查询覆盖 Flink 官方 NEXMark 测试集的全部查询（`qN.sql`，权威原文见
 `NEXMARK_AUTHORITATIVE_SEMANTICS.md`）。各查询的**官方意图 / 本地 `.wfl` 实现 / 能力档位**
-见 `CAPABILITY_GAP_MATRIX.md` §一（18 已有 / Q12 待补强 / Q6·Q11·Q13 特殊口径），
+见 `CAPABILITY_GAP_MATRIX.md` §一（21 已有 / Q12 待补强 / Q6 特殊口径·Flink 官方未实现），
 执行器应用与语义偏差详见 `SEMANTIC_SUPPORT_MATRIX.md` / `SEMANTIC_ALIGNMENT.md`。
 
 **能力面覆盖**：on-each / 过滤 / snapshot·deferred·asof join / fixed·sliding·session·hop

@@ -1,14 +1,11 @@
 # NEXMark (Flink 测试集) 能力差距矩阵
 
 > 口径：以官方 `github.com/nexmark/nexmark` 的 `nexmark-flink/.../queries/qN.sql` 为权威语义基准（见 `NEXMARK_AUTHORITATIVE_SEMANTICS.md`）。
-> 本表判断基于 2026-08-23 重审的 22 个当前 `.wfl` 文件 + wfusion 当前规则能力（CEP / Window / stats<> / Join 家族）的源码核查。
-> 2026-08-23 三次修订：全量 30M replay 完成——22 查询全部 `[clean]`（appended 追平 + 致命计数器归零），
-> 验证 §一 各查询的端到端可跑性；10M 全量 `bench.sh all replay 10m --verify` 已跑（21/22 与 oracle 完全一致，
-> 仅 Q12 known-diff；Q19 oracle 未接 stats）。
-> 2026-08-24 修订：30M oracle 对拍（17 个非 stats 查询，5% 容差）**13 个 0% 偏差**；超差 4 个中
-> **Q4/Q9 的 −62% 已根治**（D4 保留 pin：join 目标窗口字节上限驱逐不再静默丢行，30M 与 oracle
-> identical）——q4a/q9 各 1,672,559 = 1,672,559。剩余：**Q3 30M −16%**（独立 bug 待查，与驱逐/pin
-> 无关）与 **Q12 known-diff**（fixed+close 尾桶）。
+> 本表判断基于 22 个当前 `.wfl` 文件 + wfusion 当前规则能力（CEP / Window / stats<> / Join 家族）的源码核查。
+> 验证现状（截至 2026-08-25）：22 查询全量跑批 `[clean]`（10M/30M，哨兵 EPS 口径，见 `BENCH_RESULTS.md`）；
+> 30M oracle 对拍 17 个非 stats 查询——**Q4/Q9 已 identical**（D4 保留 pin：join 目标窗字节上限驱逐不再静默丢行）；
+> 剩余已知差异：**Q3 30M −16%**（规模相关 bug 待查，与驱逐/pin 无关）、**Q12 fixed+close 尾桶 known-diff**、
+> Q19 stats oracle 未接入。历史修订过程（2026-08-23/24 各轮）已清理，见 git 历史。
 > 三档定义：
 > - **已有**：能力已落地且端到端可跑，输出与 Flink 语义/基数一致。
 > - **待接通**：算子已实现，但规则装配/计划连线未端到端激活（纸面符合，跑不通或未被规则引擎调度）。
