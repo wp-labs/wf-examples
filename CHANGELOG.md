@@ -2,6 +2,21 @@
 
 All notable changes to the wf-examples performance / verification scenarios will be documented in this file.
 
+## [2026-08-24]
+
+### Added
+
+- **nexmark_pk `diag.sh` — 性能墙定位脚本**：把引擎内置的性能诊断模式（perf-diag，见 `wp-reactor/docs/design/perf-diag-mode-design.md`）接进 nexmark_pk。`./diag.sh [q1..q22|all] [1m|10m|30m]` 驱动 `floor → rules → full` 三档墙梯（单 daemon 不重启，哨兵驱动自切换），输出 `data/diag_<q>_<total>.txt`：每档 EPS/耗时/每事件 ns/**增量成本**/**CPU%**/RSS + 墙判定 + 健康校验。与 `bench.sh` 分工：bench 回答「吞吐是多少」，diag 回答「墙在哪一段」。
+- **nexmark_pk `conf/perf-diag-wall.toml`**：三档墙梯配置（与 `conf/perf-diag.toml` 的无档配置分工：后者仅供 bench.sh 拿哨兵精确 EPS 口径）。
+- **CPU%/RSS 按档归属**：采样带 epoch 纳秒时间戳，与哨兵四元组的 `[start_ns, emit_ns]` 区间对齐切分——补上了 `wfgen perf-diag` 墙表尚未提供的 CPU%/RSS 列，使方法论 §2.4 的**忙墙/等墙判别**（CPU 占核比 >50% = 忙墙、<15% = 等/供给墙）可自动化。
+- **`WARMUP=1` 预热档**：墙梯在单 daemon 内顺序跑，首档独自承担窗口冷分配/page fault。实测 q1 10m 不预热时 `floor`(21.2M) 反而慢于 `rules`(26.6M) 25%（偏差大于信号）；预热后 `floor` 升到 31.8M、墙梯恢复单调。脚本在出现负增量时报警并提示该选项。
+- **首批实测墙表（M3 Max 12 核，N=10M，`WARMUP=1`）**：q1（无状态投影）floor 31.8M → rules 33.0M（−1.2ns，噪声内 = 规则成本≈0）→ full 18.8M（**+22.9ns = 输出墙 43%**，CPU 53% 占用 = 忙墙）；q5（滑窗 top-N）floor 31.7M → rules 939k（**+1032.8ns = 规则墙 95%**，CPU 仅 9% = 等/供给墙）→ full 918k（输出墙 2.3%）。两次独立运行的 `floor` 一致（31.7/31.8M），可作口径自校验。
+
+### Fixed
+
+- **诊断口径守卫（由实测假象驱动）**：初版 `diag.sh` 在缺 `data/bench_10m_v5.frames` 时自动复用 `bench_10m_v6.frames`，旧版本帧的 Arrow schema 与当前 `nexmark.wfs` 不符（person 缺 `creditCard`、bid 缺 `channel_id`、多 `wp_src_ip`）→ window actor `schema mismatch` **整批丢弃**、只剩哨兵被处理 → 三档全报 ~50M EPS 假象。修正：**不再跨 `DATA_VER` 自动复用帧**（只列出候选，需显式 `FRAMES=`），并强制校验 `appended = N × 档数`，不追平即判失败并给出根因（含日志中的 schema mismatch 计数）。
+- **脚本内嵌 Python 全部抽离（脚本里生成脚本问题）**：nexmark_pk `bench.sh`/`diag.sh` 与 qradar_pk `run.sh`/`diag.sh` 曾把 10 余处度量逻辑用 heredoc 内嵌在 bash（comma/采样器/引擎游标/哨兵汇总/正确性摘要/分析器）——无法单独测试、改一行要重跑整个基准。现已抽成**共享库** `performance/scripts/bench_lib.py`（子命令分派，可单独验证）+ `performance/scripts/diag_analyze.py`（墙表/墙判定/健康分析，输入走环境变量），四个 shell 脚本只做流程编排、零内嵌。顺带修掉两个抽离时引入的回归：CSV 流名 `split()` 不拆逗号导致 `append_total` 恒为 0；`now` 秒/纳秒口径不统一导致 EPS 数量级错误（统一为 epoch 纳秒，`diff-ns`/`eps` 配套）。
+
 ## [2026-08-17]
 
 ### Changed
