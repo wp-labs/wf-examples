@@ -275,3 +275,16 @@ bump）替代 strftime 的 chrono 格式化，预期收益有限（A/B 已证 st
 返回字节区间）；30m diag 已在本机跑通（q14 30M 墙表见上，floor 305.6ns/rules+59.1/full+70.4）。
 注：大 N 墙梯 EPS 受「每档重发整个文件」的发送耗时主导（floor 30M 仅 3.27M EPS），
 归属结构以 1m 档为准。
+
+**改进路径（2026-08-25 复盘）**——30M 墙表解读：floor 305.6ns 是**发送耗时**
+（客户端 6.4GB 文件 copy，非引擎；引擎自身 floor 见 1m 墙表 50.8ns）；可改进的引擎成本
+集中在两档**增量**：rules +42~59ns（bind filter 全量逐行求值）、full +54~70ns（输出链）。
+
+| 优先级 | 目标段 | 方向 | 性质 |
+|---|---|---|---|
+| ① | full（输出链） | **列式 cell 求值**：fmt/strftime/count_char 逐行调用 → 向量化（L3 批量列 push 已生效，但 cell 求值仍行式） | wp-reactor 引擎级，惠及全部字符串重查询（q14/q22/q10/q12） |
+| ② | rules（bind filter） | **列式 bind 过滤**（向量化）；规则侧折叠 `0.908*price` 边界有浮点语义风险，不建议 | wp-reactor 引擎级 |
+| ③ | — | 规则侧已探尽：strftime `let` A/B 零增益、`hour()` 收益有限 | 不做 |
+
+> 结论：q14 的 vs VVR 差距本质是**引擎行式 cell 求值**成本，非查询写法问题。
+> 改进必须进 wp-reactor 做列式字符串/过滤求值（通用能力，建议独立立项），不要为 q14 单点投入。
