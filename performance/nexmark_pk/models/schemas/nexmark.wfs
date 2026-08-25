@@ -1,17 +1,20 @@
 // NEXMark 基准 — Person/Auction/Bid 三事件流（标准事件模型）
 // 数据由 scripts/gen_nexmark.py 确定性生成，事件时间覆盖 ~30 分钟。
-// ⚠ over=1h（2026-08-23 归因确认后维持）：join 目标窗口（person/auction/bid）必须
-// 覆盖数据 span 才能保证实体行在 join 时可见——v5 数据 span = count×100µs
-// （10m=1000s、30m=3000s），旧 over=10m(600s) 会时间驱逐早期实体行 →
-// snapshot/asof join miss（Q3 差 50%、Q6 差 36%、Q20 差 21%、Q9 差 24% 的根因）。
 //
-// 曾试将 bid over 调小（5s/2m）以降 q13 RSS——q13 的 bid 窗口持全量是 RSS 大头，
-// 但 q9（唯一把 bid 当 join 目标的 deferred reduce join）会丢 73~84% 输出：
-// q9 的 deferred 评估由 **auction watermark**（慢，2% 事件）驱动，而 bid 窗口驱逐
-// 由 **bid watermark**（快）驱动，两者事件时间差 = 摄入-消费积压滞后（30m 数据
-// 可达 ~1700s），over < 滞后时评估前 bids 已被驱逐。这是设计文档 D4 悬置项
-// （deferred join 规则需在 join 窗口注册保留 pin，按自身 watermark 推进 ack）；
-// 落地前 over 保持 1h。q13 RSS 已由死 join 消除（各 1.7M→15.9M EPS）大幅修复。
+// over 策略（2026-08-25 评估 gate 落地后重定）：
+// - person/auction 窗 over=1h：snapshot join（q3 join person / q6·q20 join
+//   auction）的驱动事件可引用**任意老**的实体行 → over 需覆盖数据 span
+//   （v5 span = count×100µs：10m=1000s、30m=3000s < 1h ✓）。30M 是正确性
+//   量级；100M span 2h46m > 1h 时 snapshot join 的老实体行会被驱逐（性能
+//   量级口径接受，q3/q6/q20 已知偏差）。
+// - bid 窗 over=30m（2026-08-25 从 1h 调小）：唯一把 bid 当 join 目标的
+//   deferred join（q4a/q9）。正确性由两层保证：运行期评估 gate（评估前沿 =
+//   目标窗 append 位置，目标追平 expiry 才评估，右行年龄 ≈ 0）+ D4 保留 pin
+//   闭环到时间驱逐（挂起实例需要 [lo,hi] 内的右行，over 再小也不删）。
+//   over 只是内存参数。
+//   历史教训（勿回退）：D4 pin 落地前 over=10m/5s/2m 因「deferred 评估由
+//   auction watermark 驱动、bid 窗按摄入位置驱逐」的滞后差丢 73~84%（q9）；
+//   评估 gate 才是根治，over 不再是预算兵役。
 window person_events {
     stream_tag = "person_events"
     time = dateTime
@@ -49,7 +52,7 @@ window auction_events {
 window bid_events {
     stream_tag = "bid_events"
     time = dateTime
-    over = 1h
+    over = 30m
     fields {
         auction: digit
         bidder: digit
