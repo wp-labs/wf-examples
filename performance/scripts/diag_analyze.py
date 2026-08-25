@@ -10,6 +10,8 @@
   N            本档数据量（整数）
   CTX          口径上下文行（并行度/限速/负载/时间戳）
   STAGE_NAMES  CSV：档名列表（含可选的 warmup 前缀档）
+  DECODE_STAGES CSV：cut_append 档名（decode 前序档——普通流不 append, appended
+                 期望 = (档数 − decode 档数) × N）
   CORES        机器核数（墙判定 CPU 占核比用）
   SENT_PATH    data/perf_sentinel.ndjson（EPS 单一事实源）
   SAMPLES_PATH 采样文件 "epoch_ns rss_mb cpu_pct"
@@ -28,6 +30,9 @@ RULES_COUNT = os.environ.get("RULES_COUNT", "")
 N_REQ = int(os.environ["N"])
 CTX = os.environ.get("CTX", "")
 STAGE_NAMES = [s for s in re.split(r"[,\s]+", os.environ.get("STAGE_NAMES", "")) if s]
+DECODE_STAGES = [
+    s for s in re.split(r"[,\s]+", os.environ.get("DECODE_STAGES", "")) if s
+]
 CORES = int(os.environ.get("CORES", 0) or 0)
 SENT_PATH = os.environ.get("SENT_PATH", "data/perf_sentinel.ndjson")
 SAMPLES_PATH = os.environ.get("SAMPLES_PATH", "")
@@ -261,10 +266,17 @@ for o in iter_metrics():
         bad["cursor_gap[%s]" % label] = bad.get("cursor_gap[%s]" % label, 0) + v
 
 print("\n-- 健康 --")
-expect_app = N_REQ * len(sent)
+# decode 档（cut_append）普通流不 append——期望 = (档数 − decode 档数) × N。
+# 哨兵流豁免仍 append, 但普通流是行数主体, decode 档的 append 近似为 0。
+expect_app = N_REQ * (len(sent) - len(DECODE_STAGES))
 ratio = appended / expect_app if expect_app else 0
-print("appended: %s / %s（%d 档 × N）= %.1f%%" % (
-    format(appended, ","), format(expect_app, ","), len(sent), ratio * 100))
+if DECODE_STAGES:
+    print("appended: %s / %s（%d 档 − %d decode 档）× N = %.1f%%" % (
+        format(appended, ","), format(expect_app, ","), len(sent),
+        len(DECODE_STAGES), ratio * 100))
+else:
+    print("appended: %s / %s（%d 档 × N）= %.1f%%" % (
+        format(appended, ","), format(expect_app, ","), len(sent), ratio * 100))
 if expect_app and ratio < 0.9:
     print("✗ append 未追平 → 数据未真正进系统，EPS 不可信。常见根因：")
     mism = 0
