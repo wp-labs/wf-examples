@@ -6,17 +6,21 @@
 #   conf/perf-diag-wall.toml  四档墙梯 → diag.sh 用：逐段切除定位瓶颈在哪一段。
 #
 # 墙梯是**叠加式**（从管线尾部向前切，见 wp-reactor/docs/PERF_BISECTION_METHOD.md §2）：
-#   decode = 注入 + 解码（cut_append: 窗口 append 前即丢；哨兵流豁免）
+#   recv   = 注入 + TCP 接收（cut_recv: 非哨兵帧只读帧头 tag 即丢, 不解码 body）
+#            → 增量（decode − recv）= 解码成本（validate_utf8 字节率墙）
+#   decode = recv + 解码（cut_append: 窗口 append 前即丢；哨兵流豁免）
 #            → 增量（floor − decode）= 窗口 append + fanout 投递成本
 #   floor  = decode + 窗口 append + fanout（净管道，规则/输出全切）
 #   rules  = floor + 规则求值        → 增量 = 规则墙
 #   full   = rules + 输出链          → 增量 = 输出墙（本 case 是 blackhole，近无成本）
 #
-# decode 档（2026-08-25 新增）在 push_decoded_batch 入口生效：普通流解码后即丢
-# （不占 parse 管线槽位、不进窗口/引擎/输出），__wf_sentinel 流豁免——测量协议
-# （档位切换 + EPS 计算）必须活着。
+# recv/decode 档（2026-08-25 新增）:
+#   recv  在 source 解码前生效（frame_tag 读帧头, 非哨兵 body 即丢）——隔离
+#         单连接 TCP 字节率（decode 侧 validate_utf8 ~2.3GB/s 单线程墙）;
+#   decode 在 push_decoded_batch 入口生效（解码后即丢, 不占 parse 槽位）。
+# 两档均豁免 __wf_sentinel 流——测量协议（档位切换 + EPS 计算）必须活着。
 #
-# 档间切换由哨兵（漂流瓶）驱动，单 daemon 不重启；启动即应用 stages[0]（decode）。
+# 档间切换由哨兵（漂流瓶）驱动，单 daemon 不重启；启动即应用 stages[0]（recv）。
 # 机制见 wp-reactor/docs/design/perf-diag-mode-design.md，用法见
 # wp-reactor/docs/user-guide/perf-diag.md。
 #
@@ -24,10 +28,19 @@
 #   models/queries/<qN>.wfl）。不要在此写死查询路径，否则与 diag.sh 的查询参数冲突。
 
 [[stages]]
+name = "recv"
+cut_rules = false
+cut_output = false
+cut_append = false
+cut_recv = true
+rules = ""
+
+[[stages]]
 name = "decode"
 cut_rules = false
 cut_output = false
 cut_append = true
+cut_recv = false
 rules = ""
 
 [[stages]]
@@ -35,6 +48,7 @@ name = "floor"
 cut_rules = true
 cut_output = true
 cut_append = false
+cut_recv = false
 rules = ""
 
 [[stages]]
@@ -42,6 +56,7 @@ name = "rules"
 cut_rules = false
 cut_output = true
 cut_append = false
+cut_recv = false
 rules = ""
 
 [[stages]]
@@ -49,4 +64,5 @@ name = "full"
 cut_rules = false
 cut_output = false
 cut_append = false
+cut_recv = false
 rules = ""

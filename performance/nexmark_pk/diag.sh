@@ -125,19 +125,20 @@ if [ -n "${STAGES:-}" ] || [ "$WARMUP" = "1" ]; then
   [ "$WARMUP" = "1" ] && printf '\n[[stages]]\nname = "warmup"\ncut_rules = false\ncut_output = false\nrules = ""\n' >> "$DIAG_TOML"
   for st in $(echo "$LADDER" | tr ',' ' '); do
     case "$st" in
-      decode) CR=false; CO=false; CA=true;;
-      floor)  CR=true;  CO=true;  CA=false;;
-      rules)  CR=false; CO=true;  CA=false;;
-      full)   CR=false; CO=false; CA=false;;
-      *) echo "bad stage '$st'（decode|floor|rules|full）" >&2; exit 1;;
+      recv)  CR=false; CO=false; CA=false; CRV=true;;
+      decode) CR=false; CO=false; CA=true;  CRV=false;;
+      floor)  CR=true;  CO=true;  CA=false; CRV=false;;
+      rules)  CR=false; CO=true;  CA=false; CRV=false;;
+      full)   CR=false; CO=false; CA=false; CRV=false;;
+      *) echo "bad stage '$st'（recv|decode|floor|rules|full）" >&2; exit 1;;
     esac
-    printf '\n[[stages]]\nname = "%s"\ncut_rules = %s\ncut_output = %s\ncut_append = %s\nrules = ""\n' "$st" "$CR" "$CO" "$CA" >> "$DIAG_TOML"
+    printf '\n[[stages]]\nname = "%s"\ncut_rules = %s\ncut_output = %s\ncut_append = %s\ncut_recv = %s\nrules = ""\n' "$st" "$CR" "$CO" "$CA" "$CRV" >> "$DIAG_TOML"
   done
 fi
 [ -f "$DIAG_TOML" ] || { echo "错误: 墙梯配置 $DIAG_TOML 不存在" >&2; exit 1; }
 STAGE_NAMES=$(grep '^name = ' "$DIAG_TOML" | sed 's/name = "\(.*\)"/\1/' | tr '\n' ',' | sed 's/,$//')
-# cut_append 档（decode 前序档）: 普通流不 append → appended 期望须扣掉这些档。
-DECODE_STAGES=$(awk -F'"' '/^name = /{n=$2} /cut_append = true/{print n}' "$DIAG_TOML" | tr '\n' ',' | sed 's/,$//')
+# cut_append/cut_recv 档（decode/recv 前序档）: 普通流不 append → appended 期望扣掉。
+APPEND_CUT_STAGES=$(awk -F'"' '/^name = /{n=$2} /cut_append = true/{print n} /cut_recv = true/{print n}' "$DIAG_TOML" | sort -u | tr '\n' ',' | sed 's/,$//')
 STAGE_COUNT=$(echo "$STAGE_NAMES" | tr ',' '\n' | grep -c .)
 [ "$STAGE_COUNT" -ge 2 ] || { echo "错误: $DIAG_TOML 至少需 2 档才有墙梯（当前 ${STAGE_COUNT}）" >&2; exit 1; }
 
@@ -306,7 +307,7 @@ run_ladder() {
   # 分析：独立脚本 diag_analyze.py（哨兵四元组 × CPU/RSS 采样 × metrics 健康），
   # 输入走环境变量；stdout = 报告，退出码 0=健康 / 1=硬失败。
   N="$N" CTX="$CTX" QUERY="$Q" RULES_COUNT="$(grep -c '^rule ' "models/queries/$Q.wfl")" \
-  STAGE_NAMES="$STAGE_NAMES" DECODE_STAGES="$DECODE_STAGES" CORES="$CORES" \
+  STAGE_NAMES="$STAGE_NAMES" APPEND_CUT_STAGES="$APPEND_CUT_STAGES" CORES="$CORES" \
   SENT_PATH="data/perf_sentinel.ndjson" SAMPLES_PATH="$SAMPLES" \
   METRICS_PATH="data/metrics.ndjson" LOG_PATH="$LOG" \
   STREAMS="auction_events,bid_events,person_events" FAM_COUNTS="" \
