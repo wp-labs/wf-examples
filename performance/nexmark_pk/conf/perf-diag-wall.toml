@@ -12,16 +12,20 @@
 #            → 增量（floor − decode）= 窗口 append + fanout 投递成本
 #   floor  = decode + 窗口 append + fanout（净管道，规则/输出全切）
 #   rules  = floor + 规则求值        → 增量 = 规则墙
-#   emit   = rules + 输出构建（close 列式 + builder + 通道投递; sink 收到即丢）
-#            → 增量 = 输出构建
-#   full   = emit + 序列化 + sink 写 → 增量 = 序列化 + 写成本（2026-08-25 新档）
+#   full   = rules + 输出链（emit 构建 + 通道投递 + 序列化 + sink 写）
+#            → 增量 = 输出链（2026-08-26 内存定位：q13 的 12.5GB 全在这段）
 #
-# recv/decode/emit 档（2026-08-25 新增）:
+# recv/decode 档（2026-08-25 新增）:
 #   recv   在 source 解码前生效（frame_tag 读帧头, 非哨兵 body 即丢）——隔离
 #         单连接 TCP 字节率（decode 侧 validate_utf8 ~2.3GB/s 单线程墙）;
-#   decode 在 push_decoded_batch 入口生效（解码后即丢, 不占 parse 槽位）;
-#   emit   在 dispatch_batch 入口生效（AlertBatch 到 sink 即丢, 哨兵 sink 豁免）。
+#   decode 在 push_decoded_batch 入口生效（解码后即丢, 不占 parse 槽位）。
 # 各档均豁免 __wf_sentinel 流——测量协议（档位切换 + EPS 计算）必须活着。
+#
+# ⚠ 曾有 emit 档（cut_serialize: AlertBatch 到 sink 即丢）——2026-08-26 移除：
+#   本 bench 的 sink 是 blackhole（本来就丢弃），full − emit ≈ 0，白跑一轮且
+#   误导（让人以为序列化成本≈0）。若改用真实 sink（file_json_sink 等）再恢复。
+#   另外，输出链内部如需再细分（alert 构建 vs 其余），用引擎侧临时开关
+#   WF_DIAG_CUT_ALERT=1（只切 AlertColumnBuilder 装载，保留 pipe/join 消费）。
 #
 # 档间切换由哨兵（漂流瓶）驱动，单 daemon 不重启；启动即应用 stages[0]（recv）。
 # 机制见 wp-reactor/docs/design/perf-diag-mode-design.md，用法见
