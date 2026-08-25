@@ -1,10 +1,16 @@
 [window_defaults]
 # 1s：消费感知门控（WindowProgress floor）后时间驱逐只在
 # "事件时间过期 && 所有消费者已 ack" 时释放行，tick 变密不丢数据。
-evict_interval = "1s"
+evict_interval = "200ms"
 # 256MB：无显式配置的窗口字节预算上限（性能定位：8GB 全量驻留是内存带宽墙）。
 max_window_bytes = "256MB"
-max_total_bytes = "20GB"
+# 2026-08-25：20GB → 8GB（M-13 q13 内存控制）。100M q13 ingest 期
+# bid_events 全量驻留（q13a 消费 630k/s < ingest 3M/s → min_acked 保护挡住
+# cap 驱逐 + over=30m 时间驱逐未触发）→ 窗口峰值 21.5GB、RSS 20.3GB。全局
+# cap 8GB：超限时 evictor 无安全驱逐 → memory_pressure → actor 停 append →
+# q13a 追平 → 驱逐恢复（RSS 被限制，代价 = ingest 断续，EPS 受消费速率约束）。
+# ⚠ 全局配置：q5/q16/q18 等 stats 大窗口查询也会被背压（变慢），逐个评估。
+max_total_bytes = "2GB"
 evict_policy = "time_first"
 watermark = "1s"
 allowed_lateness = "30m"
@@ -49,9 +55,12 @@ max_window_bytes = "2GB"
 over_cap = "2d"
 
 # q13 双规则链中间窗口（q13a on each → bid_mod → q13b snapshot join side_input）
+# 2026-08-25：2GB → 512MB（内存控制）。q13b 分片消费快，bid_mod 驻留被
+# min_acked（最慢 shard 处理位置）保守 floor 限制，2GB cap 允许了 2GB 已读
+# 滞留；512MB 足够（驱逐受未读保护，q13b 追平时窗口本来就小）。
 [window.bid_mod]
 mode = "local"
-max_window_bytes = "2GB"
+max_window_bytes = "512MB"
 over_cap = "2d"
 
 # q13 有界侧输入静态表（knowdb CSV 加载 key 0..9999 → value；nexmark.wfs 的

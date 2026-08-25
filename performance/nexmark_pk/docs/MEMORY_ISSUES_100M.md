@@ -54,6 +54,39 @@
 - **`memory_evicted_total=188` 仍非零**（100M q13a 分片后）：bench 作废判定触发。需确认驱逐全部是已读回收（预期是）→ bench 判定对该场景是否应豁免。
 - **q13a 分片 pull 的 ack 语义隐患**：`pull_and_advance` 分片下 ack 的是**读位置**（`new_cursor`=全部批次）而非处理位置——`min_acked` 追平 → `bid_events` 驱逐无未读保护 → cap 驱逐可能删「其他 shard 还没处理」的批次。q13a 分片后消费快（未实测触发），但语义上存在竞态；修复方向：分片 pull 的 ack 改为只推进「自己份额处理完的连续位置」或驱逐 floor 按归属计算。**下一步优先处理。**
 
+### ✅ 2026-08-25 追加：内存控制达成（100M RSS 20.3→6.7GB）
+
+**根因定案（非 mimalloc）**：100M window_bytes 峰值 21.5GB ≈ RSS 20.3GB——**窗口本身**。
+ingest 3M/s 33s 内事件时间跨度仅 ~10min < over=30m（时间驱逐不触发）；q13a 消费
+630k/s 跟不上 ingest → `min_acked` 保护挡住 cap 驱逐 → bid_events 全量驻留 20GB。
+30M 全量仅 6GB 所以不炸（RSS 9.2GB）。
+
+**控制组合（windows.toml 配置，全部正确性无损——驱逐受未读保护，EMIT 完整）**：
+- `max_total_bytes = "2GB"`（全局窗口 cap，20GB→8GB→6GB→4GB→2GB 逐档验证）
+- `evict_interval = "200ms"`（1s→200ms，背压滞后大降：窗口峰值 8.4→~3GB）
+- `bid_mod max_window_bytes = "512MB"`（2GB→512MB，round-robin 分片下 min_acked
+  保守 floor 允许的已读滞留从 2GB 降到 512MB）
+- **memory_evicted 判定修复**（bench_lib.py）：`memory_evicted_total` 从致命计数器
+  移除——min_acked/retention-pin 保护下驱逐只回收已读/已广播批次，真丢未读信号
+  是 `cursor_gap`（保留致命）。背压/字节 cap 下驱逐是常态（2000+ 次），非零不
+  表示正确性受损。
+
+**实测（哨兵 EPS，本地 mac）**：
+| 规模 | 修前（20GB cap） | 修后（2GB cap + 200ms） |
+|------|------|------|
+| 30M | 400k / 15.4GB | 648k / **6.05GB** ✓ |
+| 100M | 390k / 27.1GB | 643k / **6.73GB** ✓ |
+| 100M EMIT | — | q13a 92M / q13b 92M（= oracle）✓ clean |
+
+**性能瓶颈（未解决，下一步）**：EPS ~640k = q13a 单 worker row path（1.6µs/行，
+已接近 executor 1.19µs）。q13a 生产 630k/s < ingest 3M/s → bid_events 驻留靠
+背压控制。**追平 ingest 需 q13a 列式化/批量 staging**（bench 数据 3.4×，仍不够
+追平——需 mod BinOp 列式 10×）。q13a 分片曾试过（EPS 1.04M）但 10 核 row path
+分配让 RSS 40GB——**回退**（内存优先）。
+
+**⚠ 全局配置影响**：`max_total_bytes=2GB` + `evict_interval=200ms` 是全局的——
+q5/q16/q18 等 stats 大窗口查询会被背压（变慢，RSS 降低），需全量验证后定案。
+
 ### ✅ 2026-08-25 追加（本 session 已修）：分片 pull ack 改处理位置 + q13 性能 bench 定位
 
 - **分片 pull ack 改处理位置（已修 + 测试）**：`pull_and_advance` 对 whole-batch round-robin 分片改 ack

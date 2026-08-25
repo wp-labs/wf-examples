@@ -378,8 +378,10 @@ sentinel_tuple() {
 }
 
 # ---- 正确性摘要：emitted_total（按规则）+ 致命计数器 ----
-# 致命计数器（serialize_failed/dropped_late/cursor_gap/memory_evicted）非零
-# 即跑批作废——测量纪律：数字可信的前提。time_evicted 有值属正常窗口关闭。
+# 致命计数器（serialize_failed/dropped_late/cursor_gap）非零即跑批作废——
+# 测量纪律：数字可信的前提。time_evicted 有值属正常窗口关闭；
+# memory_evicted（已读/已广播回收）在背压/字节 cap 下是常态，非致命
+# （真丢未读信号是 cursor_gap，2026-08-25）。
 # 输出两行：SUMMARY 行（进结果行）+ 各规则 emitted（进结果文件）。
 correctness_summary() {
   # 输出两行：SUMMARY 行（进结果行）+ 各规则 emitted（进结果文件）。纯逻辑在 bench_lib.py。
