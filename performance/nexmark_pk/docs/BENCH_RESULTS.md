@@ -249,6 +249,10 @@ count_char），属 Flink 语义固有成本；vs VVR 1.07~1.20× 的差距主�
 可消除的热点。**候选优化（未实施）**：wfl 新增 `hour()` 函数（需 wp-reactor 发布 tag + warp-fusion
 bump）替代 strftime 的 chrono 格式化，预期收益有限（A/B 已证 strftime 非主导）。
 
-**工具发现**：`wfgen perf-diag` 整文件读入内存（`std::fs::read`）+ 复制一份载荷——30M 帧 6.4GB×2
-在 16GB 机器上 tcp send 失败（daemon 侧 0 字节 EOF）；1m/10m 正常。建议改流式发送（send-arrow
-同款文件 copy + 追加哨兵帧），否则 30m+ diag 需大内存机。
+**工具修复（2026-08-25，wfgen `cmd_perf_diag`）**：原实现 `std::fs::read` 整文件读入
++ 复制一份载荷——30M 帧 6.4GB×2 在 16GB 机器上 tcp send 失败（daemon 侧 0 字节 EOF），
+1m/10m 正常。已改**流式发送**（`send_payload_stream`：文件前缀 `[0, end)` 直接
+`tokio::io::copy` 到 socket + 哨兵帧，零内存驻留；`prefix_for_n` → `prefix_range_for_n`
+返回字节区间）；30m diag 已在本机跑通（q14 30M 墙表见上，floor 305.6ns/rules+59.1/full+70.4）。
+注：大 N 墙梯 EPS 受「每档重发整个文件」的发送耗时主导（floor 30M 仅 3.27M EPS），
+归属结构以 1m 档为准。
