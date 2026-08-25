@@ -98,12 +98,14 @@ def engine_appended(metrics_path, streams_csv):
 
 
 def engine_acked_lag(metrics_path, streams_csv):
-    """每窗口 next_seq - min_acked（0 = 所有规则已消费到最新）。
+    """每窗口未完全消费的批数（0 = 所有规则已消费到最新）。
 
+    口径 = `WindowProgress::completion_gap`（分组完成判定，2026-08-25 review）：
+    key/行号分片（match/stats）窗口用 min（最慢分片追平才为 0）；round-robin
+    （whole-batch）窗口用 max（每批归属唯一 shard，min 恒停在最慢 shard）。
     名单为空 = **所有被消费窗口**——中间管道窗口（bid_mod / auction_finals 等）
     的消费滞后也必须计入：q13（2026-08-23）只查三输入流会在中间管道下游
-    消费滞后时提前 SIGTERM。nexmark_alerts 等无消费者窗口 min_acked=u64::MAX
-    → lag 恒 0，不受影响。"""
+    消费滞后时提前 SIGTERM。nexmark_alerts 等无消费者窗口 gap 恒 0，不受影响。"""
     streams = set(s for s in re.split(r"[,\s]+", streams_csv) if s)
     lag = {}
     try:

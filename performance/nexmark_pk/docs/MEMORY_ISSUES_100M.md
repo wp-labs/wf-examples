@@ -52,7 +52,7 @@
 
 - **RSS 41.5GB（100M，q13a 分片后）**：`window_bytes` 峰值 20.5GB —— ingest 期间（~33s）事件时间跨度仅 ~10min < over=30m，`bid_events` 时间驱逐不触发 → 100M 行全量驻留（~20GB），drain 后才回落到 30m 稳态 3.8GB。**这是「over 语义 × ingest 速度」的固有窗口内容，不是泄漏**——但 RSS_peak 超 10GB 目标。候选：ingest 阶段放宽（时间驱逐按 wall-clock？No——事件时间语义）或接受 peak（稳态有界）。
 - **`memory_evicted_total=188` 仍非零**（100M q13a 分片后）：bench 作废判定触发。需确认驱逐全部是已读回收（预期是）→ bench 判定对该场景是否应豁免。
-- **q13a 分片 pull 的 ack 语义隐患**：`pull_and_advance` 分片下 ack 的是**读位置**（`new_cursor`=全部批次）而非处理位置——`min_acked` 追平 → `bid_events` 驱逐无未读保护 → cap 驱逐可能删「其他 shard 还没处理」的批次。q13a 分片后消费快（未实测触发），但语义上存在竞态；修复方向：分片 pull 的 ack 改为只推进「自己份额处理完的连续位置」或驱逐 floor 按归属计算。**下一步优先处理。**
+- **q13a 分片 pull 的 ack 语义隐患**：`pull_and_advance` 分片下 ack 的是**读位置**（`new_cursor`=全部批次）而非处理位置——`min_acked` 追平 → `bid_events` 驱逐无未读保护 → cap 驱逐可能删「其他 shard 还没处理」的批次。q13a 分片后消费快（未实测触发），但语义上存在竞态；修复方向：分片 pull 的 ack 改为只推进「自己份额处理完的连续位置」或驱逐 floor 按归属计算。**（已修：`q13_sharded_pull_acks_processed_not_read_position` 钉死——分片 pull ack 改处理位置，2026-08-25）**
 
 ### ✅ 2026-08-25 追加：内存控制达成（100M RSS 20.3→6.7GB）
 

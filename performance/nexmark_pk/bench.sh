@@ -348,7 +348,10 @@ start_daemon() {
 
 # 引擎端到端游标（pull 模型）：
 # - append_total：三输入流已 append 的行数累计（EPS 口径 + "数据已全部进入 window"）。
-# - acked_lag：每窗口 next_seq - min_acked（未 ack 批数，0 = 所有规则已消费到最新）。
+# - acked_lag：每窗口未完全消费批数（0 = 所有规则已消费到最新）。口径 =
+#   `WindowProgress::completion_gap`（分组，2026-08-25 review）：key/行号分片
+#   （match/stats）窗口看最慢分片（min）；round-robin（whole-batch）窗口看
+#   max（每批归属唯一 shard，min 恒停最慢 shard——q13 分片卡尾）。
 # pull 下 actor 与 rule 解耦，append 追平 ≠ 规则吃完（曾致 Q3 metrics 漏报尾部 emit）。
 # 完成条件 = append 追平 TOTAL 且 acked_lag 归零。
 engine_appended() {
@@ -360,7 +363,7 @@ engine_appended() {
 # auction_finals）最新 acked_lag 之和（0 = 所有规则已消费到最新）。2026-08-23
 # q13：中间管道下游（q13b）消费滞后时，只查三输入流会提前 SIGTERM（广播
 # seq 用真实批次后，中间窗口的 acked_lag 反映消费进度；nexmark_alerts 等无
-# 消费者窗口 min_acked=u64::MAX → lag 恒 0，不受影响）。
+# 消费者窗口 gap 恒 0，不受影响）。
 engine_acked_lag() {
   # 名单为空 = 所有被消费窗口（三输入流 + 中间管道窗口如 bid_mod /
   # auction_finals）——2026-08-23 q13：中间管道下游（q13b）消费滞后时只查
