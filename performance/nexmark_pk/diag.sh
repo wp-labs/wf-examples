@@ -123,12 +123,13 @@ if [ -n "${STAGES:-}" ] || [ "$WARMUP" = "1" ]; then
   [ "$WARMUP" = "1" ] && printf '\n[[stages]]\nname = "warmup"\ncut_rules = false\ncut_output = false\nrules = ""\n' >> "$DIAG_TOML"
   for st in $(echo "$LADDER" | tr ',' ' '); do
     case "$st" in
-      floor) CR=true;  CO=true;;
-      rules) CR=false; CO=true;;
-      full)  CR=false; CO=false;;
-      *) echo "bad stage '$st'（floor|rules|full）" >&2; exit 1;;
+      decode) CR=false; CO=false; CA=true;;
+      floor)  CR=true;  CO=true;  CA=false;;
+      rules)  CR=false; CO=true;  CA=false;;
+      full)   CR=false; CO=false; CA=false;;
+      *) echo "bad stage '$st'（decode|floor|rules|full）" >&2; exit 1;;
     esac
-    printf '\n[[stages]]\nname = "%s"\ncut_rules = %s\ncut_output = %s\nrules = ""\n' "$st" "$CR" "$CO" >> "$DIAG_TOML"
+    printf '\n[[stages]]\nname = "%s"\ncut_rules = %s\ncut_output = %s\ncut_append = %s\nrules = ""\n' "$st" "$CR" "$CO" "$CA" >> "$DIAG_TOML"
   done
 fi
 [ -f "$DIAG_TOML" ] || { echo "错误: 墙梯配置 $DIAG_TOML 不存在" >&2; exit 1; }
