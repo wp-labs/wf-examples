@@ -5,10 +5,12 @@
 # 而不是「吞吐是多少」（那是 bench.sh 的事）。
 #
 #   bench.sh  = 基准：单档全量跑，出 EPS/RSS/正确性数字（对 Flink PK）
-#   diag.sh   = 诊断：三档墙梯逐段切除，出每段增量成本 + 墙判定（定位退化）
+#   diag.sh   = 诊断：墙梯逐段切除，出每段增量成本 + 墙判定（定位退化）
+#                （decode→floor→rules→full 四档；decode 为 2026-08-25 新增前序档）
 #
-# 机制：wfusion daemon --perf-diag conf/perf-diag-wall.toml（floor→rules→full 三档，
-# 哨兵驱动自切换、单 daemon 不重启）+ wfgen perf-diag 驱动。设计见
+# 机制：wfusion daemon --perf-diag conf/perf-diag-wall.toml（decode→floor→rules→full
+#       墙梯, 哨兵驱动自切换、单 daemon 不重启）+ wfgen perf-diag 驱动。decode =
+#       注入+解码（cut_append 窗口 append 前即丢）。设计见
 # wp-reactor/docs/design/perf-diag-mode-design.md，用法见 docs/user-guide/perf-diag.md，
 # 方法论见 wp-reactor/docs/PERF_BISECTION_METHOD.md。
 #
@@ -22,7 +24,7 @@
 # 环境变量:
 #   N_LIST=1m,10m       每档数据量（默认 = total）。多值 = **每值重启 daemon 跑一整套墙梯**
 #                       （单次 wfgen 调用里放多个 N 会让第 2+ 个 N 吃到下一档门控，见 §坑）
-#   STAGES=floor,rules,full   自定义墙梯（默认用 conf/perf-diag-wall.toml 的三档）
+#   STAGES=decode,floor,rules,full   自定义墙梯（默认用 conf/perf-diag-wall.toml）
 #   WARMUP=0            关预热（默认开）。预热 = 墙梯前插一个丢弃的 warmup 档（全链路），
 #                       消除首档独自承担的窗口冷分配/page fault 偏差（2026-08-24 q1 10m
 #                       实测：不预热时 floor(21.2M) 反而慢于 rules(26.6M) 25%，偏差大于信号；
