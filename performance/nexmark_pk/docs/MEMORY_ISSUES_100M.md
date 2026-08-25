@@ -78,7 +78,7 @@ ingest 3M/s 33s 内事件时间跨度仅 ~10min < over=30m（时间驱逐不触�
 | 100M | 390k / 27.1GB | 643k / **6.73GB** ✓ |
 | 100M EMIT | — | q13a 92M / q13b 92M（= oracle）✓ clean |
 
-**性能瓶颈（未解决，下一步）**：EPS ~640k = q13a 单 worker row path（1.6µs/行，
+**性能瓶颈（已解，见下）**：EPS ~640k = q13a 单 worker row path（1.6µs/行，
 已接近 executor 1.19µs）。q13a 生产 630k/s < ingest 3M/s → bid_events 驻留靠
 背压控制。**追平 ingest 需 q13a 列式化/批量 staging**（bench 数据 3.4×，仍不够
 追平——需 mod BinOp 列式 10×）。q13a 分片曾试过（EPS 1.04M）但 10 核 row path
@@ -86,6 +86,20 @@ ingest 3M/s 33s 内事件时间跨度仅 ~10min < over=30m（时间驱逐不触�
 
 **⚠ 全局配置影响**：`max_total_bytes=2GB` + `evict_interval=200ms` 是全局的——
 q5/q16/q18 等 stats 大窗口查询会被背压（变慢，RSS 降低），需全量验证后定案。
+
+### ✅ 2026-08-25 追加：q13a 列式化（row path 1229ns → pipe 列式 203ns/行，6.1×）
+
+q13a 中间窗生产路径列式化（详见 wp-reactor notes「q13a 列式化」节）：
+- `each_batch_prepare` 编译范围扩到任意 `expr_is_columnar`（`%` BinOp → 批级 cvec）；
+- 新 `each_pipe_columnar_safe` 门控（保守形状）+ `execute_each_pipe_batch_columnar`
+  （零 Event/OutputRecord 物化）+ `PipeBatchStager::new_columnar/push_row`（列来源
+  计划，免每列名字查找）；
+- **对拍测试**钉死与行式路径字节一致（含 `__wfu_meta_*` 与 `__wf_pipe_ts` 列）。
+
+**bench（cargo test --release -p wf-runtime q13a_pipe_columnar_bench -- --ignored
+--nocapture）**：pipe 列式 203.4ns/行 = 4.92M/s 单 worker > ingest 3M/s →
+q13a 消费可追平摄入，bid_events 不再靠背压驻留。为「生产者分片放开」二次评估
+提供依据（列式化分配量级大降，mimalloc arena 膨胀风险缓解）。
 
 ### ✅ 2026-08-25 追加（本 session 已修）：分片 pull ack 改处理位置 + q13 性能 bench 定位
 
