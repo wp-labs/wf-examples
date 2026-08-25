@@ -6,12 +6,17 @@ use "nexmark.wfs"
 //                  AS rank_number FROM bid) WHERE rank_number <= 10;
 // —— 每 auction 价格最高的 10 个 bid。
 //
-// stats 形态: `stats<30m:fixed> group by (b.auction)` + `top(10, b.price)` ——
+// ⚠ 语义注记（2026-08-25）: 真实业务是**滚动 top-N**（实时引擎的常见形态）——
+// 窗口 = 业务参数, 不是权威全局 top-10 的近似。原 `30m:fixed` 在 replay 数据
+// （~30min 跨距）下等于全局; 改为 `10m:fixed` 后为「每 10m 窗口每 auction
+// top-10」——内存峰值 = 窗口时长 × 速率 × 每键 top-10 行（有界, 每窗重置）。
+//
+// stats 形态: `stats<10m:fixed> group by (b.auction)` + `top(10, b.price)` ——
 // per-key 有界 top-N; close 时每个条目一条 alert（rank 序: price DESC, 同价先到者
 // 在前——确定性 tie-break）, 条目行字段经 field_values 注入 yield 的 `b.*`。
 rule q19_auction_top10_stats {
     events { b : bid_events }
-    stats<30m:fixed> group by (b.auction) {
+    stats<10m:fixed> group by (b.auction) {
         b | top(10, b.price) as top_price;
     }
     entity(digit, b.auction)

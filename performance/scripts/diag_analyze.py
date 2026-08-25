@@ -124,7 +124,9 @@ if family_mode:
     print("（规则家族档：各档增量一律相对 floor 档计算）")
 else:
     # 档名 → 语义，帮助读表（名字本身不传达切了什么/测什么）
-    sem = {"floor": "管道净段(注入+解码+窗口)", "rules": "+规则求值", "full": "+输出链"}
+    sem = {"recv": "注入+TCP接收(不解码)", "decode": "+解码(不append)",
+           "floor": "净管道(注入+解码+窗口)", "rules": "+规则求值",
+           "emit": "+输出构建(close列式+builder+通道投递)", "full": "+序列化+sink写"}
     desc = ["%s=%s" % (s, sem[s]) for s in STAGE_NAMES if s in sem]
     if desc:
         print("（叠加式墙梯：%s；每档增量 = 相对上一档的成本）" % " → ".join(desc))
@@ -193,7 +195,7 @@ else:
         else:
             kind = "混合墙：部分并行未打满（CPU %.0f%%）" % (ratio * 100)
             next_step = "→ 下一步：确认并行度作用域（source 实例/规则 worker），再做 CPU 采样"
-        print("   └ CPU %d%% 平均（12 核 = %.0f%% 占用）→ %s；%s" % (top["cpu"], ratio * 100, kind, next_step))
+        print("   └ CPU %d%% 平均（%d 核 = %.0f%% 占用）→ %s；%s" % (top["cpu"], CORES, ratio * 100, kind, next_step))
     else:
         print("   └ CPU 归属 n/a（该档过短或采样不足）→ 增大 N 或调小 SAMPLE_MS")
     # 等墙细分：低 CPU 时区分「数据在窗口堆积（窗口/join 容量）」vs「供给侧不足」
