@@ -47,7 +47,8 @@
 
 > 各查询语义（NEXMark 标准）：q0 计数投影、q1 无状态投影、q2 过滤、q3 person⋈auction join、
 > q4 bid⋈auction 均价、q5 窗口计数、q7 最高出价、q8 监控用户、q9 胜出出价、q10 任意选择、
-> q11 用户会话、q12/14 Top-N 类、q15+ 扩展场景（去重/session/多级聚合等）。
+> q11 用户会话、q12 处理时间窗计数（bidder×10s）、q14 Calculation（0.908×price+CASE 分型+count_char）、
+> q15+ 扩展场景（去重/session/多级聚合等）。Top-N 类为 q5/q7（top_ties）、q19（stats top）。
 > 白皮书未发布 **q6、q13**（表内无这两行）。
 
 ## 3. 与 wfusion 的对照（以当次跑批为准）
@@ -60,7 +61,7 @@ wfusion 对照数字随引擎版本演进，**最新结果以当次跑批 `../da
 **当前对照（2026-08-25 Linux 30M · 22/22 `[clean]` · 哨兵 EPS 口径）**：
 vs OSS **3.79×~190.62× 全面领先**；vs VVR **1.10×~32.91×，20/20 有基线查询全部达 VVR**。
 
-- 边缘项：**q14 vs VVR 1.10×**（Top-N，两轮 1.07/1.10× 稳定确认，为 vs VVR 最弱项）、
+- 边缘项：**q14 vs VVR 1.10×**（Calculation，两轮 1.07/1.10× 稳定确认，为 vs VVR 最弱项）、
   q17 1.67×、q22 1.75×。
 - ⚠ **q19 规模退化**（10M→30M：12.4M→4.1M，驱逐触发，待查）；q6/q13 白皮书无基线。
 - 对拍：Q4/Q9 30M identical（D4 保留 pin 修复）；Q12 fixed+close 尾桶、Q19 stats 为 known-diff。
