@@ -12,13 +12,16 @@
 #            → 增量（floor − decode）= 窗口 append + fanout 投递成本
 #   floor  = decode + 窗口 append + fanout（净管道，规则/输出全切）
 #   rules  = floor + 规则求值        → 增量 = 规则墙
-#   full   = rules + 输出链          → 增量 = 输出墙（本 case 是 blackhole，近无成本）
+#   emit   = rules + 输出构建（close 列式 + builder + 通道投递; sink 收到即丢）
+#            → 增量 = 输出构建
+#   full   = emit + 序列化 + sink 写 → 增量 = 序列化 + 写成本（2026-08-25 新档）
 #
-# recv/decode 档（2026-08-25 新增）:
-#   recv  在 source 解码前生效（frame_tag 读帧头, 非哨兵 body 即丢）——隔离
+# recv/decode/emit 档（2026-08-25 新增）:
+#   recv   在 source 解码前生效（frame_tag 读帧头, 非哨兵 body 即丢）——隔离
 #         单连接 TCP 字节率（decode 侧 validate_utf8 ~2.3GB/s 单线程墙）;
-#   decode 在 push_decoded_batch 入口生效（解码后即丢, 不占 parse 槽位）。
-# 两档均豁免 __wf_sentinel 流——测量协议（档位切换 + EPS 计算）必须活着。
+#   decode 在 push_decoded_batch 入口生效（解码后即丢, 不占 parse 槽位）;
+#   emit   在 dispatch_batch 入口生效（AlertBatch 到 sink 即丢, 哨兵 sink 豁免）。
+# 各档均豁免 __wf_sentinel 流——测量协议（档位切换 + EPS 计算）必须活着。
 #
 # 档间切换由哨兵（漂流瓶）驱动，单 daemon 不重启；启动即应用 stages[0]（recv）。
 # 机制见 wp-reactor/docs/design/perf-diag-mode-design.md，用法见
@@ -65,4 +68,5 @@ cut_rules = false
 cut_output = false
 cut_append = false
 cut_recv = false
+cut_serialize = false
 rules = ""
