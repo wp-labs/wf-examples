@@ -63,6 +63,15 @@ cut_recv = false
 rules = ""
 
 [[stages]]
+name = "emit"
+cut_rules = false
+cut_output = false
+cut_append = false
+cut_recv = false
+cut_serialize = true
+rules = ""
+
+[[stages]]
 name = "full"
 cut_rules = false
 cut_output = false
