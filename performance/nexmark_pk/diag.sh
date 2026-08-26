@@ -35,6 +35,11 @@
 #   GEN_FRAMES=1        帧缺失时自动生成（gen-nexmark + dump-frames，30m 需数分钟/数 GB）
 #   EVENT_US=100        数据的事件时间步进（µs/事件，v5=100）——用于算跨度与迟到风险
 #   LATENESS_FIX=1      跨度 > allowed_lateness 时自动放宽（默认开，见 §坑·迟到丢弃）
+#   WF_DIAG_MAX_TOTAL_BYTES=0|8GB|60%  诊断模式全局窗口内存 cap（引擎侧）：默认 =
+#                       物理内存 60%（墙梯重发同一份数据 N 次会放大窗口内存压力，
+#                       cap 过小 → commit_append 停车 → 内存墙错报成计算墙，q20 已证伪）；
+#                       0 = 沿用配置（测内存约束）；显式字节/百分比可调（引擎启动日志
+#                       `perf-diag 内存口径` 打印实际值，报告口径行自动带上）
 #   SAMPLE_MS=100       CPU%/RSS 采样周期（档时长短时决定 CPU 归属可信度）
 #   TIMEOUT_SECS=       单次等待超时（默认 N/50000+120）
 #   FORCE=1             跳过「跨度超窗口 over」的安全拦截
@@ -255,6 +260,9 @@ start_daemon() {
     echo "    错误: daemon 启动超时（8s 端口未监听）——$LOG 尾部：" >&2; tail -20 "$LOG" >&2; return 1; }
   # 诊断模式必须真的生效，否则哨兵帧会被当未知流丢弃 → wfgen 等到超时
   grep -q "perf-diag" "$LOG" || echo "    ⚠ 启动日志无 perf-diag 字样（确认二进制含诊断模式）" >&2
+  # 窗口内存口径必须真的放大（否则墙梯被内存背压污染，q20 已证伪）。二进制旧 →
+  # 无此日志行 → 提示重建（M2 纪律：改动必须验证生效）。
+  grep -q "perf-diag 内存口径" "$LOG" || echo "    ⚠ 启动日志无窗口内存口径行（二进制旧 → 未应用 60% 内存放量，墙梯可能被内存背压污染；需重建 wfusion）" >&2
   return 0
 }
 
@@ -335,7 +343,10 @@ run_ladder() {
   kill_daemon "$DAEMON_PID"; DAEMON_PID=""; wait_port_free
 
   local LD; LD=$(sysctl -n vm.loadavg 2>/dev/null | awk '{printf "%.1f", $2}')
-  local CTX="p=${PARSE_EFF} r=${RULE_EFF} frame_mb=$((MAX_FRAME_BYTES/1048576)) span=${SPAN_SEC}s lateness=$([ "$WINDOWS_EFF" = "$WINDOWS_SRC" ] && echo "${LATENESS_SEC}s" || echo "$(( SPAN_SEC + 60 ))s*") load=${LD:-n/a} · $(date +%m-%d_%H:%M:%S)"
+  # 引擎打印的窗口内存口径（诊断模式默认 60% 物理内存 / WF_DIAG_MAX_TOTAL_BYTES 可调）
+  # 先剥 ANSI 色码再截到结构字段 ` window_mem_cap=` 前，兼容无括号的来源（如 =0 关闭覆盖）。
+  local MEM_CAP; MEM_CAP=$(sed 's/\x1b\[[0-9;]*m//g' "$LOG" | grep -o 'perf-diag 内存口径: max_total_bytes=.* window_mem_cap=' | head -1 | sed -e 's/^perf-diag 内存口径: //' -e 's/ window_mem_cap=$//')
+  local CTX="p=${PARSE_EFF} r=${RULE_EFF} frame_mb=$((MAX_FRAME_BYTES/1048576)) span=${SPAN_SEC}s lateness=$([ "$WINDOWS_EFF" = "$WINDOWS_SRC" ] && echo "${LATENESS_SEC}s" || echo "$(( SPAN_SEC + 60 ))s*") load=${LD:-n/a}${MEM_CAP:+ · ${MEM_CAP}} · $(date +%m-%d_%H:%M:%S)"
   # 分析：独立脚本 diag_analyze.py（哨兵四元组 × CPU/RSS 采样 × metrics 健康），
   # 输入走环境变量；stdout = 报告，退出码 0=健康 / 1=硬失败。
   N="$N" CTX="$CTX" QUERY="$Q" RULES_COUNT="$(grep -c '^rule ' "models/queries/$Q.wfl")" \

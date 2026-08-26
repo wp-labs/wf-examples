@@ -309,7 +309,9 @@ if "dropped_late_total" in bad:
     print("  处理: 减小 total（跨度 ≤ allowed_lateness），或保持 LATENESS_FIX=1 让脚本放宽迟到窗口。")
     FAIL = 1
 if "memory_evicted_total" in bad:
-    print("⚠ memory_evicted 非零：墙梯把同一份数据发了 %d 次，窗口 max_window_bytes 被打满。" % len(sent))
-    print("  各档同策略、口径一致，增量墙归属仍成立；要消除则减小 N 或调大 windows.toml 的窗口预算。")
+    print("⚠ memory_evicted 非零：诊断模式默认把全局窗口内存 cap 放到物理内存 60%")
+    print("  （引擎侧，WF_DIAG_MAX_TOTAL_BYTES 可调，0=沿用配置）仍驱逐 = 单窗 max_window_bytes")
+    print("  或数据量超过放量后的 cap。各档同策略、口径一致，增量墙归属仍成立；")
+    print("  要消除则调大 WF_DIAG_MAX_TOTAL_BYTES / 减小 N / 调大 windows.toml 窗口预算。")
 print("口径: %s" % CTX)
 sys.exit(FAIL)
