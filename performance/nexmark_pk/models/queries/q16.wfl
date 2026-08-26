@@ -36,5 +36,5 @@ rule q16_channel_stats {
             stat.value(final(total_auction)), stat.value(final(r1_auction)), stat.value(final(r2_auction)), stat.value(final(r3_auction))),
         request_count = 1
     )
-    limits { max_memory = "8GB" }
+    limits { max_memory = "16GB" }
 }
