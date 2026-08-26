@@ -138,7 +138,7 @@ for line in open('data/metrics.ndjson'):
     try: v = int(float(o.get('value', 0) or 0))
     except (TypeError, ValueError): continue
     if n == 'emitted_total': emitted[l] += v
-    elif n in ('serialize_failed_total', 'dropped_late_total',
+    elif n in ('append_failed_total', 'dropped_late_total',
                'memory_evicted_total') and v: bad[n] += v
     elif n == 'cursor_gap_total' and v: bad['cursor_gap[%s]' % l] += v
 bad_str = ' '.join('%s=%d' % kv for kv in sorted(bad.items())) or 'clean'

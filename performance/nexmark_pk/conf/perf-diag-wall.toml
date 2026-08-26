@@ -79,5 +79,5 @@ cut_rules = false
 cut_output = false
 cut_append = false
 cut_recv = false
-cut_serialize = false
+cut_sink_write = false
 rules = ""

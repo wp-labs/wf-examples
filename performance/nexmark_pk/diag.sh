@@ -99,6 +99,37 @@ if [ -z "$WFUSION" ] || [ -z "$WFGEN" ]; then
   echo "错误: 找不到 wfusion/wfgen（设置 REPO/WFUSION/WFGEN 或加入 PATH）" >&2; exit 1
 fi
 
+# ---- 二进制新鲜度自检（M2, 2026-08-26）----
+# 防止用不含最新源码的陈旧二进制跑出误导性性能数字（历史教训：git 依赖时改
+# wp-reactor 不编进 wfusion，多轮实验白跑）。检查两件事：
+#   1. warp-fusion/Cargo.toml 用 path 依赖（git 依赖 → 本地 wp-reactor 改动不生效）
+#   2. 二进制 mtime ≥ wp-reactor 最近修改的 .rs（find -newer，找到第一个即停）
+# 失败 → 警告（默认不阻塞）; BIN_CHECK_STRICT=1 拒绝运行; SKIP_BIN_CHECK=1 跳过。
+check_binary_freshness() {
+  [ "${SKIP_BIN_CHECK:-0}" = "1" ] && return 0
+  [ -n "$REPO" ] && [ -n "$WFUSION" ] || return 0
+  local WP_REACTOR="$REPO/../wp-reactor"
+  [ -d "$WP_REACTOR" ] || return 0
+  local STALE=""
+  if ! grep -qE '^wf-engine = \{ *path' "$REPO/Cargo.toml" 2>/dev/null; then
+    STALE="warp-fusion/Cargo.toml 未用 path 依赖（git 依赖）→ 本地 wp-reactor 改动不会编进二进制"
+  fi
+  local NEWER
+  NEWER=$(find "$WP_REACTOR/crates" -name '*.rs' -newer "$WFUSION" -print -quit 2>/dev/null)
+  if [ -n "$NEWER" ]; then
+    STALE="${STALE}${STALE:+; }二进制早于源码修改: ${NEWER#*crates/} → 需 (cd $REPO && cargo build --release -p wfusion -p wfgen)"
+  fi
+  if [ -n "$STALE" ]; then
+    echo "⚠ 二进制新鲜度自检: ${STALE}" >&2
+    if [ "${BIN_CHECK_STRICT:-0}" = "1" ]; then
+      echo "  错误: BIN_CHECK_STRICT=1 → 拒绝运行（构建后再跑，或 SKIP_BIN_CHECK=1 强制）" >&2
+      exit 1
+    fi
+    echo "  （BIN_CHECK_STRICT=1 可升级为拒绝; SKIP_BIN_CHECK=1 跳过本检查）" >&2
+  fi
+}
+check_binary_freshness
+
 # ---- 参数校验 ----
 case "$TOTAL" in
   1m) TOTAL_N=1000000;; 3m) TOTAL_N=3000000;; 10m) TOTAL_N=10000000;;
@@ -148,14 +179,14 @@ if [ -n "${STAGES:-}" ] || [ "$WARMUP" = "1" ]; then
   [ "$WARMUP" = "1" ] && printf '\n[[stages]]\nname = "warmup"\ncut_rules = false\ncut_output = false\nrules = ""\n' >> "$DIAG_TOML"
   for st in $(echo "$LADDER" | tr ',' ' '); do
     case "$st" in
-      recv)   CR=false; CO=false; CA=false; CRV=true;  CS=false;;
-      decode) CR=false; CO=false; CA=true;  CRV=false; CS=false;;
-      floor)  CR=true;  CO=true;  CA=false; CRV=false; CS=false;;
-      rules)  CR=false; CO=true;  CA=false; CRV=false; CS=false;;
-      full)   CR=false; CO=false; CA=false; CRV=false; CS=false;;
+      recv)   CR=false; CO=false; CA=false; CRV=true;  CSW=false;;
+      decode) CR=false; CO=false; CA=true;  CRV=false; CSW=false;;
+      floor)  CR=true;  CO=true;  CA=false; CRV=false; CSW=false;;
+      rules)  CR=false; CO=true;  CA=false; CRV=false; CSW=false;;
+      full)   CR=false; CO=false; CA=false; CRV=false; CSW=false;;
       *) echo "bad stage '$st'（recv|decode|floor|rules|full）" >&2; exit 1;;
     esac
-    printf '\n[[stages]]\nname = "%s"\ncut_rules = %s\ncut_output = %s\ncut_append = %s\ncut_recv = %s\ncut_serialize = %s\nrules = ""\n' "$st" "$CR" "$CO" "$CA" "$CRV" "$CS" >> "$DIAG_TOML"
+    printf '\n[[stages]]\nname = "%s"\ncut_rules = %s\ncut_output = %s\ncut_append = %s\ncut_recv = %s\ncut_sink_write = %s\nrules = ""\n' "$st" "$CR" "$CO" "$CA" "$CRV" "$CSW" >> "$DIAG_TOML"
   done
 fi
 [ -f "$DIAG_TOML" ] || { echo "错误: 墙梯配置 $DIAG_TOML 不存在" >&2; exit 1; }

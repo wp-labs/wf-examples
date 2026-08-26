@@ -116,7 +116,7 @@ Q8/Q9 已与 oracle 对拍一致，Q19 待 stats oracle 接入）：见
 ### 5.2 数据完整性（`[clean]`）
 
 每查询跑批输出 `SUMMARY`：`appended = 总行数/总行数` 且
-`serialize_failed / dropped_late / memory_evicted / cursor_gap = 0` → **clean**。
+`append_failed / dropped_late / memory_evicted / cursor_gap = 0` → **clean**。
 这是「无丢失」的完整性权威。
 
 ### 5.3 输出计数（EMIT）口径

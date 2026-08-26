@@ -178,7 +178,7 @@ def alert_summary(metrics_path):
 def correctness_summary(metrics_path):
     """正确性摘要：SUMMARY 行（致命计数器）+ 各规则 EMIT 行。
 
-    致命计数器（serialize_failed/dropped_late/cursor_gap）非零即跑批作废。
+    致命计数器（append_failed/dropped_late/cursor_gap）非零即跑批作废。
     `memory_evicted_total` **不再致命**（2026-08-25）：内存驱逐在 min_acked /
     retention-pin 保护下只回收**已读/已广播**批次（消费者未读批次驱逐会触发
     `cursor_gap`——那才是真丢数据信号）。背压/字节 cap 下驱逐是常态，非零
@@ -197,7 +197,7 @@ def correctness_summary(metrics_path):
                 continue
             if name == "emitted_total":
                 emitted[label] += v
-            elif name in ("serialize_failed_total", "dropped_late_total") and v:
+            elif name in ("append_failed_total", "dropped_late_total") and v:
                 bad[name] += v
             elif name == "cursor_gap_total" and v:
                 bad["cursor_gap[%s]" % label] += v

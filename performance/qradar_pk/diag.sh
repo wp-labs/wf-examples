@@ -4,7 +4,7 @@
 # 回答的问题：**450 规则负载的吞吐墙在哪一段/哪一族**，而不是「吞吐是多少」（那是 run.sh 的事）。
 #
 #   run.sh   = 基准：全量跑，出 EPS/RSS/#18 门禁（对标 QRadar EP 80k @ 451 规则）
-#   diag.sh  = 诊断：三档墙梯逐段切除 + 可选规则家族档，出每段增量成本 + 墙判定
+#   diag.sh  = 诊断：六档墙梯逐段切除 + 可选规则家族档，出每段增量成本 + 墙判定
 #
 # 机制：wfusion daemon --perf-diag conf/perf-diag-wall.toml（哨兵驱动自切换、单 daemon
 # 不重启）+ wfgen perf-diag 驱动。设计见 wp-reactor/docs/design/perf-diag-mode-design.md，
@@ -25,9 +25,9 @@
 #                       runtime.rules 热 reload 切换。此模式下墙梯 = floor + 各家族档
 #                       （家族之间**非叠加**，增量一律相对 floor 计算），不含全量档。
 #                       可用前缀见 ./diag.sh --list-families
-#   STAGES=floor,rules,full   自定义叠加式墙梯（默认用 conf/perf-diag-wall.toml 的三档）
+#   STAGES=recv,decode,floor,rules,emit,full   自定义叠加式墙梯（默认用 conf/perf-diag-wall.toml 的六档）
 #   KEEP_RATE=1         保留 conf/wfusion.toml 的 max_ingest_rate（默认**解除**：150k 限速
-#                       会把三档全封顶在 150k，墙梯失去区分度——README 测量纪律 §3）
+#                       会把六档全封顶在 150k，墙梯失去区分度——README 测量纪律 §3）
 #   PARSE_PARALLELISM= / RULE_PARALLELISM=   并行度（默认取 conf/wfusion.toml）
 #   FRAMES=path         直接指定帧文件（默认 data/burst_<N>.frames，与 run.sh 共享）
 #   GEN_FRAMES=1        缺帧时自动生成（默认 1：gen_events.py + dump-frames）
@@ -114,7 +114,7 @@ print(len(keep))
 EOF
 }
 
-# ---- 墙梯配置：默认 committed 三档 + 预热；STAGES/WARMUP 时生成临时档 ----
+# ---- 墙梯配置：默认 committed 六档 + 预热；STAGES/WARMUP 时生成临时档 ----
 FAM_COUNTS=""     # "fam:规则数 ..." 供报告用
 FAMILIES_LIST=""
 if [ -n "$FAMILIES" ] || [ -n "${STAGES:-}" ] || [ "$WARMUP" = "1" ]; then
@@ -137,14 +137,17 @@ if [ -n "$FAMILIES" ] || [ -n "${STAGES:-}" ] || [ "$WARMUP" = "1" ]; then
     done
     FAMILIES_LIST="$FAMILIES"
   else
-    for st in $(echo "${STAGES:-floor,rules,full}" | tr ',' ' '); do
+    for st in $(echo "${STAGES:-recv,decode,floor,rules,emit,full}" | tr ',' ' '); do
       case "$st" in
-        floor) CR=true;  CO=true;;
-        rules) CR=false; CO=true;;
-        full)  CR=false; CO=false;;
-        *) echo "bad stage '${st}'（floor|rules|full）" >&2; exit 1;;
+        recv)   CR=false; CO=false; CA=false; CRV=true;  CSW=false;;
+        decode) CR=false; CO=false; CA=true;  CRV=false; CSW=false;;
+        floor)  CR=true;  CO=true;  CA=false; CRV=false; CSW=false;;
+        rules)  CR=false; CO=true;  CA=false; CRV=false; CSW=false;;
+        emit)   CR=false; CO=false; CA=false; CRV=false; CSW=true;;
+        full)   CR=false; CO=false; CA=false; CRV=false; CSW=false;;
+        *) echo "bad stage '$st'（recv|decode|floor|rules|emit|full）" >&2; exit 1;;
       esac
-      printf '\n[[stages]]\nname = "%s"\ncut_rules = %s\ncut_output = %s\nrules = ""\n' "$st" "$CR" "$CO" >> "$DIAG_TOML"
+      printf '\n[[stages]]\nname = "%s"\ncut_rules = %s\ncut_output = %s\ncut_append = %s\ncut_recv = %s\ncut_sink_write = %s\nrules = ""\n' "$st" "$CR" "$CO" "$CA" "$CRV" "$CSW" >> "$DIAG_TOML"
     done
   fi
 fi
@@ -195,7 +198,7 @@ write_conf() {
       -e "s|^rule_parallelism = .*|rule_parallelism = ${RULE_EFF}|" \
       conf/wfusion.toml > "$CONF_TMP"
   if [ "$KEEP_RATE" != "1" ]; then
-    # 限速会把每一档都封顶在 max_ingest_rate（150k）——墙梯三档全等，定位失效。
+    # 限速会把每一档都封顶在 max_ingest_rate（150k）——墙梯六档全等，定位失效。
     sed -i.bak 's|^max_ingest_rate = |# diag.sh 解除限速（墙梯需要各段真实上限）: max_ingest_rate = |' "$CONF_TMP"
     rm -f "${CONF_TMP}.bak"
     RATE_CTX="unlimited"

@@ -141,6 +141,6 @@ sequenceDiagram
 ./bench.sh all replay 10m          # 22 查询全量吞吐 + RSS + CPU（哨兵 EPS 口径）
 ./bench.sh all replay 10m --verify # 同上 + 每查询 oracle 对拍（~40min 量级）
 ./bench.sh q2 replay 10m           # 单查询
-./diag.sh q5 10m                   # 性能墙定位（三档墙梯 + 每段 CPU/RSS）
+./diag.sh q5 10m                   # 性能墙定位（六档墙梯 + 每段 CPU/RSS）
 python3 scripts/extract_emitted.py data/metrics.ndjson  # 消费侧计数器
 ```

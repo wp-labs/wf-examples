@@ -183,7 +183,8 @@ GEN_FRAMES=1 ./diag.sh q1 10m      # 帧缺失时自动生成（与 bench.sh 共
 5. **RSS 列是档内峰值、随墙梯累积**（同一份数据发多次），不是该段的内存成本；内存分析用 `bench.sh`。
 6. **on-each 类查询的输出墙口径**：`cut_output` 在 on-each 直投路径上于 `OutputRecord`
    构造**之前**返回（该路径的 emitted 计数与 append 耦合、无法保留），所以 q1 这类查询的
-   `rules → full` 增量包含「构造 + serialize + 投递」；match 类查询的构造成本已计入 `rules` 档。
+   `rules → full` 增量包含「构造 + append（record→列）+ 通道 + sink 物化/序列化/写」；
+   match 类查询的构造成本已计入 `rules` 档。
 
 ## scripts/ 工具清单
 

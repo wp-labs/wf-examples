@@ -284,7 +284,7 @@ for o in iter_metrics():
         detail[label] = detail.get(label, 0) + v
     elif name == "append_total" and label in INPUTS:
         appended += v
-    elif name in ("serialize_failed_total", "dropped_late_total", "memory_evicted_total") and v:
+    elif name in ("append_failed_total", "dropped_late_total", "memory_evicted_total") and v:
         bad[name] = bad.get(name, 0) + v
     elif name == "cursor_gap_total" and v:
         bad["cursor_gap[%s]" % label] = bad.get("cursor_gap[%s]" % label, 0) + v
