@@ -8,6 +8,13 @@
 #   diag.sh   = 诊断：墙梯逐段切除，出每段增量成本 + 墙判定（定位退化）
 #                （decode→floor→rules→full 四档；decode 为 2026-08-25 新增前序档）
 #
+# 内存诊断模式：MEMORY=1 ./diag.sh q13 30m
+#   - 默认不预热（WARMUP=0）：从空窗口开始测每档增量，避免预热档抬高基线
+#   - 分析器换 diag_mem_analyze.py：报告重心从吞吐墙切到**内存墙**——每档
+#     RSS 峰值增量定位内存增长段 + 成分分账（窗口 Σ/每窗明细/alloc commit/
+#     parse 在途/fanout 排队），回答「内存涨在哪一段、由什么构成」。
+#     输出 data/diag_mem_<q>_<total>.txt
+#
 # 机制：wfusion daemon --perf-diag conf/perf-diag-wall.toml（decode→floor→rules→full
 #       墙梯, 哨兵驱动自切换、单 daemon 不重启）+ wfgen perf-diag 驱动。decode =
 #       注入+解码（cut_append 窗口 append 前即丢）。设计见
@@ -22,6 +29,8 @@
 #   ./diag.sh [query=q1|q1,q5,q9|all] [total=1m|10m|30m]
 #
 # 环境变量:
+#   MEMORY=1           内存诊断模式：不预热（WARMUP=0）+ diag_mem_analyze.py
+#                      内存墙分析器（见脚本头注释）；输出 diag_mem_<q>_<total>.txt
 #   N_LIST=1m,10m       每档数据量（默认 = total）。多值 = **每值重启 daemon 跑一整套墙梯**
 #                       （单次 wfgen 调用里放多个 N 会让第 2+ 个 N 吃到下一档门控，见 §坑）
 #   STAGES=decode,floor,rules,full   自定义墙梯（默认用 conf/perf-diag-wall.toml）
@@ -52,7 +61,13 @@ TOTAL="${2:-10m}"
 
 PY="${PYTHON:-python3}"
 LIB="../scripts/bench_lib.py"          # 度量工具（comma/parse-n/diag-sampler）
-ANALYZER="../scripts/diag_analyze.py"  # 墙表 + 墙判定 + 健康分析
+# 内存诊断模式（MEMORY=1）：不预热 + 内存墙分析器（diag_mem_analyze.py）
+MEMORY="${MEMORY:-0}"
+if [ "$MEMORY" = "1" ]; then
+  ANALYZER="${ANALYZER:-../scripts/diag_mem_analyze.py}"
+else
+  ANALYZER="${ANALYZER:-../scripts/diag_analyze.py}"  # 墙表 + 墙判定 + 健康分析
+fi
 PORT=9800
 DATA_VER="${DATA_VER:-v5}"
 MAX_FRAME_BYTES="${MAX_FRAME_BYTES:-8388608}"
@@ -113,8 +128,13 @@ for n in $N_ITEMS; do [ "$n" -gt "$N_MAX" ] && N_MAX="$n"; done
 
 # ---- 墙梯配置：默认 = conf/perf-diag-wall.toml 三档 + 预热档；STAGES/WARMUP 可调 ----
 # WARMUP 默认 1：不预热时首档的冷启动偏差会大于弱段的真实成本（实测墙梯倒挂）。
+# 内存模式默认 0：预热档会把窗口装满再测增量、抬高基线；EPS 冷启动偏差对内存分析无意义。
 DIAG_TOML="${DIAG_TOML:-conf/perf-diag-wall.toml}"
-WARMUP="${WARMUP:-1}"
+if [ "$MEMORY" = "1" ] && [ -z "${WARMUP:-}" ]; then
+  WARMUP=0
+else
+  WARMUP="${WARMUP:-1}"
+fi
 mkdir -p data
 if [ -n "${STAGES:-}" ] || [ "$WARMUP" = "1" ]; then
   LADDER="${STAGES:-$(grep '^name = ' "$DIAG_TOML" | sed 's/name = "\(.*\)"/\1/' | tr '\n' ',' | sed 's/,$//')}"
@@ -172,7 +192,11 @@ if [ "$SPAN_SEC" -gt "$LATENESS_SEC" ] && [ "$LATENESS_FIX" = "1" ]; then
 fi
 
 CORES=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 0)
-echo "== diag: query=${QUERY} total=${TOTAL} n_list=$(echo "$N_ITEMS" | tr ' ' ',' | sed 's/^,//') stages=${STAGE_NAMES} cores=${CORES} =="
+if [ "$MEMORY" = "1" ]; then
+  echo "== mem-diag: query=${QUERY} total=${TOTAL} n_list=$(echo "$N_ITEMS" | tr ' ' ',' | sed 's/^,//') stages=${STAGE_NAMES} cores=${CORES}（内存墙：不预热，输出 diag_mem_*.txt）=="
+else
+  echo "== diag: query=${QUERY} total=${TOTAL} n_list=$(echo "$N_ITEMS" | tr ' ' ',' | sed 's/^,//') stages=${STAGE_NAMES} cores=${CORES} =="
+fi
 
 # ---- daemon 生命周期（与 bench.sh 同款纪律）----
 wait_port_free() {
@@ -303,7 +327,8 @@ run_ladder() {
   kill_daemon "$DAEMON_PID"; DAEMON_PID=""; wait_port_free
 
   local LD; LD=$(sysctl -n vm.loadavg 2>/dev/null | awk '{printf "%.1f", $2}')
-  local CTX="p=${PARSE_EFF} r=${RULE_EFF} frame_mb=$((MAX_FRAME_BYTES/1048576)) span=${SPAN_SEC}s lateness=$([ "$WINDOWS_EFF" = "$WINDOWS_SRC" ] && echo "${LATENESS_SEC}s" || echo "$(( SPAN_SEC + 60 ))s*") load=${LD:-n/a} · $(date +%m-%d_%H:%M:%S)"
+  local CTX; CTX="p=${PARSE_EFF} r=${RULE_EFF} frame_mb=$((MAX_FRAME_BYTES/1048576)) span=${SPAN_SEC}s lateness=$([ "$WINDOWS_EFF" = "$WINDOWS_SRC" ] && echo "${LATENESS_SEC}s" || echo "$(( SPAN_SEC + 60 ))s*") load=${LD:-n/a} · $(date +%m-%d_%H:%M:%S)"
+  [ "$MEMORY" = "1" ] && CTX="mem-diagnose · ${CTX}"
   # 分析：独立脚本 diag_analyze.py（哨兵四元组 × CPU/RSS 采样 × metrics 健康），
   # 输入走环境变量；stdout = 报告，退出码 0=健康 / 1=硬失败。
   N="$N" CTX="$CTX" QUERY="$Q" RULES_COUNT="$(grep -c '^rule ' "models/queries/$Q.wfl")" \
@@ -320,6 +345,7 @@ ensure_frames || exit 1
 FAILED=0
 for Q in $QUERIES; do
   OUT="data/diag_${Q}_${TOTAL}.txt"
+  [ "$MEMORY" = "1" ] && OUT="data/diag_mem_${Q}_${TOTAL}.txt"
   : > "$OUT"
   for N in $N_ITEMS; do
     run_ladder "$Q" "$N" "$OUT" || FAILED=1
