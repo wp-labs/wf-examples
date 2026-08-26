@@ -104,6 +104,27 @@ try:
 except FileNotFoundError:
     pass
 
+# ---- dirty 采样：epoch_ns dirty_mb（footprint，perf-diag-wall.toml mem_sample）----
+# dirty = 物理真持有（RSS 含页表保留波动大）；非 macOS/footprint 缺失 → 空（列 n/a）。
+DIRTY_SAMPLES_PATH = os.environ.get("DIRTY_SAMPLES_PATH", "")
+dirty_samples = []
+if DIRTY_SAMPLES_PATH:
+    try:
+        for line in open(DIRTY_SAMPLES_PATH):
+            p = line.split()
+            if len(p) == 2:
+                try:
+                    dirty_samples.append((int(p[0]), int(p[1])))
+                except ValueError:
+                    pass
+    except FileNotFoundError:
+        pass
+
+
+def dirty_stats(s, e):
+    win = [x for x in dirty_samples if s <= x[0] <= e]
+    return max((x[1] for x in win), default=None)
+
 
 def window_stats(s, e):
     win = [x for x in samples if s <= x[0] <= e]
@@ -174,9 +195,10 @@ title += " =="
 print(title)
 print("（叠加式墙梯：档间窗口/状态不清零，每档内存 = 前档持有 + 本档新增路径；")
 print("  ΔRSS = 相对上一档的峰值增量，定位内存增长段；RSS 为进程采样峰值）")
+print("  DIRTY = footprint 物理真持有峰值（含页表保留的 RSS 波动大，内存判据用 DIRTY）")
 print("  「末拍账」= metrics 最后快照（full 档稳态）；成分均为字节口径 → 与 RSS 差 = 分配器页/碎片/未归因）")
-head = ["档", "EPS", "耗时", "RSS_peak", "ΔRSS", "CPU%avg/max", "样本"]
-fmt = "%-9s %13s %9s %10s %8s %14s %6s"
+head = ["档", "EPS", "耗时", "RSS_peak", "ΔRSS", "DIRTY_peak", "CPU%avg/max", "样本"]
+fmt = "%-9s %13s %9s %10s %8s %11s %14s %6s"
 print((fmt + " %s") % tuple(head + [""]))
 
 rows, prev_rss = [], None
@@ -189,15 +211,17 @@ for k, name in enumerate(STAGE_NAMES):
     eps = n * 1e9 / dt
     st = window_stats(s, e)
     rss = st[0] if st else None
+    dirty = dirty_stats(s, e)
     cpu_s = "%d/%d" % (st[1], st[2]) if st else "n/a"
     cnt_s = str(st[3]) if st else "0"
     if name == "warmup":
         print("%-9s %13s  (预热档，数字不进结论)" % (name, "—"))
         continue
     delta = None if prev_rss is None else (rss - prev_rss)
-    print("%-9s %13s %8.3fs %10s %8s %14s %6s" % (
+    print("%-9s %13s %8.3fs %10s %8s %11s %14s %6s" % (
         name, format(int(eps), ","), dt / 1e9, fmt_gb(gb_mb(rss)),
         "—" if delta is None else "+%.1fG" % (delta / 1024),
+        fmt_gb(gb_mb(dirty)),
         cpu_s, cnt_s))
     rows.append({"name": name, "eps": eps, "dt": dt / 1e9,
                  "rss": rss, "delta": delta, "cpu": st[1] if st else None,

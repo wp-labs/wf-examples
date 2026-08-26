@@ -82,8 +82,10 @@ RULE="${RULE_PARALLELISM:-}"
 WINDOWS_SRC="models/schemas/windows.toml"
 CONF_TMP=/tmp/diag_conf.toml
 SAMPLES=/tmp/diag_samples.txt
+DIRTY_SAMPLES=/tmp/diag_dirty.txt
 DAEMON_PID=""
 SAMPLER_PID=""
+DIRTY_PID=""
 
 # ---- 二进制来源（与 bench.sh 同款：本地 release 优先，回退 PATH）----
 REPO="${REPO:-}"
@@ -141,6 +143,7 @@ if [ -n "${STAGES:-}" ] || [ "$WARMUP" = "1" ]; then
   DIAG_TOML=data/perf-diag-wall.toml
   : > "$DIAG_TOML"
   echo "# diag.sh 生成（ladder=${LADDER} warmup=${WARMUP}）——勿手改，改 STAGES/WARMUP 环境变量" >> "$DIAG_TOML"
+  echo "mem_sample = true  # diag.sh 生成默认开（footprint dirty 采样；关用 MEM_SAMPLE=0）" >> "$DIAG_TOML"
   # 预热档：全链路（不切）——把窗口缓冲/规则状态/输出链全部跑热，分析时丢弃本档。
   [ "$WARMUP" = "1" ] && printf '\n[[stages]]\nname = "warmup"\ncut_rules = false\ncut_output = false\nrules = ""\n' >> "$DIAG_TOML"
   for st in $(echo "$LADDER" | tr ',' ' '); do
@@ -156,6 +159,19 @@ if [ -n "${STAGES:-}" ] || [ "$WARMUP" = "1" ]; then
   done
 fi
 [ -f "$DIAG_TOML" ] || { echo "错误: 墙梯配置 $DIAG_TOML 不存在" >&2; exit 1; }
+# 内存采样开关（perf-diag-wall.toml `mem_sample`，缺失/true = 开，默认开）：
+# footprint dirty 采样（真持有口径）→ 报告每档 DIRTY_peak。显式 false 或
+# 环境变量 MEM_SAMPLE=0 关闭（省 footprint spawn ~50% 核，非内存验证用）。
+MEM_SAMPLE="${MEM_SAMPLE:-}"
+if [ -z "$MEM_SAMPLE" ]; then
+  _MS=$(grep '^mem_sample' "$DIAG_TOML" | head -1 | sed 's/.*= *//' | tr -d '"' | tr '[:upper:]' '[:lower:]')
+  case "$_MS" in
+    true|1|yes|on) MEM_SAMPLE=1;;
+    false|0|no|off) MEM_SAMPLE=0;;
+    *) MEM_SAMPLE=1;;  # 缺失/未知 = 开
+  esac
+fi
+[ "$MEM_SAMPLE" = "1" ] && DIRTY_SAMPLES_PATH="$DIRTY_SAMPLES" || DIRTY_SAMPLES_PATH=""
 STAGE_NAMES=$(grep '^name = ' "$DIAG_TOML" | sed 's/name = "\(.*\)"/\1/' | tr '\n' ',' | sed 's/,$//')
 # cut_append/cut_recv 档（decode/recv 前序档）: 普通流不 append → appended 期望扣掉。
 APPEND_CUT_STAGES=$(awk -F'"' '/^name = /{n=$2} /cut_append = true/{print n} /cut_recv = true/{print n}' "$DIAG_TOML" | sort -u | tr '\n' ',' | sed 's/,$//')
@@ -214,6 +230,7 @@ kill_daemon() {
 }
 cleanup() {
   [ -n "$SAMPLER_PID" ] && kill "$SAMPLER_PID" 2>/dev/null
+  [ -n "$DIRTY_PID" ] && kill "$DIRTY_PID" 2>/dev/null
   pkill -9 -f "wfusion daemon" 2>/dev/null
   sleep 1; wait_port_free
 }
@@ -255,6 +272,15 @@ start_daemon() {
 start_sampler() {
   "$PY" "$LIB" diag-sampler "$1" "$SAMPLES" "$SAMPLE_MS" > /dev/null 2>&1 &
   SAMPLER_PID=$!
+}
+
+# 内存采样（footprint dirty，真持有口径）：输出 "epoch_ns dirty_mb"。
+# 由 perf-diag-wall.toml `mem_sample` 控制（默认开）；footprint spawn ~50% 核，
+# 关用 MEM_SAMPLE=0 或配置 mem_sample = false。非 macOS 无输出（分析器 n/a）。
+start_dirty_sampler() {
+  [ "$MEM_SAMPLE" = "1" ] || return 0
+  "$PY" "$LIB" footprint-sampler "$1" "$DIRTY_SAMPLES" 0.5 > /dev/null 2>&1 &
+  DIRTY_PID=$!
 }
 
 # ---- 帧文件：与 bench.sh 共享缓存 data/bench_<total>_<ver>.frames ----
@@ -311,9 +337,10 @@ run_ladder() {
   write_conf "$Q"
   # 哨兵文件必须在 daemon 启动**前**清空：daemon 启动即写 stage{current=0}，
   # 启动后再删会擦掉这行 → wfgen 首个 wait_for_stage 直接超时（设计文档 §7 坑）。
-  rm -f data/perf_sentinel.ndjson data/perf_diag_wall.txt data/metrics.ndjson data/wfusion.log "$SAMPLES"
+  rm -f data/perf_sentinel.ndjson data/perf_diag_wall.txt data/metrics.ndjson data/wfusion.log "$SAMPLES" "$DIRTY_SAMPLES"
   start_daemon "$LOG" || return 1
   start_sampler "$DAEMON_PID"
+  start_dirty_sampler "$DAEMON_PID"
 
   echo "  -- $Q · N=$(comma "$N") · 档=${STAGE_NAMES} · timeout=${T}s --"
   "$WFGEN" perf-diag --diag "$DIAG_TOML" --frames "$FRAMES" --addr "127.0.0.1:$PORT" \
@@ -323,6 +350,7 @@ run_ladder() {
   [ "$RC" = 0 ] || echo "    ⚠ wfgen perf-diag 退出码 ${RC}（报告按已落盘哨兵记录尽力分析）" >&2
 
   kill "$SAMPLER_PID" 2>/dev/null; wait "$SAMPLER_PID" 2>/dev/null; SAMPLER_PID=""
+  [ -n "$DIRTY_PID" ] && { kill "$DIRTY_PID" 2>/dev/null; wait "$DIRTY_PID" 2>/dev/null; DIRTY_PID=""; }
   sleep 2   # 让 metrics 最后一拍导出（report_interval=100ms）
   kill_daemon "$DAEMON_PID"; DAEMON_PID=""; wait_port_free
 
@@ -334,6 +362,7 @@ run_ladder() {
   N="$N" CTX="$CTX" QUERY="$Q" RULES_COUNT="$(grep -c '^rule ' "models/queries/$Q.wfl")" \
   STAGE_NAMES="$STAGE_NAMES" APPEND_CUT_STAGES="$APPEND_CUT_STAGES" CORES="$CORES" \
   SENT_PATH="data/perf_sentinel.ndjson" SAMPLES_PATH="$SAMPLES" \
+  DIRTY_SAMPLES_PATH="$DIRTY_SAMPLES_PATH" \
   METRICS_PATH="data/metrics.ndjson" LOG_PATH="$LOG" \
   STREAMS="auction_events,bid_events,person_events" FAM_COUNTS="" \
     "$PY" "$ANALYZER" | tee -a "$OUT"

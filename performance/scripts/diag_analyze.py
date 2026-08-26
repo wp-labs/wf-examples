@@ -85,6 +85,26 @@ try:
 except FileNotFoundError:
     pass
 
+# ---- dirty 采样：epoch_ns dirty_mb（footprint，perf-diag-wall.toml mem_sample）----
+# dirty = 物理真持有（RSS 含页表保留波动大）；非 macOS/footprint 缺失 → 空（列 n/a）。
+DIRTY_SAMPLES_PATH = os.environ.get("DIRTY_SAMPLES_PATH", "")
+dirty_samples = []
+if DIRTY_SAMPLES_PATH:
+    try:
+        for line in open(DIRTY_SAMPLES_PATH):
+            p = line.split()
+            if len(p) == 2:
+                try:
+                    dirty_samples.append((int(p[0]), int(p[1])))
+                except ValueError:
+                    pass
+    except FileNotFoundError:
+        pass
+
+
+def dirty_peak(s, e):
+    return max((x[1] for x in dirty_samples if s <= x[0] <= e), default=None)
+
 
 def window_stats(s, e):
     win = [x for x in samples if s <= x[0] <= e]
@@ -111,8 +131,8 @@ def iter_metrics():
 # ---------------------------------------------------------------------------
 family_mode = any(s.startswith("fam_") for s in STAGE_NAMES)
 who = "qradar_pk" if (QUERY or "").startswith("qradar") else "nexmark_pk"
-head = ["档", "EPS", "耗时", "ns/事件", "增量ns", "占全链", "CPU%avg/max", "RSS_peak", "样本"]
-fmt = "%-9s %13s %9s %11s %10s %8s %14s %11s %6s"
+head = ["档", "EPS", "耗时", "ns/事件", "增量ns", "占全链", "CPU%avg/max", "RSS_peak", "DIRTY_peak", "样本"]
+fmt = "%-9s %13s %9s %11s %10s %8s %14s %11s %11s %6s"
 print("")
 title = "== %s 性能墙定位 · %s" % (who, QUERY or "?")
 title += " · N=%s" % format(N_REQ, ",")
@@ -145,6 +165,8 @@ for k, name in enumerate(STAGE_NAMES):
     st = window_stats(s, e)
     cpu_s = "%d/%d" % (st[1], st[2]) if st else "n/a"
     rss_s = "%s MB" % format(st[0], ",") if st else "n/a"
+    dirty = dirty_peak(s, e)
+    dirty_s = "%s MB" % format(dirty, ",") if dirty else "n/a"
     cnt_s = str(st[3]) if st else "0"
     if name == "warmup":
         # 预热档：只负责把窗口/规则状态/输出链跑热，跑在「窗口全空 + 冷启动」的特殊状态，
@@ -156,11 +178,11 @@ for k, name in enumerate(STAGE_NAMES):
     # 家族档非叠加：增量一律相对 floor；叠加式墙梯：增量相对上一档
     base = floor_ns if (family_mode and name.startswith("fam_")) else prev_ns
     delta = None if base is None else ns_per_ev - base
-    print("%-9s %13s %8.3fs %11.1f %10s %8s %14s %11s %6s" % (
+    print("%-9s %13s %8.3fs %11.1f %10s %8s %14s %11s %11s %6s" % (
         name, format(int(eps), ","), dt / 1e9, ns_per_ev,
         "—" if delta is None else "+%.1f" % delta if delta >= 0 else "%.1f" % delta,
         "—" if delta is None or ns_per_ev <= 0 else "%.1f%%" % (delta / ns_per_ev * 100),
-        cpu_s, rss_s, cnt_s))
+        cpu_s, rss_s, dirty_s, cnt_s))
     rows.append({"name": name, "eps": eps, "dt": dt / 1e9, "ns": ns_per_ev,
                  "delta": delta, "cpu": st[1] if st else None,
                  "rss_peak": st[0] if st else None, "samples": st[3] if st else 0})
