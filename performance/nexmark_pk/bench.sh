@@ -245,22 +245,22 @@ wait_port_free() {
   echo "    警告: 端口 $PORT 超时未释放" >&2
 }
 
-# 强杀单个 daemon：SIGTERM → 轮询最多 60s → SIGKILL → 确认进程消失。
-# 宽限 60s：与 wp-reactor `GROUP_JOIN_TIMEOUT(60s)` 对齐——stats/deferred 规则的
-# shutdown close flush 构建尾部输出需数秒-数十秒（q19 30M ≈ 8M 条 ~13s），10s 会
-# 在 flush 完成前 SIGKILL → 截断 `wait()` 的最终 metrics 导出 → 尾部 EMIT 计数
-# 丢失（q4/q22 30M 实测 SIGTERM 后 >10s，--verify 会误报对拍失败）。正常 shutdown
-# 不受影响（无 flush 构建时立即退出）。
+# 强杀单个 daemon：SIGTERM → 轮询最多 300s → SIGKILL → 确认进程消失。
+# 宽限 300s：与 wp-reactor `GROUP_JOIN_TIMEOUT(300s)` 对齐——stats/deferred 规则的
+# shutdown close flush 构建尾部输出需数秒-数十秒（q19 30M ≈ 8M 条 ~13s；q18 100M
+# spill 流式 drain ≈ 2940 万条分钟级），60s 会在 flush 完成前 SIGKILL → 截断
+# `wait()` 的最终 metrics 导出 → 尾部 EMIT 计数丢失（q4/q22 30M 实测 SIGTERM 后
+# >10s，--verify 会误报对拍失败）。正常 shutdown 不受影响（无 flush 构建时立即退出）。
 kill_daemon() {
   local PID="$1"
   [ -n "$PID" ] || return 0
   kill "$PID" 2>/dev/null
   local i
-  for i in $(seq 1 300); do
+  for i in $(seq 1 1500); do
     kill -0 "$PID" 2>/dev/null || { sleep 1; return 0; }
     sleep 0.2
   done
-  echo "    警告: daemon $PID SIGTERM 后 60s 未退出, 强制 SIGKILL" >&2
+  echo "    警告: daemon $PID SIGTERM 后 300s 未退出, 强制 SIGKILL" >&2
   kill -9 "$PID" 2>/dev/null
   for i in $(seq 1 25); do
     kill -0 "$PID" 2>/dev/null || { sleep 1; return 0; }
