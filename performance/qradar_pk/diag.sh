@@ -139,15 +139,15 @@ if [ -n "$FAMILIES" ] || [ -n "${STAGES:-}" ] || [ "$WARMUP" = "1" ]; then
   else
     for st in $(echo "${STAGES:-recv,decode,floor,rules,emit,full}" | tr ',' ' '); do
       case "$st" in
-        recv)   CR=false; CO=false; CA=false; CRV=true;  CS=false;;
-        decode) CR=false; CO=false; CA=true;  CRV=false; CS=false;;
-        floor)  CR=true;  CO=true;  CA=false; CRV=false; CS=false;;
-        rules)  CR=false; CO=true;  CA=false; CRV=false; CS=false;;
-        emit)   CR=false; CO=false; CA=false; CRV=false; CS=true;;
-        full)   CR=false; CO=false; CA=false; CRV=false; CS=false;;
+        recv)   CR=false; CO=false; CA=false; CRV=true;  CSW=false;;
+        decode) CR=false; CO=false; CA=true;  CRV=false; CSW=false;;
+        floor)  CR=true;  CO=true;  CA=false; CRV=false; CSW=false;;
+        rules)  CR=false; CO=true;  CA=false; CRV=false; CSW=false;;
+        emit)   CR=false; CO=false; CA=false; CRV=false; CSW=true;;
+        full)   CR=false; CO=false; CA=false; CRV=false; CSW=false;;
         *) echo "bad stage '$st'（recv|decode|floor|rules|emit|full）" >&2; exit 1;;
       esac
-      printf '\n[[stages]]\nname = "%s"\ncut_rules = %s\ncut_output = %s\ncut_append = %s\ncut_recv = %s\ncut_serialize = %s\nrules = ""\n' "$st" "$CR" "$CO" "$CA" "$CRV" "$CS" >> "$DIAG_TOML"
+      printf '\n[[stages]]\nname = "%s"\ncut_rules = %s\ncut_output = %s\ncut_append = %s\ncut_recv = %s\ncut_sink_write = %s\nrules = ""\n' "$st" "$CR" "$CO" "$CA" "$CRV" "$CSW" >> "$DIAG_TOML"
     done
   fi
 fi

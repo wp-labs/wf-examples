@@ -27,7 +27,7 @@ for line in open(path):
         emitted[label] += val
     elif name == "append_total":
         append[label] += val
-    elif name in ("serialize_failed_total", "dropped_late_total",
+    elif name in ("append_failed_total", "dropped_late_total",
                   "time_evicted_total", "memory_evicted_total",
                   "dispatch_total", "drain_dropped_records_total",
                   "no_sink_records_total", "channel_full_total",

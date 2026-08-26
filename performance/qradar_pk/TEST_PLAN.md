@@ -141,7 +141,7 @@ send-arrow 是**唯一能绕过客户端编码墙、测到引擎真实处理能�
 |---|---|---|
 | **#18 驱逐门禁** | 跑任意 N，检查驱逐 | `memory_evicted=0`（wfusion.log 无 "in memory eviction"）|
 | **告警发射** | 检查 metrics emitted | `emitted_total` ≥ 10000，且各规则类别有命中 |
-| **无丢/无late** | 检查 metrics | `dropped_late=0`、`cursor_gap=0`、`serialize_failed=0` |
+| **无丢/无late** | 检查 metrics | `dropped_late=0`、`cursor_gap=0`、`append_failed=0` |
 
 ### 4.2 吞吐测量矩阵（持续注入，N=300 万）
 
