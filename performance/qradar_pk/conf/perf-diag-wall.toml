@@ -1,16 +1,22 @@
 # 性能墙定位（perf-diag 墙梯）配置 —— diag.sh 专用
 #
 # 墙梯是**叠加式**（从管线尾部向前切，见 wp-reactor/docs/PERF_BISECTION_METHOD.md §2）：
-#   floor = 注入 + 解码 + 窗口 append（净管道，与规则集无关）
-#   rules = floor + 450 条规则求值   → 增量 = 规则墙（本 case 的已知主墙）
-#   full  = rules + 输出链           → 增量 = 输出墙（blackhole 口径，近无成本）
+#   recv   = 注入 + TCP 接收（cut_recv: 非哨兵帧只读帧头 tag 即丢, 不解码 body）
+#            → 增量（decode − recv）= 解码成本（validate_utf8 字节率墙）
+#   decode = recv + 解码（cut_append: 窗口 append 前即丢；哨兵流豁免）
+#            → 增量（floor − decode）= 窗口 append + fanout 投递成本
+#   floor  = decode + 窗口 append + fanout（净管道，规则/输出全切）
+#   rules  = floor + 450 条规则求值   → 增量 = 规则墙（本 case 的已知主墙）
+#   emit   = rules + 输出构建（close 列式 + builder + 通道投递; sink 收到即丢）
+#            → 增量 = 输出构建
+#   full   = emit + 序列化 + sink 写 → 增量 = 序列化 + 写成本
 #
 # 档间切换由哨兵（漂流瓶）驱动，单 daemon 不重启；启动即应用 stages[0]。
 # 机制见 wp-reactor/docs/design/perf-diag-mode-design.md，用法见
 # wp-reactor/docs/user-guide/perf-diag.md。
 #
 # ⚠ 两条 qradar_pk 特有前提（diag.sh 已自动处理，手工起 daemon 时须自己保证）：
-#   1. 必须解除 conf/wfusion.toml 的 max_ingest_rate = 150000——限速会把三档
+#   1. 必须解除 conf/wfusion.toml 的 max_ingest_rate = 150000——限速会把六档
 #      全部封顶在 150k EPS，墙梯彻底失去区分度（README 测量纪律 §3）；
 #   2. report_interval 须从 1s 改 100ms——1s 粒度是「26万 vs 970万」测量假象的
 #      根源（设计文档 §1.1、§4.5）。哨兵口径本身不受影响，但健康计数器的尾部
@@ -18,21 +24,54 @@
 #
 # ⚠ rules 字段留空 = 保持 daemon 当前规则文件（models/rules/*.wfl 全量 450 条）。
 #   规则家族档（只跑某前缀子集）由 diag.sh 的 FAMILIES= 生成，不写在本文件。
+# ⚠ 各档均豁免 __wf_sentinel 流——测量协议（档位切换 + EPS 计算）必须活着。
+
+[[stages]]
+name = "recv"
+cut_rules = false
+cut_output = false
+cut_append = false
+cut_recv = true
+rules = ""
+
+[[stages]]
+name = "decode"
+cut_rules = false
+cut_output = false
+cut_append = true
+cut_recv = false
+rules = ""
 
 [[stages]]
 name = "floor"
 cut_rules = true
 cut_output = true
+cut_append = false
+cut_recv = false
 rules = ""
 
 [[stages]]
 name = "rules"
 cut_rules = false
 cut_output = true
+cut_append = false
+cut_recv = false
+rules = ""
+
+[[stages]]
+name = "emit"
+cut_rules = false
+cut_output = false
+cut_append = false
+cut_recv = false
+cut_serialize = true
 rules = ""
 
 [[stages]]
 name = "full"
 cut_rules = false
 cut_output = false
+cut_append = false
+cut_recv = false
+cut_serialize = false
 rules = ""
