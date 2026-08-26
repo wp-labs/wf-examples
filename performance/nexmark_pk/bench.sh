@@ -165,6 +165,38 @@ if [ "$PROFILE" = "1" ]; then
     echo "==> profile: 使用插桩二进制，profraw → $PROF_PGO"
   fi
 fi
+
+# ---- 二进制新鲜度自检（M2, 2026-08-26）----
+# 防止用不含最新源码的陈旧二进制跑出误导性性能数字（历史教训：git 依赖时改
+# wp-reactor 不编进 wfusion，多轮实验白跑）。检查两件事：
+#   1. warp-fusion/Cargo.toml 用 path 依赖（git 依赖 → 本地 wp-reactor 改动不生效）
+#   2. 二进制 mtime ≥ wp-reactor 最近修改的 .rs（find -newer，找到第一个即停）
+# 失败 → 警告（默认不阻塞）; BIN_CHECK_STRICT=1 拒绝运行; SKIP_BIN_CHECK=1 跳过。
+check_binary_freshness() {
+  [ "${SKIP_BIN_CHECK:-0}" = "1" ] && return 0
+  [ -n "$REPO" ] && [ -n "$WFUSION" ] || return 0
+  local WP_REACTOR="$REPO/../wp-reactor"
+  [ -d "$WP_REACTOR" ] || return 0
+  local STALE=""
+  if ! grep -qE '^wf-engine = \{ *path' "$REPO/Cargo.toml" 2>/dev/null; then
+    STALE="warp-fusion/Cargo.toml 未用 path 依赖（git 依赖）→ 本地 wp-reactor 改动不会编进二进制"
+  fi
+  local NEWER
+  NEWER=$(find "$WP_REACTOR/crates" -name '*.rs' -newer "$WFUSION" -print -quit 2>/dev/null)
+  if [ -n "$NEWER" ]; then
+    STALE="${STALE}${STALE:+; }二进制早于源码修改: ${NEWER#*crates/} → 需 (cd $REPO && cargo build --release -p wfusion -p wfgen)"
+  fi
+  if [ -n "$STALE" ]; then
+    echo "⚠ 二进制新鲜度自检: ${STALE}" >&2
+    if [ "${BIN_CHECK_STRICT:-0}" = "1" ]; then
+      echo "  错误: BIN_CHECK_STRICT=1 → 拒绝运行（构建后再跑，或 SKIP_BIN_CHECK=1 强制）" >&2
+      exit 1
+    fi
+    echo "  （BIN_CHECK_STRICT=1 可升级为拒绝; SKIP_BIN_CHECK=1 跳过本检查）" >&2
+  fi
+}
+check_binary_freshness
+
 PY="${PYTHON:-python3}"
 LIB="../scripts/bench_lib.py"   # 共享度量工具库（comma/rss-sampler/引擎游标/哨兵/正确性摘要，两 case 共用）
 PORT=9800
