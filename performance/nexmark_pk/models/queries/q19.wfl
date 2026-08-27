@@ -26,5 +26,14 @@ rule q19_auction_top10_stats {
         detail = fmt("{} {}", b.bidder, b.price),
         request_count = 1
     )
-    limits { max_memory = "16GB" }
+    limits {
+        // spill 验证结论（2026-08-27, docs/issues/spill-scope-expansion.md P0）:
+        // 100M 状态仅 ~0.5GB/窗(10m:fixed, 每窗 ~36 万 auction), RSS 7.3GB 达标——
+        // **无需 spill**。验证发现 2 个问题(见 issue 文档):
+        // ① 配 spill 但零驱逐 → store 空转 churn RSS +6GB(170 次 create/cleanup)
+        //    ——已修复: store 惰性创建(首次驱逐才建, 修复后复测 RSS 7.36GB);
+        // ② 预算<状态时驱逐滞后 → 拒收丢键且 [clean] 盲区不报(EMIT 对拍 44,089,718
+        //    vs 基线 44,145,610 差 55,892)。回归无 spill 基线。
+        max_memory = "16GB"
+    }
 }
