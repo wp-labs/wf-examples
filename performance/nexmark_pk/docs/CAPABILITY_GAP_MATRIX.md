@@ -4,8 +4,9 @@
 > 本表判断基于 22 个当前 `.wfl` 文件 + wfusion 当前规则能力（CEP / Window / stats<> / Join 家族）的源码核查。
 > 验证现状（截至 2026-08-25）：22 查询全量跑批 `[clean]`（10M/30M，哨兵 EPS 口径，见 `BENCH_RESULTS.md`）；
 > 30M oracle 对拍 17 个非 stats 查询——**Q4/Q9 已 identical**（D4 保留 pin：join 目标窗字节上限驱逐不再静默丢行）；
-> 剩余已知差异：**Q3 30M −16%**（规模相关 bug 待查，与驱逐/pin 无关）、**Q12 fixed+close 尾桶 known-diff**、
-> Q19 stats oracle 未接入。历史修订过程（2026-08-23/24 各轮）已清理，见 git 历史。
+> 剩余已知差异：**Q3 30M −16%**（规模相关 bug 待查，与驱逐/pin 无关）、**Q12 fixed+close 尾桶 known-diff**。
+> 2026-08-27 stats 规则接入 oracle（fixed 窗口 q4b/q15~q19 10M 单查询 verify 逐条 identical；
+> all-1m 端到端 stats 规则全部一致；session/sliding stats 仍不接入）。历史修订过程已清理，见 git 历史。
 > 三档定义：
 > - **已有**：能力已落地且端到端可跑，输出与 Flink 语义/基数一致。
 > - **待接通**：算子已实现，但规则装配/计划连线未端到端激活（纸面符合，跑不通或未被规则引擎调度）。
@@ -20,7 +21,7 @@
 | **Q1** | 货币换算(0.908×price)+过滤 | CEP on-each | ✅ 已有 | — |
 | **Q2** | 选择 MOD(auction,123)=0 的 bid | CEP each | ✅ 已有 | 每满足 `MOD(auction,123)=0` 的 bid 一行（per-bid，`on each` + bind filter） |
 | **Q3** | 按州过滤(IN OR/ID/CA) | CEP filter | ✅ 已有 | 10M 对拍一致；**30M 对拍 −16%（150,992 vs 180,304，超 5% 容差）**——规模相关独立 bug 待查（已排除：字节上限驱逐无关，person 快照窗口全保留后无变化） |
-| **Q4** | 分类均价（累积窗口） | deferred reduce + stats avg 双规则链 | ✅ 已有 | avg-of-max 双规则链 2026-08-23 落地（q4a deferred reduce maxrow → 中间窗口 auction_finals → q4b stats avg）；内层 oracle 可对拍；外层 stats oracle 待接入（known-diff）。**q4a 30M identical（D4 pin 修复：字节上限驱逐曾丢 62% join 目标行，2026-08-24）** |
+| **Q4** | 分类均价（累积窗口） | deferred reduce + stats avg 双规则链 | ✅ 已有 | avg-of-max 双规则链 2026-08-23 落地（q4a deferred reduce maxrow → 中间窗口 auction_finals → q4b stats avg）；内外层 oracle 均可对拍（外层 stats oracle 2026-08-27 接入）。**q4a 30M identical（D4 pin 修复：字节上限驱逐曾丢 62% join 目标行，2026-08-24）** |
 | **Q5** | 热门新商品（top-1 by count） | hop(10s, 2s) + conv top_ties(1) | ✅ 已有 | HOP 算子落地（2026-08-23）：窗口形状/基数与权威一致（30M 数据 1500 窗 vs 旧 fixed 300 桶，5× 修正）；`top_ties(1)` 并列最高 count 的 auction 全输出（对齐权威 JOIN 并列语义，无残留） |
 | **Q6** | 卖家售出均价 | sliding 10m avg（能力面） | 🟡 特殊口径 | Flink 官方未实现 Q6（OVER WINDOW 不消费 retractions，权威 SQL 注释）；无对拍基线，当前为形状近似能力面 |
 | **Q7** | 时段最高出价 | CEP `match<auction:10s:fixed>` close max + conv top_ties(1) | ✅ 已有 | 并列全输出（RANK 语义 `top_ties`，2026-08-23 与 Q5 同落地）：同窗口最高价并列 auction 全出；残留 = auction 粒度 vs 权威 bid 行粒度（同 auction 内多条并列 bid 需窗口内行集算子） |
@@ -35,7 +36,7 @@
 | **Q16** | 按日历天的渠道统计（Channel） | stats + 日历天窗口 | ✅ 已有 | 同上（minute 列数据侧恒定省略） |
 | **Q17** | 按日历天的拍卖统计 | stats + 日历天窗口 | ✅ 已有 | 同上 |
 | **Q18** | 每 (bidder,auction) 最后一条 bid | stats last + 1d 桶 | ✅ 已有 | ★标准形态 `q18.wfl` = `1d:fixed` + 4 个 last 度量：值语义（最后一条字段值）+ 基数（每键 1 行）双对齐（last 序 = 到达序，有序数据 = max dateTime）；CEP 版（q18-verify.wfl）为基数对齐近似（值语义缺失） |
-| **Q19** | 拍卖 Top-10 价格 | stats<> top-N | ✅ 已有 | stats<> 编译/装配/执行器测试确认（`stats_top_keeps_top_n_desc`）；bench daemon 对拍待跑（oracle 不执行 stats 规则） |
+| **Q19** | 拍卖 Top-10 价格 | stats<> top-N | ✅ 已有 | stats<> 编译/装配/执行器测试确认（`stats_top_keeps_top_n_desc`）；oracle 已接入 stats（2026-08-27）：10M 对拍 4,411,230 identical（top 每桶 n_records 多条目计数口径） |
 | **Q20** | 展开 bid 关联 auction（category=10 filter join） | snapshot join + join 后 where | ✅ 已有 | `on each` + `join auction_events snapshot on b.auction==id` + `where category==10`（对齐权威 INNER JOIN + 过滤，miss/过滤均抑制）；展开字段受 sink 四列限制省略。**性能（2026-08-24）：Arc<JoinRow> 消除每行 clone/drop 后 30M 4.63M→20.87M EPS（4.5×）**；verify 偏差 0.97~1.65%（<5% 容差）——原设计「批快照+行时复查」固有竞态（join 目标窗按全量已提交状态读，fill 快慢改变可见集），方向恒为少发，见 wp-reactor 接力手记 |
 | **Q21** | 附加 channel id（热通道映射 + cold url 提取） | CEP on-each 投影 + 过滤 | ✅ 已有 | 权威 CASE 映射 0/1/2/3 + url `channel_id` 提取；wfgen 数据侧已计算 `channel_id`（cmd_gen_nexmark.rs:279），规则侧 `channel_id!=""` 过滤等价官方 WHERE（输出 95% bid）；无状态投影 |
 | **Q22** | URL 目录投影 | CEP projection | ✅ 已有 | — |

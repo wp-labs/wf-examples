@@ -155,16 +155,17 @@
 | Q16 | = | = | ✅ 一致 |
 | Q17 | = | = | ✅ 一致 |
 | Q18 | = | = | ✅ 一致 |
-| Q19 | 实测值 | — | ⚠ oracle 未接入 stats（Q19 为 stats 规则），对拍待 oracle stats 支持 |
+| Q19 | 4,411,230 | 4,411,230 | ✅ 一致（2026-08-27 stats oracle 接入） |
 | Q20 | 1,863,987 | 1,863,987 | ✅ 一致（修复后） |
 | Q21 | 8,738,817 | 8,738,817 | ✅ 一致 |
 | Q22 | 9,200,000 | 9,200,000 | ✅ 一致 |
 
-**结论**：21/22 与 oracle 完全一致（08-23 新增 Q5 + Q11）；Q12 为引擎 fixed 收口实现差异（wfl 语义正确，known）；
-Q19 为 oracle 侧能力缺口（stats 规则未接入 oracle，引擎输出为实测值）。
+**结论**：21/22 与 oracle 完全一致（08-23 新增 Q5 + Q11；2026-08-27 新增 Q19 等 stats 规则）；Q12 为引擎
+fixed 收口实现差异（wfl 语义正确，known）。
 
 > 注：Q9 与 Q3/Q6/Q20 的 known-diff 条目已从 `cmd_verify_nexmark` 的 known 列表移除（修复后真一致，
-> 保留会误报 ⚠）；Q12/Q11/Q19 的 known 描述已更新为实测语义。
+> 保留会误报 ⚠）；Q12/Q11 的 known 描述已更新为实测语义；Q19 已随 stats oracle 接入（2026-08-27）
+> 从 known 列表移除。
 
 > 2026-08-23 q5 修复：`close_all` 收口对齐 oracle/Flink——HOP/Fixed 尾部未完整窗口
 > （`created_at+size > 最终事件时间 watermark`）释放实例但不发射。修复前 flush 强制收口

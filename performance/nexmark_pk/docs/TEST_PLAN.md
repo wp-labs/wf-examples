@@ -118,10 +118,13 @@ sequenceDiagram
 - 对拍：`wfgen verify-nexmark 10000000` → 归一化两侧为 `规则名 计数` 文本行（Myers 对齐），
   git-diff 式逐规则报告；退出码 0=一致 / 1=有差异。`bench.sh --verify` 串接同一对拍。
 - **known-diff（对拍时已知，非回归）**：
-  - stats 规则（StatsExecutor 列式批执行）oracle 未接入——跳过并标记「oracle 未覆盖」；
   - Q12 fixed+close 尾桶收口（fixed 收口靠预算/scan_timeouts 墙钟推进，oracle 事件时间到末尾
     即止——10M 实测 oracle=102,400 vs 引擎=282,514）；
   - 30M 对拍按 5% 容差，历史超差项见 `CAPABILITY_GAP_MATRIX.md`。
+  - stats 规则：fixed 窗口（q4b/q15~q19）2026-08-27 起接入 oracle（StatsExecutor 逐事件驱动 +
+    按窗口/容量阈值分批归并）；session/sliding stats 仍不接入（oracle 仅 fixed 推进）。
+  - 内存口径：all-10m verify 的 oracle 工作集 ~19GB（CEP 窗口状态 + 10m 事件桶），24GB 机器
+    换页/OOM 风险——stats 规则建议单查询 10m 对拍 + all 用小 N（1m）端到端。
 - 引擎侧取 oracle 覆盖的规则，单查询验证时其它查询残留 EMIT 是历史噪音，不计入。
 
 ## 5. 测量纪律（同 README「测量纪律」，此处为执行版）

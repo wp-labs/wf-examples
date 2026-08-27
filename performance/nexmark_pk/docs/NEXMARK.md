@@ -104,14 +104,15 @@ NEXMark 标准数据的要求，本实现（`wfgen gen-nexmark`）全部满足�
 - 与 `gen-nexmark` 相同的 30s 桶序喂入——与引擎 daemon 收到的帧序一致，窗口过期
   语义对拍才成立（每规则独立 CepStateMachine + RuleExecutor）。
 - 覆盖全部规则（含 q1 on-each / q11/q12/q14/q22 等早期模拟器未建模项）。
-- **已知差异**：Q19（stats 规则 oracle 未接入，标 ⚠ 不判失败）；q21 已随数据侧
-  `channel_id` 对齐（官方 95% 输出量）由 verify 覆盖。其余规则与引擎 EMIT 精确相等。
+- **已知差异**：Q12（fixed+close 尾桶收口，引擎实现面非确定，标 ⚠ 不判失败）；q21 已随
+  数据侧 `channel_id` 对齐（官方 95% 输出量）由 verify 覆盖。其余规则与引擎 EMIT 精确相等
+  （stats 规则 2026-08-27 起接入 oracle：q4b/q15~q19 10M 对拍逐条 identical）。
 - 对拍在 wfgen 内完成（`--engine-emit data`）：git-diff 同款分层（L1 哈希 →
   L2 Myers/降级 → L3 明细），退出码 0=一致 / 1=有差异。
 
 **各查询 30M 期望 / 实测 EMIT 状态**（Q1~Q22 全量 30M replay 全部 `[clean]`；
-Q8/Q9 已与 oracle 对拍一致，Q19 待 stats oracle 接入）：见
-`CAPABILITY_GAP_MATRIX.md` §一·§二（含已解决历史与 known-diff 登记）。
+Q8/Q9 已与 oracle 对拍一致，Q19 等 stats 规则已随 oracle stats 接入（2026-08-27）覆盖）：
+见 `CAPABILITY_GAP_MATRIX.md` §一·§二（含已解决历史与 known-diff 登记）。
 
 ### 5.2 数据完整性（`[clean]`）
 
@@ -124,9 +125,9 @@ Q8/Q9 已与 oracle 对拍一致，Q19 待 stats oracle 接入）：见
 - **30M**：与 ground truth 逐位比对（权威；`wfgen verify-nexmark` 覆盖全部规则）。
 - **100M**：EMIT 与 30M **同比例侧证**（历史例：q2=747,816 ≈ 30M 占比 0.8129%；
   q9=6,000,000 = 1.8M × 100/30）。
-- **特殊口径查询**（q11 per-shard 会话 / q12 处理时间近似 / q13 形状对齐 / Q19 stats
-  oracle 未接入）：以多轮端到端 EMIT 确定性 + `[clean]` 验证，已知差异见
-  `CAPABILITY_GAP_MATRIX.md` §一·§二（q21 已随 `channel_id` 对齐由 verify 覆盖）。
+- **特殊口径查询**（q11 per-shard 会话 / q12 处理时间近似 / q13 形状对齐）：以多轮
+  端到端 EMIT 确定性 + `[clean]` 验证，已知差异见 `CAPABILITY_GAP_MATRIX.md`
+  §一·§二（q21 已随 `channel_id` 对齐由 verify 覆盖；stats 规则已由 oracle 覆盖）。
 - **新旧二进制回归**：Q2/Q3/Q7/Q9 必须逐位一致；Q4/Q5 在**既存波动带**内（区间重叠
   而非单值相等）。
 
@@ -134,7 +135,8 @@ Q8/Q9 已与 oracle 对拍一致，Q19 待 stats oracle 接入）：见
 
 `bench.sh <q> replay 30m --verify`：`wfgen verify-nexmark --engine-emit data` 用真实
 规则引擎逐规则对拍引擎 EMIT（git-diff 同款分层：L1 哈希 → L2 Myers/降级 → L3 明细），
-退出码 0=一致 / 1=有差异（Q19 stats oracle 未接入 = known-diff ⚠ 不判失败）。逐 alert 明细对拍
+退出码 0=一致 / 1=有差异（Q12 fixed+close 尾桶 known-diff ⚠ 不判失败；stats 规则
+2026-08-27 起 oracle 已覆盖）。逐 alert 明细对拍
 （旧 28k 探针 `alerts.ndjson` 方案）随引擎 sink 改造已不再产生该文件，由计数级对拍替代。
 
 ### 5.5 已知波动（正确性的诚实边界）
