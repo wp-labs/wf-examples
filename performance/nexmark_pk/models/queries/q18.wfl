@@ -31,12 +31,16 @@ rule q18_last_bid_stats {
         request_count = 1
     )
     limits {
-        max_memory = "2GB"
+        // max_memory = 规则**总**驻留上限（2026-08-27 起, 非旧的每分片）——
+        // 10 分片共享 10GB。30M 状态 8.4GB < 10GB 全驻留（EPS 不塌）;
+        // 100M 状态 19.5GB → 9.5GB 落盘 spill → RSS ≈ 19GB（目标 ≤20GB）。
+        max_memory = "10GB"
         spill = "redb"
         // 规则级总落盘上限（2026-08-27 起）：同规则全部分片共享一个计数——
-        // 用户配的是规则总量（8GB 磁盘峰值, 不是旧的 8GB/片 × 10 = 80GB）。
-        // 实测 100M 稳态 spill ~2.1GB（10 片 × 2GB 内存上限的边缘失衡）, 8GB
-        // 留 ~4× 余量; 低于此值会触发拒收兜底 → 静默丢键（bench [clean] 不覆盖）。
-        max_spill_bytes = "8GB"
+        // 用户配的是规则总量（不是旧的 8GB/片 × 10 = 80GB）。**内存+落盘必须
+        // ≥ 状态总量**: 100M 全量 2937 万键 × ~960B = 28.2GB, 内存 10GB + 落盘
+        // 20GB = 30GB（留 1.8GB 余量）; 低于需求会拒收兜底 → 静默丢键
+        // （bench [clean] 不覆盖, 需对拍 EMIT 2937 万）。
+        max_spill_bytes = "20GB"
     }
 }
