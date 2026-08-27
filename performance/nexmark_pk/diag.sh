@@ -8,6 +8,13 @@
 #   diag.sh   = 诊断：墙梯逐段切除，出每段增量成本 + 墙判定（定位退化）
 #                （decode→floor→rules→full 四档；decode 为 2026-08-25 新增前序档）
 #
+# 内存诊断模式：MEMORY=1 ./diag.sh q13 30m
+#   - 默认不预热（WARMUP=0）：从空窗口开始测每档增量，避免预热档抬高基线
+#   - 分析器换 diag_mem_analyze.py：报告重心从吞吐墙切到**内存墙**——每档
+#     RSS 峰值增量定位内存增长段 + 成分分账（窗口 Σ/每窗明细/alloc commit/
+#     parse 在途/fanout 排队），回答「内存涨在哪一段、由什么构成」。
+#     输出 data/diag_mem_<q>_<total>.txt
+#
 # 机制：wfusion daemon --perf-diag conf/perf-diag-wall.toml（decode→floor→rules→full
 #       墙梯, 哨兵驱动自切换、单 daemon 不重启）+ wfgen perf-diag 驱动。decode =
 #       注入+解码（cut_append 窗口 append 前即丢）。设计见
@@ -22,6 +29,8 @@
 #   ./diag.sh [query=q1|q1,q5,q9|all] [total=1m|10m|30m]
 #
 # 环境变量:
+#   MEMORY=1           内存诊断模式：不预热（WARMUP=0）+ diag_mem_analyze.py
+#                      内存墙分析器（见脚本头注释）；输出 diag_mem_<q>_<total>.txt
 #   N_LIST=1m,10m       每档数据量（默认 = total）。多值 = **每值重启 daemon 跑一整套墙梯**
 #                       （单次 wfgen 调用里放多个 N 会让第 2+ 个 N 吃到下一档门控，见 §坑）
 #   STAGES=decode,floor,rules,full   自定义墙梯（默认用 conf/perf-diag-wall.toml）
@@ -57,7 +66,13 @@ TOTAL="${2:-10m}"
 
 PY="${PYTHON:-python3}"
 LIB="../scripts/bench_lib.py"          # 度量工具（comma/parse-n/diag-sampler）
-ANALYZER="../scripts/diag_analyze.py"  # 墙表 + 墙判定 + 健康分析
+# 内存诊断模式（MEMORY=1）：不预热 + 内存墙分析器（diag_mem_analyze.py）
+MEMORY="${MEMORY:-0}"
+if [ "$MEMORY" = "1" ]; then
+  ANALYZER="${ANALYZER:-../scripts/diag_mem_analyze.py}"
+else
+  ANALYZER="${ANALYZER:-../scripts/diag_analyze.py}"  # 墙表 + 墙判定 + 健康分析
+fi
 PORT=9800
 DATA_VER="${DATA_VER:-v5}"
 MAX_FRAME_BYTES="${MAX_FRAME_BYTES:-8388608}"
@@ -72,8 +87,10 @@ RULE="${RULE_PARALLELISM:-}"
 WINDOWS_SRC="models/schemas/windows.toml"
 CONF_TMP=/tmp/diag_conf.toml
 SAMPLES=/tmp/diag_samples.txt
+DIRTY_SAMPLES=/tmp/diag_dirty.txt
 DAEMON_PID=""
 SAMPLER_PID=""
+DIRTY_PID=""
 
 # ---- 二进制来源（与 bench.sh 同款：本地 release 优先，回退 PATH）----
 REPO="${REPO:-}"
@@ -149,14 +166,20 @@ for n in $N_ITEMS; do [ "$n" -gt "$N_MAX" ] && N_MAX="$n"; done
 
 # ---- 墙梯配置：默认 = conf/perf-diag-wall.toml 三档 + 预热档；STAGES/WARMUP 可调 ----
 # WARMUP 默认 1：不预热时首档的冷启动偏差会大于弱段的真实成本（实测墙梯倒挂）。
+# 内存模式默认 0：预热档会把窗口装满再测增量、抬高基线；EPS 冷启动偏差对内存分析无意义。
 DIAG_TOML="${DIAG_TOML:-conf/perf-diag-wall.toml}"
-WARMUP="${WARMUP:-1}"
+if [ "$MEMORY" = "1" ] && [ -z "${WARMUP:-}" ]; then
+  WARMUP=0
+else
+  WARMUP="${WARMUP:-1}"
+fi
 mkdir -p data
 if [ -n "${STAGES:-}" ] || [ "$WARMUP" = "1" ]; then
   LADDER="${STAGES:-$(grep '^name = ' "$DIAG_TOML" | sed 's/name = "\(.*\)"/\1/' | tr '\n' ',' | sed 's/,$//')}"
   DIAG_TOML=data/perf-diag-wall.toml
   : > "$DIAG_TOML"
   echo "# diag.sh 生成（ladder=${LADDER} warmup=${WARMUP}）——勿手改，改 STAGES/WARMUP 环境变量" >> "$DIAG_TOML"
+  echo "mem_sample = true  # diag.sh 生成默认开（footprint dirty 采样；关用 MEM_SAMPLE=0）" >> "$DIAG_TOML"
   # 预热档：全链路（不切）——把窗口缓冲/规则状态/输出链全部跑热，分析时丢弃本档。
   [ "$WARMUP" = "1" ] && printf '\n[[stages]]\nname = "warmup"\ncut_rules = false\ncut_output = false\nrules = ""\n' >> "$DIAG_TOML"
   for st in $(echo "$LADDER" | tr ',' ' '); do
@@ -165,14 +188,26 @@ if [ -n "${STAGES:-}" ] || [ "$WARMUP" = "1" ]; then
       decode) CR=false; CO=false; CA=true;  CRV=false; CSW=false;;
       floor)  CR=true;  CO=true;  CA=false; CRV=false; CSW=false;;
       rules)  CR=false; CO=true;  CA=false; CRV=false; CSW=false;;
-      emit)   CR=false; CO=false; CA=false; CRV=false; CSW=true;;
       full)   CR=false; CO=false; CA=false; CRV=false; CSW=false;;
-      *) echo "bad stage '$st'（recv|decode|floor|rules|emit|full）" >&2; exit 1;;
+      *) echo "bad stage '$st'（recv|decode|floor|rules|full）" >&2; exit 1;;
     esac
     printf '\n[[stages]]\nname = "%s"\ncut_rules = %s\ncut_output = %s\ncut_append = %s\ncut_recv = %s\ncut_sink_write = %s\nrules = ""\n' "$st" "$CR" "$CO" "$CA" "$CRV" "$CSW" >> "$DIAG_TOML"
   done
 fi
 [ -f "$DIAG_TOML" ] || { echo "错误: 墙梯配置 $DIAG_TOML 不存在" >&2; exit 1; }
+# 内存采样开关（perf-diag-wall.toml `mem_sample`，缺失/true = 开，默认开）：
+# footprint dirty 采样（真持有口径）→ 报告每档 DIRTY_peak。显式 false 或
+# 环境变量 MEM_SAMPLE=0 关闭（省 footprint spawn ~50% 核，非内存验证用）。
+MEM_SAMPLE="${MEM_SAMPLE:-}"
+if [ -z "$MEM_SAMPLE" ]; then
+  _MS=$(grep '^mem_sample' "$DIAG_TOML" | head -1 | sed 's/.*= *//' | tr -d '"' | tr '[:upper:]' '[:lower:]')
+  case "$_MS" in
+    true|1|yes|on) MEM_SAMPLE=1;;
+    false|0|no|off) MEM_SAMPLE=0;;
+    *) MEM_SAMPLE=1;;  # 缺失/未知 = 开
+  esac
+fi
+[ "$MEM_SAMPLE" = "1" ] && DIRTY_SAMPLES_PATH="$DIRTY_SAMPLES" || DIRTY_SAMPLES_PATH=""
 STAGE_NAMES=$(grep '^name = ' "$DIAG_TOML" | sed 's/name = "\(.*\)"/\1/' | tr '\n' ',' | sed 's/,$//')
 # cut_append/cut_recv 档（decode/recv 前序档）: 普通流不 append → appended 期望扣掉。
 APPEND_CUT_STAGES=$(awk -F'"' '/^name = /{n=$2} /cut_append = true/{print n} /cut_recv = true/{print n}' "$DIAG_TOML" | sort -u | tr '\n' ',' | sed 's/,$//')
@@ -209,7 +244,11 @@ if [ "$SPAN_SEC" -gt "$LATENESS_SEC" ] && [ "$LATENESS_FIX" = "1" ]; then
 fi
 
 CORES=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 0)
-echo "== diag: query=${QUERY} total=${TOTAL} n_list=$(echo "$N_ITEMS" | tr ' ' ',' | sed 's/^,//') stages=${STAGE_NAMES} cores=${CORES} =="
+if [ "$MEMORY" = "1" ]; then
+  echo "== mem-diag: query=${QUERY} total=${TOTAL} n_list=$(echo "$N_ITEMS" | tr ' ' ',' | sed 's/^,//') stages=${STAGE_NAMES} cores=${CORES}（内存墙：不预热，输出 diag_mem_*.txt）=="
+else
+  echo "== diag: query=${QUERY} total=${TOTAL} n_list=$(echo "$N_ITEMS" | tr ' ' ',' | sed 's/^,//') stages=${STAGE_NAMES} cores=${CORES} =="
+fi
 
 # ---- daemon 生命周期（与 bench.sh 同款纪律）----
 wait_port_free() {
@@ -227,6 +266,7 @@ kill_daemon() {
 }
 cleanup() {
   [ -n "$SAMPLER_PID" ] && kill "$SAMPLER_PID" 2>/dev/null
+  [ -n "$DIRTY_PID" ] && kill "$DIRTY_PID" 2>/dev/null
   pkill -9 -f "wfusion daemon" 2>/dev/null
   sleep 1; wait_port_free
 }
@@ -271,6 +311,15 @@ start_daemon() {
 start_sampler() {
   "$PY" "$LIB" diag-sampler "$1" "$SAMPLES" "$SAMPLE_MS" > /dev/null 2>&1 &
   SAMPLER_PID=$!
+}
+
+# 内存采样（footprint dirty，真持有口径）：输出 "epoch_ns dirty_mb"。
+# 由 perf-diag-wall.toml `mem_sample` 控制（默认开）；footprint spawn ~50% 核，
+# 关用 MEM_SAMPLE=0 或配置 mem_sample = false。非 macOS 无输出（分析器 n/a）。
+start_dirty_sampler() {
+  [ "$MEM_SAMPLE" = "1" ] || return 0
+  "$PY" "$LIB" footprint-sampler "$1" "$DIRTY_SAMPLES" 0.5 > /dev/null 2>&1 &
+  DIRTY_PID=$!
 }
 
 # ---- 帧文件：与 bench.sh 共享缓存 data/bench_<total>_<ver>.frames ----
@@ -327,9 +376,10 @@ run_ladder() {
   write_conf "$Q"
   # 哨兵文件必须在 daemon 启动**前**清空：daemon 启动即写 stage{current=0}，
   # 启动后再删会擦掉这行 → wfgen 首个 wait_for_stage 直接超时（设计文档 §7 坑）。
-  rm -f data/perf_sentinel.ndjson data/perf_diag_wall.txt data/metrics.ndjson data/wfusion.log "$SAMPLES"
+  rm -f data/perf_sentinel.ndjson data/perf_diag_wall.txt data/metrics.ndjson data/wfusion.log "$SAMPLES" "$DIRTY_SAMPLES"
   start_daemon "$LOG" || return 1
   start_sampler "$DAEMON_PID"
+  start_dirty_sampler "$DAEMON_PID"
 
   echo "  -- $Q · N=$(comma "$N") · 档=${STAGE_NAMES} · timeout=${T}s --"
   "$WFGEN" perf-diag --diag "$DIAG_TOML" --frames "$FRAMES" --addr "127.0.0.1:$PORT" \
@@ -339,6 +389,7 @@ run_ladder() {
   [ "$RC" = 0 ] || echo "    ⚠ wfgen perf-diag 退出码 ${RC}（报告按已落盘哨兵记录尽力分析）" >&2
 
   kill "$SAMPLER_PID" 2>/dev/null; wait "$SAMPLER_PID" 2>/dev/null; SAMPLER_PID=""
+  [ -n "$DIRTY_PID" ] && { kill "$DIRTY_PID" 2>/dev/null; wait "$DIRTY_PID" 2>/dev/null; DIRTY_PID=""; }
   sleep 2   # 让 metrics 最后一拍导出（report_interval=100ms）
   kill_daemon "$DAEMON_PID"; DAEMON_PID=""; wait_port_free
 
@@ -346,12 +397,14 @@ run_ladder() {
   # 引擎打印的窗口内存口径（诊断模式默认 60% 物理内存 / WF_DIAG_MAX_TOTAL_BYTES 可调）
   # 先剥 ANSI 色码再截到结构字段 ` window_mem_cap=` 前，兼容无括号的来源（如 =0 关闭覆盖）。
   local MEM_CAP; MEM_CAP=$(sed 's/\x1b\[[0-9;]*m//g' "$LOG" | grep -o 'perf-diag 内存口径: max_total_bytes=.* window_mem_cap=' | head -1 | sed -e 's/^perf-diag 内存口径: //' -e 's/ window_mem_cap=$//')
-  local CTX="p=${PARSE_EFF} r=${RULE_EFF} frame_mb=$((MAX_FRAME_BYTES/1048576)) span=${SPAN_SEC}s lateness=$([ "$WINDOWS_EFF" = "$WINDOWS_SRC" ] && echo "${LATENESS_SEC}s" || echo "$(( SPAN_SEC + 60 ))s*") load=${LD:-n/a}${MEM_CAP:+ · ${MEM_CAP}} · $(date +%m-%d_%H:%M:%S)"
+  local CTX; CTX="p=${PARSE_EFF} r=${RULE_EFF} frame_mb=$((MAX_FRAME_BYTES/1048576)) span=${SPAN_SEC}s lateness=$([ "$WINDOWS_EFF" = "$WINDOWS_SRC" ] && echo "${LATENESS_SEC}s" || echo "$(( SPAN_SEC + 60 ))s*") load=${LD:-n/a}${MEM_CAP:+ · ${MEM_CAP}} · $(date +%m-%d_%H:%M:%S)"
+  [ "$MEMORY" = "1" ] && CTX="mem-diagnose · ${CTX}"
   # 分析：独立脚本 diag_analyze.py（哨兵四元组 × CPU/RSS 采样 × metrics 健康），
   # 输入走环境变量；stdout = 报告，退出码 0=健康 / 1=硬失败。
   N="$N" CTX="$CTX" QUERY="$Q" RULES_COUNT="$(grep -c '^rule ' "models/queries/$Q.wfl")" \
   STAGE_NAMES="$STAGE_NAMES" APPEND_CUT_STAGES="$APPEND_CUT_STAGES" CORES="$CORES" \
   SENT_PATH="data/perf_sentinel.ndjson" SAMPLES_PATH="$SAMPLES" \
+  DIRTY_SAMPLES_PATH="$DIRTY_SAMPLES_PATH" \
   METRICS_PATH="data/metrics.ndjson" LOG_PATH="$LOG" \
   STREAMS="auction_events,bid_events,person_events" FAM_COUNTS="" \
     "$PY" "$ANALYZER" | tee -a "$OUT"
@@ -363,6 +416,7 @@ ensure_frames || exit 1
 FAILED=0
 for Q in $QUERIES; do
   OUT="data/diag_${Q}_${TOTAL}.txt"
+  [ "$MEMORY" = "1" ] && OUT="data/diag_mem_${Q}_${TOTAL}.txt"
   : > "$OUT"
   for N in $N_ITEMS; do
     run_ladder "$Q" "$N" "$OUT" || FAILED=1

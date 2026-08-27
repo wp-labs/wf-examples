@@ -310,6 +310,38 @@ def diag_sampler(pid, out_path, interval_ms=100):
             time.sleep(interval)
 
 
+def footprint_sampler(pid, out_path, interval_s=1.0):
+    """采样进程 dirty 物理内存（macOS `footprint`），输出 "epoch_ns dirty_mb"。
+
+    - RSS 含分配器页表保留（释放未归还），波动大（q13 实测 5-14G）；dirty 是
+      物理真持有（跑批中 7-10G、稳态 5.6G 稳定）——内存判据用 dirty。
+    - epoch_ns 与哨兵 start_ns/emit_ns 同域，分析脚本按档区间切分。
+    - ⚠ `footprint` 每次 spawn 0.3-0.5s（1s 周期 ≈ 50% 核）——只在内存验证时
+      开（perf-diag-wall.toml `mem_sample = true`），勿常驻污染 bench 结果。
+    - 非 macOS / footprint 缺失 → 静默无输出（分析器缺列 → n/a，graceful）。
+    """
+    pid = int(pid)
+    interval = max(float(interval_s), 0.5)
+    units = {"": 1, "K": 1024, "M": 1024 ** 2, "G": 1024 ** 3, "T": 1024 ** 4}
+
+    def footprint_mb():
+        try:
+            r = subprocess.run(["footprint", str(pid)], capture_output=True, text=True)
+            m = re.search(r"Footprint:\s*([\d.]+)\s*([KMGT]?)B", r.stdout)
+            if not m:
+                return None
+            return int(float(m.group(1)) * units[m.group(2)]) // (1024 ** 2)
+        except Exception:
+            return None
+
+    with open(out_path, "w") as out:
+        while True:
+            d = footprint_mb()
+            if d is not None:
+                print(f"{int(time.time() * 1e9)} {d}", file=out, flush=True)
+            time.sleep(interval)
+
+
 # ---------------------------------------------------------------------------
 # CLI 分派
 # ---------------------------------------------------------------------------
@@ -348,6 +380,8 @@ def main():
         rss_sampler(a[0], a[1], float(a[2]) if len(a) > 2 else 1.0)
     elif cmd == "diag-sampler" and len(a) >= 2:
         diag_sampler(a[0], a[1], float(a[2]) if len(a) > 2 else 100.0)
+    elif cmd == "footprint-sampler" and len(a) >= 2:
+        footprint_sampler(a[0], a[1], float(a[2]) if len(a) > 2 else 1.0)
     else:
         print(__doc__)
         sys.exit(2)

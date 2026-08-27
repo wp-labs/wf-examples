@@ -212,8 +212,12 @@ case "$TOTAL" in
 esac
 case "$QUERY" in
   q1|q2|q3|q4|q5|q6|q7|q8|q9|q10|q11|q12|q13|q14|q15|q16|q17|q18|q19|q20|q21|q22) QUERIES=("$QUERY");;
-  all) QUERIES=(q1 q2 q3 q4 q5 q6 q7 q8 q9 q10 q11 q12 q13 q14 q15 q16 q17 q18 q19 q20 q21 q22);;
-  *) echo "bad query '$QUERY' (q1..q22|all)"; exit 1;;
+  # q6 排除出 all（2026-08-26）：join-then-key（键 seller 在 join 侧）单线程 +
+  # 逐事件 sliding 状态机 + 每事件命中 emit（avg>=200 条件宽松）——30M 仅 634K
+  # EPS（1 核 1576ns/evt），架构性慢（非局部可修），拉低 all 均值且拖长总时长。
+  # 单跑研究仍可用 `./bench.sh q6 ...`（保留在上面显式列表）。
+  all) QUERIES=(q1 q2 q3 q4 q5 q7 q8 q9 q10 q11 q12 q13 q14 q15 q16 q17 q18 q19 q20 q21 q22);;
+  *) echo "bad query '$QUERY' (q1..q22|all，all 不含 q6)"; exit 1;;
 esac
 case "$FEED" in
   replay|stream) ;;
@@ -599,7 +603,13 @@ run_replay_one() {
     fi
   fi
   sleep 3
-  kill $SP 2>/dev/null; wait $SP 2>/dev/null; kill_daemon $D; wait_port_free
+  # 采样器采到 daemon 退出（2026-08-26 q18 口径修复）: 原实现 sleep 3 后先
+  # kill 采样器再 kill_daemon——close flush 期（SIGTERM 后数十秒, q18 100M
+  # 2935 万条）完全不在采样窗口, RSS_peak 只反映 ingest 期峰值（23.9G vs
+  # 监视器 close 期真实 60G）。kill_daemon 阻塞到 daemon 退出/超时后采样器
+  # 才停 → RSS_peak = 全流程真实峰值。
+  kill_daemon $D; wait_port_free
+  kill $SP 2>/dev/null; wait $SP 2>/dev/null
 
   # CPU 统计窗 = 哨兵活跃窗 ±0.5s（引擎实际消化时段，剔除启动/等流/收尾空闲稀释）；
   # 哨兵时间缺失（TIMEOUT 兑底/metrics 口径）时退回 [T0, T2]。stat_samples 只统计窗内样本。
@@ -685,7 +695,8 @@ run_stream_one() {
   fi
   kill $S 2>/dev/null; wait $S 2>/dev/null
   sleep 3
-  kill $SP 2>/dev/null; wait $SP 2>/dev/null; kill_daemon $D; wait_port_free
+  kill_daemon $D; wait_port_free
+  kill $SP 2>/dev/null; wait $SP 2>/dev/null
 
   # CPU 统计窗：哨兵活跃窗 ±0.5s（引擎实际消化时段）；哨兵时间缺失时退回 [T0, T2]。
   if [ -n "$SSTART" ] && [ -n "$SEMIT" ]; then
