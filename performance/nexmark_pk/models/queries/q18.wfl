@@ -30,5 +30,13 @@ rule q18_last_bid_stats {
         detail = fmt("{} {} {} {} {}", b.bidder, b.price, b.channel, b.url, b.dateTime),
         request_count = 1
     )
-    limits { max_memory = "1GB"; spill = "redb"; max_spill_bytes = "8GB" }
+    limits {
+        max_memory = "2GB"
+        spill = "redb"
+        // 规则级总落盘上限（2026-08-27 起）：同规则全部分片共享一个计数——
+        // 用户配的是规则总量（8GB 磁盘峰值, 不是旧的 8GB/片 × 10 = 80GB）。
+        // 实测 100M 稳态 spill ~2.1GB（10 片 × 2GB 内存上限的边缘失衡）, 8GB
+        // 留 ~4× 余量; 低于此值会触发拒收兜底 → 静默丢键（bench [clean] 不覆盖）。
+        max_spill_bytes = "8GB"
+    }
 }
