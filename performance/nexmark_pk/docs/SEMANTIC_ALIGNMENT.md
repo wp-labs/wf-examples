@@ -81,7 +81,7 @@ wfgen verify-nexmark <N> --query qN
 |---|---|---|
 | Q3 | `category=10` 过滤下推 + snapshot join + join 后 `state∈(OR,ID,CA)` 过滤 | join 方向（person 不进规则管道）、快照 miss 不 drop（NEXMark 无 miss 实践等价）、alert 不携带 name/city/state；**30M 对拍 −16%（2026-08-24，规模相关 bug 待查）** |
 | Q9 | deferred `reduce maxrow(price) tie(dateTime asc) within [a.dateTime,a.expires] emit at a.expires`（= ROW_NUMBER 胜者） | 旧 seller 计数面已废；无 bid 不输出；每 auction 至多一条；30M 对拍 identical（D4 保留 pin 修复后） |
-| Q4 | 双规则链：deferred reduce maxrow → 中间窗 `auction_finals` → stats avg（avg-of-max） | 外层 stats oracle 未接入（known-diff）；旧 join-then-key 单链面已废 |
+| Q4 | 双规则链：deferred reduce maxrow → 中间窗 `auction_finals` → stats avg（avg-of-max） | 外层 stats oracle 已接入（2026-08-27，10M 对拍一致）；旧 join-then-key 单链面已废 |
 | Q12 | bidder × 10s fixed count（Processing Time Windows 的事件时间近似） | fixed+close 收口非确定（10M 差 1.1%，见 §6.1）；全量输出是 Flink 语义固有成本 |
 | Q22 | url `split('/')` + `mvindex` 3/4/5 投影（数据侧 url 已改官方格式） | `let` 绑定避免重复 split（30M EPS 7.7M）；mvindex/concat 仍 ~5 次小分配/事件 |
 | Q21 | `channel_id` 数据侧计算 + `on each` 投影（wfl 无 CASE WHEN/正则） | 值等价官方 SQL；若 wfl 支持正则可改规则内计算对齐「计算位置」 |
@@ -89,7 +89,7 @@ wfgen verify-nexmark <N> --query qN
 ## 6. 未对齐查询的处理原则
 
 - **q6**：白皮书未发布基线，仅自测，PK 表不列倍数。
-- **q4**：已对齐（avg-of-max 双规则链，见 §4）；外层 stats oracle 未接入为 known-diff。
+- **q4**：已对齐（avg-of-max 双规则链，见 §4）；外层 stats oracle 已接入（2026-08-27）。
 - **q9**：已对齐（deferred reduce，见 §4）；旧 seller 计数的 PK 倍数（261×/30×）作废。
 - 对齐状态变更（如 q9 修复）后，须更新本文状态表 + `OSS_VVR_BASELINE.md` 对应行，
   并重跑验证工作流（§3）。
