@@ -131,8 +131,8 @@ def iter_metrics():
 # ---------------------------------------------------------------------------
 family_mode = any(s.startswith("fam_") for s in STAGE_NAMES)
 who = "qradar_pk" if (QUERY or "").startswith("qradar") else "nexmark_pk"
-head = ["档", "EPS", "耗时", "ns/事件", "增量ns", "占全链", "CPU%avg/max", "RSS_peak", "DIRTY_peak", "样本"]
-fmt = "%-9s %13s %9s %11s %10s %8s %14s %11s %11s %6s"
+head = ["档", "EPS", "耗时", "ns/事件", "增量ns", "占全链", "CPU%avg/max", "CPU核·s", "RSS_peak", "DIRTY_peak", "样本"]
+fmt = "%-9s %13s %9s %11s %10s %8s %14s %8s %11s %11s %6s"
 print("")
 title = "== %s 性能墙定位 · %s" % (who, QUERY or "?")
 title += " · N=%s" % format(N_REQ, ",")
@@ -164,6 +164,9 @@ for k, name in enumerate(STAGE_NAMES):
     eps, ns_per_ev = n * 1e9 / dt, dt / n
     st = window_stats(s, e)
     cpu_s = "%d/%d" % (st[1], st[2]) if st else "n/a"
+    # CPU核·s = avg% × 时长（核·秒）——EPS 被帧页缓存/外部负载污染时的负载稳健口径
+    # （同查询前后对照看 CPU 工作量而非 EPS；q5 H1 验证：CPU 工作量 -7~9% 而 EPS 在噪声内）。
+    work_s = "%.1f" % (st[1] / 100.0 * dt / 1e9) if st else "n/a"
     rss_s = "%s MB" % format(st[0], ",") if st else "n/a"
     dirty = dirty_peak(s, e)
     dirty_s = "%s MB" % format(dirty, ",") if dirty else "n/a"
@@ -178,13 +181,14 @@ for k, name in enumerate(STAGE_NAMES):
     # 家族档非叠加：增量一律相对 floor；叠加式墙梯：增量相对上一档
     base = floor_ns if (family_mode and name.startswith("fam_")) else prev_ns
     delta = None if base is None else ns_per_ev - base
-    print("%-9s %13s %8.3fs %11.1f %10s %8s %14s %11s %11s %6s" % (
+    print("%-9s %13s %8.3fs %11.1f %10s %8s %14s %8s %11s %11s %6s" % (
         name, format(int(eps), ","), dt / 1e9, ns_per_ev,
         "—" if delta is None else "+%.1f" % delta if delta >= 0 else "%.1f" % delta,
         "—" if delta is None or ns_per_ev <= 0 else "%.1f%%" % (delta / ns_per_ev * 100),
-        cpu_s, rss_s, dirty_s, cnt_s))
+        cpu_s, work_s, rss_s, dirty_s, cnt_s))
     rows.append({"name": name, "eps": eps, "dt": dt / 1e9, "ns": ns_per_ev,
                  "delta": delta, "cpu": st[1] if st else None,
+                 "cpu_work": st[1] / 100.0 * dt / 1e9 if st else None,
                  "rss_peak": st[0] if st else None, "samples": st[3] if st else 0})
     prev_ns = ns_per_ev
 
@@ -218,6 +222,12 @@ else:
             kind = "混合墙：部分并行未打满（CPU %.0f%%）" % (ratio * 100)
             next_step = "→ 下一步：确认并行度作用域（source 实例/规则 worker），再做 CPU 采样"
         print("   └ CPU %d%% 平均（%d 核 = %.0f%% 占用）→ %s；%s" % (top["cpu"], CORES, ratio * 100, kind, next_step))
+        # CPU 工作量（核·s）= 负载稳健口径：EPS 受帧页缓存/外部负载/网络污染，前后对照
+        # 看工作量而非 EPS（q5 H1 验证：工作量 -7~9% 而 EPS 在单次噪声内）。
+        if top.get("cpu_work") is not None:
+            per_ev = top["cpu_work"] / (N_REQ or 1)
+            print("   └ 主墙 CPU 工作量 %.1f 核·s（每事件 %.2f µs·核）——同查询前后对照以本列为准（负载稳健）" % (
+                top["cpu_work"], per_ev * 1e6))
     else:
         print("   └ CPU 归属 n/a（该档过短或采样不足）→ 增大 N 或调小 SAMPLE_MS")
     # 等墙细分：低 CPU 时区分「数据在窗口堆积（窗口/join 容量）」vs「供给侧不足」
