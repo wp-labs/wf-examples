@@ -188,8 +188,9 @@ if [ -n "${STAGES:-}" ] || [ "$WARMUP" = "1" ]; then
       decode) CR=false; CO=false; CA=true;  CRV=false; CSW=false;;
       floor)  CR=true;  CO=true;  CA=false; CRV=false; CSW=false;;
       rules)  CR=false; CO=true;  CA=false; CRV=false; CSW=false;;
+      emit)   CR=false; CO=false; CA=false; CRV=false; CSW=true;;
       full)   CR=false; CO=false; CA=false; CRV=false; CSW=false;;
-      *) echo "bad stage '$st'（recv|decode|floor|rules|full）" >&2; exit 1;;
+      *) echo "bad stage '$st'（recv|decode|floor|rules|emit|full）" >&2; exit 1;;
     esac
     printf '\n[[stages]]\nname = "%s"\ncut_rules = %s\ncut_output = %s\ncut_append = %s\ncut_recv = %s\ncut_sink_write = %s\nrules = ""\n' "$st" "$CR" "$CO" "$CA" "$CRV" "$CSW" >> "$DIAG_TOML"
   done
