@@ -30,5 +30,5 @@ rule q18_last_bid_stats {
         detail = fmt("{} {} {} {} {}", b.bidder, b.price, b.channel, b.url, b.dateTime),
         request_count = 1
     )
-    limits { max_memory = "256MB"; spill = "redb"; max_spill_bytes = "8GB" }
+    limits { max_memory = "1GB"; spill = "redb"; max_spill_bytes = "8GB" }
 }

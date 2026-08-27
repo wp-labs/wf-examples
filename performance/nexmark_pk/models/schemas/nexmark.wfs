@@ -7,7 +7,10 @@
 //   （v5 span = count×100µs：10m=1000s、30m=3000s < 1h ✓）。30M 是正确性
 //   量级；100M span 2h46m > 1h 时 snapshot join 的老实体行会被驱逐（性能
 //   量级口径接受，q3/q6/q20 已知偏差）。
-// - bid 窗 over=30m（2026-08-25 从 1h 调小）：唯一把 bid 当 join 目标的
+// - bid 窗 over=15m（2026-08-27 从 30m 调小——q18 100M RSS 30.3→28.0GB，
+//   省 2.2GB；再调 5m 无额外收益（窗口驻留仅 0.57GB，非大头）；over 是纯
+//   内存参数（评估 gate + D4 pin 已闭环正确性，见下），调小只减内存。
+//   唯一把 bid 当 join 目标的
 //   deferred join（q4a/q9）。正确性由两层保证：运行期评估 gate（评估前沿 =
 //   目标窗 append 位置，目标追平 expiry 才评估，右行年龄 ≈ 0）+ D4 保留 pin
 //   闭环到时间驱逐（挂起实例需要 [lo,hi] 内的右行，over 再小也不删）。
@@ -52,7 +55,7 @@ window auction_events {
 window bid_events {
     stream_tag = "bid_events"
     time = dateTime
-    over = 30m
+    over = 15m
     fields {
         auction: digit
         bidder: digit
