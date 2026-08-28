@@ -22,17 +22,23 @@
 # - **引擎 EMIT 计数取 metrics.ndjson 的 emitted_total**（规则任务 join 后导出，
 #   权威口径，与 bench.sh --verify 一致）；data/alerts/benchmark.ndjson 是输出文件实测
 #   （用户要求的验证对象），两者交叉检查。
-# - **已知尾批丢失**：文件 sink 关机时最后 ≤2 个未满 alert 批不落盘（实测 q1 单跑
-#   metrics=920000 vs 文件=917469，多轮逐字节一致 —— sink 消费者取消时序所致，非规则
-#   问题）。故 oracle 对拍以 metrics 口径为准；文件输出缺额 = 尾批丢失，报告 ⚠ 不判失败。
-# - **引擎快速重放非确定（2026-08-28 1M 全量扫描实测）**：batch 自动关机（接收器完
-#   成即 cancel）与规则尾收口存在竞态，部分查询偶发/恒差少量记录（metrics 口径 vs
-#   oracle，非文件 sink 问题）——脚本如实报 FAIL，属引擎待修项，非规则逻辑错：
-#     q3  auction_seller 尾部 close 丢 0~7（6060↔6053，flaky）
-#     q5/q7  尾桶 close 恒差 1（51→50 / 10→9）
-#     q13  bid_mod→q13b 中间管道消费竞态丢 0~7%（flaky，rule_parallelism=1 时丢 ~96%）
-#     q20  snapshot join 可见性竞态丢 3~4%（flaky）
-#   其余查询（q1/q2/q4/q6/q8/q9/q10/q11/q12/q14/q15/q16/q17/q18/q19/q21/q22）
+# - **已知尾批丢失 —— 已修复（wp-reactor 2026-08-28）**：文件 sink 关机时最后
+#   未满 alert 批不落盘（q1 恒缺 2531/920000）。根因：on-each 规则（无 match 状态机、
+#   无 deferred）的 `flush()` 提前 return，从不调用 `flush_alerts()`，最后 <4096 条的
+#   未满批留在 pending builder 被丢弃。修复：`flush()` 对 on-each 规则也补
+#   flush_alerts + flush_pipes（wf-runtime/engine_task/rule_task.rs），回归测试
+#   `flush_on_each_rule_drains_partial_pending_batch`。修复后 q1/q10/q14/q21/q22
+#   文件计数 = 指标计数 = oracle，无缺额。
+# - **q13 中间管道消费竞态 —— 已修复（wp-reactor 2026-08-28）**：消费者（q13b）
+#   cancel 时生产者（q13a flush_pipes 广播）可能晚于首次 drain 后通道为空才投递；
+#   旧 `if rx.is_empty() break` 提前退出 → 尾部批次被丢。修复：push loop cancel 分支
+#   改为截止时间（1s）驱动的持续消费（wf-runtime/engine_task/mod.rs）。
+# - **引擎快速重放非确定（剩余已知项，2026-08-28 1M 全量扫描）**：batch 自动关机与
+#   规则尾收口/分片路径存在既有竞态，以下查询如实报 FAIL，属引擎待修项，非规则逻辑错：
+#     q3  auction_seller 尾部 close 丢 0~7（6060↔6052，flaky）
+#     q5/q7  尾桶 close 恒差 1（51→50 / 10→9，尾窗口边界）
+#     q20  snapshot join 分片路径丢 3~4%（flaky；rule_parallelism=1 时与 oracle 完全一致）
+#   其余查询（q1/q2/q4/q6/q8/q9/q10/q11/q12/q13/q14/q15/q16/q17/q18/q19/q21/q22）
 #   逐轮与 oracle 一致 ✅。
 # - **q12** 已知差异（fixed+close 收口，oracle 理想值）由 verify-nexmark 内置 known
 #   列表处理：报告 ⚠ 但不判失败。

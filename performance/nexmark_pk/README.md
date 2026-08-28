@@ -142,11 +142,13 @@ MAX_FRAME_BYTES=1048576 ./bench.sh all replay 30m    # 指定帧 cap（默认 8M
   q8 7565→1、q11 17081→118234），单规则保真。
 - **双口径**：oracle 对拍以 `metrics.ndjson` 的 `emitted_total` 为权威引擎计数（规则任务
   join 后导出，与 bench.sh 一致）；`benchmark.ndjson` 文件计数作一致性交叉检查。
-- **已知尾批丢失**：文件 sink 关机时最后 ≤2 个未满 alert 批不落盘（实测 q1 恒缺 2531/920000），
-  报告 ⚠ 不判失败；缺额 >1% 标 ⚠⚠。
-- **引擎快速重放非确定（2026-08-28 1M 扫描）**：batch 自动关机与规则尾收口竞态，q3/q5/q7
-  （尾部 close 丢 0~7 条）、q13（中间管道消费，flaky 0~7%）、q20（join 可见性 3~4%）如实报
-  FAIL —— 属引擎待修项，非规则逻辑错；其余 17 条逐轮与 oracle 一致 ✅。
+- **尾批丢失已修复（wp-reactor 2026-08-28）**：on-each 规则关机不再丢最后未满批
+  （`flush()` 补 flush_alerts）+ q13 中间管道消费竞态修复（push loop cancel 改为 1s
+  截止时间驱动）——修复后 q1/q10/q14/q21/q22 文件计数与指标完全一致；交叉检查保留作
+  回归守卫（缺额 >1% 标 ⚠⚠）。
+- **引擎快速重放非确定（剩余已知项，2026-08-28 1M 扫描）**：q3/q5/q7（尾窗口 close
+  边界，丢 0~7 条）、q20（snapshot join 分片路径 3~4%，单 worker 时与 oracle 一致）
+  如实报 FAIL —— 属引擎待修项，非规则逻辑错；其余 18 条逐轮与 oracle 一致 ✅。
 
 ## 性能墙定位工具：diag.sh
 
