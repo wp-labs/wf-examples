@@ -18,32 +18,34 @@ OUT_DIR = os.path.dirname(os.path.abspath(__file__))
 # ----------------------------------------------------------------------------
 # 1. PK 主表：2026-08-27 Linux 100M（21 查询，v2.0.7，21/21 clean）
 #    (q, 语义, wf_eps, oss_rps, vvr_rps, vs_oss, vs_vvr, rss_mb)
-#    vs_oss / vs_vvr 取自 BENCH_RESULTS.md §「2026-08-27 Linux 100M」PK 对照表
-#    oss_rps / vvr_rps 取自 OSS_VVR_BASELINE.md 白皮书固定基线（与轮次无关）
+#    wf_eps / rss_mb 取自 BENCH_RESULTS.md §「2026-08-27 Linux 100M 复跑（晚间，负载干净）」
+#    —— 早间轮后段 load 爬升（q18 时 58.2）压低 q15/q16/q17，文档明示「以复跑为准」，
+#       故 PK 主表采用复跑（负载干净）数字。
+#    vs_oss / vs_vvr 由 wf_eps ÷ 白皮书基线计算（OSS_VVR_BASELINE.md 固定值，与轮次无关）
 #    q13 白皮书未发布基线 -> None；q6 已移出 all 套件，不计入主表
 # ----------------------------------------------------------------------------
 BASE = [
-    ("q1",  "无状态投影（货币换算 0.908×price + 过滤）", 15621205, 1753002, 4381353, 8.91, 3.57, 4190),
-    ("q2",  "选择（MOD(auction,123)=0 的 bid）",          28345809, 1927154, 6568576, 14.71, 4.32, 4300),
-    ("q3",  "按州过滤（IN OR/ID/CA）",                     21320217, 1176664, 4638649, 18.12, 4.60, 5239),
-    ("q4",  "分类均价（累积窗口 deferred reduce + stats）", 3754758, 180693, 636468, 20.78, 5.90, 13696),
-    ("q5",  "热门新商品（HOP 10s/2s + top_ties(1)）",      2305542, 273496, 279684, 8.43, 8.24, 13577),
-    ("q7",  "时段最高出价（match<auction:10s> + top_ties）", 9522424, 79526, 299547, 119.74, 31.79, 4203),
-    ("q8",  "新用户 + 其拍卖（TUMBLE deferred join）",      29553370, 1253321, 3340125, 23.58, 8.85, 5221),
-    ("q9",  "中标出价（asof deferred reduce join）",        7774233, 43020, 375146, 180.71, 20.72, 7354),
-    ("q10", "全量 bid 按时间分区落盘（每 bid 一行）",       17379758, 526357, 1953049, 33.02, 8.90, 4219),
-    ("q11", "用户会话统计（session 窗口 + 分片）",          10420884, 244868, 685011, 42.56, 15.21, 4080),
-    ("q12", "每 bidder × 10s 处理时间窗计数",              10315778, 822680, 2703360, 12.54, 3.82, 4109),
-    ("q13", "有界侧输入 join（snapshot join，重写后 O(1)）", 8165854, None, None, None, None, 5091),
-    ("q14", "时间戳换算 + 价格过滤（Calculation）",         8867337, 1451316, 4997002, 6.11, 1.77, 4213),
-    ("q15", "日历天出价统计（stats + 1d 桶）",              6568803, 544339, 2340057, 12.07, 2.81, 5646),
-    ("q16", "日历天渠道统计（stats + 1d 桶）",              4243485, 108980, 296478, 38.94, 14.31, 7607),
-    ("q17", "日历天拍卖统计（stats + 1d 桶）",              4127814, 972318, 3693308, 4.25, 1.12, 19361),
-    ("q18", "每 (bidder,auction) 最后一条 bid（stats last）", 2902069, 173928, 1038044, 16.69, 2.80, 30055),
-    ("q19", "拍卖 Top-10 价格（stats<> top-N）",           7293694, 170565, 1051293, 42.76, 6.94, 6421),
-    ("q20", "展开 bid 关联 auction（snapshot join + where）", 17098156, 74591, 431999, 229.23, 39.58, 8187),
-    ("q21", "附加 channel id（热通道映射 + cold url）",     13884112, 786850, 2519336, 17.65, 5.51, 4293),
-    ("q22", "URL 目录投影",                                 10242382, 1054519, 3202254, 9.71, 3.20, 4500),
+    ("q1",  "无状态投影（货币换算 0.908×price + 过滤）", 16850363, 1753002, 4381353, 9.62, 3.85, 4185),
+    ("q2",  "选择（MOD(auction,123)=0 的 bid）",          31078008, 1927154, 6568576, 16.13, 4.73, 4285),
+    ("q3",  "按州过滤（IN OR/ID/CA）",                     22183478, 1176664, 4638649, 18.84, 4.79, 5219),
+    ("q4",  "分类均价（累积窗口 deferred reduce + stats）", 3738638, 180693, 636468, 20.69, 5.87, 18459),
+    ("q5",  "热门新商品（HOP 10s/2s + top_ties(1)）",      1998737, 273496, 279684, 7.31, 7.15, 13546),
+    ("q7",  "时段最高出价（match<auction:10s> + top_ties）", 9293974, 79526, 299547, 116.74, 31.03, 4067),
+    ("q8",  "新用户 + 其拍卖（TUMBLE deferred join）",      28969548, 1253321, 3340125, 23.12, 8.67, 5264),
+    ("q9",  "中标出价（asof deferred reduce join）",        7962629, 43020, 375146, 185.08, 21.22, 7208),
+    ("q10", "全量 bid 按时间分区落盘（每 bid 一行）",       17299653, 526357, 1953049, 32.82, 8.85, 4245),
+    ("q11", "用户会话统计（session 窗口 + 分片）",          10854288, 244868, 685011, 44.36, 15.84, 4085),
+    ("q12", "每 bidder × 10s 处理时间窗计数",              10892485, 822680, 2703360, 13.23, 4.03, 4108),
+    ("q13", "有界侧输入 join（snapshot join，重写后 O(1)）", 8202970, None, None, None, None, 4912),
+    ("q14", "时间戳换算 + 价格过滤（Calculation）",         8798983, 1451316, 4997002, 6.06, 1.76, 3994),
+    ("q15", "日历天出价统计（stats + 1d 桶）",              7385812, 544339, 2340057, 13.57, 3.15, 5561),
+    ("q16", "日历天渠道统计（stats + 1d 桶）",              5924391, 108980, 296478, 54.36, 19.96, 7470),
+    ("q17", "日历天拍卖统计（stats + 1d 桶）",              8363724, 972318, 3693308, 8.60, 2.26, 18068),
+    ("q18", "每 (bidder,auction) 最后一条 bid（stats last）", 3092075, 173928, 1038044, 17.78, 2.98, 28614),
+    ("q19", "拍卖 Top-10 价格（stats<> top-N）",           7859815, 170565, 1051293, 46.08, 7.48, 6620),
+    ("q20", "展开 bid 关联 auction（snapshot join + where）", 17272687, 74591, 431999, 231.49, 39.98, 8046),
+    ("q21", "附加 channel id（热通道映射 + cold url）",     13666841, 786850, 2519336, 17.38, 5.43, 4219),
+    ("q22", "URL 目录投影",                                 10328808, 1054519, 3202254, 9.79, 3.23, 4305),
 ]
 
 # 自动计算的关键数字（避免硬编码漂移）
@@ -59,11 +61,22 @@ CALC = {
     "rss_hi_v": max(b[7] for b in BASE),
     "n_base": len(_base_with),
     "n_total": len(BASE),
+    # VVR 相对 OSS 的平均倍数（每查询 vvr_rps/oss_rps）
+    "vvr_over_oss_avg": sum(b[4] / b[3] for b in _base_with) / len(_base_with),
+    "vvr_over_oss_geo": __import__("math").exp(
+        sum(__import__("math").log(b[4] / b[3]) for b in _base_with) / len(_base_with)),
+    # wfusion 相对 OSS / VVR 的平均倍数（每查询 vs_oss / vs_vvr）
+    "wf_over_oss_avg": sum(b[5] for b in _base_with) / len(_base_with),
+    "wf_over_oss_geo": __import__("math").exp(
+        sum(__import__("math").log(b[5]) for b in _base_with) / len(_base_with)),
+    "wf_over_vvr_avg": sum(b[6] for b in _base_with) / len(_base_with),
+    "wf_over_vvr_geo": __import__("math").exp(
+        sum(__import__("math").log(b[6]) for b in _base_with) / len(_base_with)),
 }
 
 # ----------------------------------------------------------------------------
 # 2. 同机规模缩放（2026-08-27 Linux 同机 30M vs 100M，21 查询）
-#    (q, eps_30m) —— 用于 §5 规模缩放观测（比值 = 100M / 30M）
+#    (q, eps_30m) —— 用于 §5(MD)/§6(HTML) 规模缩放观测（比值 = 100M / 30M）
 # ----------------------------------------------------------------------------
 SCALE30 = {
     "q1": 12633621, "q2": 29503249, "q3": 22750096, "q4": 3990030, "q5": 3433159,
@@ -72,20 +85,6 @@ SCALE30 = {
     "q17": 6274551, "q18": 9086465, "q19": 8225134, "q20": 17770339, "q21": 14008303,
     "q22": 10299910,
 }
-
-# ----------------------------------------------------------------------------
-# 3. 跨机一致性验证（2026-08-25 Mac 10 核常载，100M 无状态查询子集，7 查询）
-#    (q, wf_eps, oss_rps, vvr_rps, vs_oss, vs_vvr)
-# ----------------------------------------------------------------------------
-MAC100 = [
-    ("q1",  9203143, 1753002, 4381353, 5.25, 2.10),
-    ("q2",  11241238, 1927154, 6568576, 5.83, 1.71),
-    ("q3",  9082100, 1176664, 4638649, 7.72, 1.96),
-    ("q10", 9722892, 526357, 1953049, 18.47, 4.98),
-    ("q14", 5994744, 1451316, 4997002, 4.13, 1.20),
-    ("q21", 9150195, 786850, 2519336, 11.63, 3.63),
-    ("q22", 5153313, 1054519, 3202254, 4.89, 1.61),
-]
 
 # 历史跑批汇总（附录 B）已按需求移除：不呈现内部跑批演进史。
 
@@ -118,7 +117,7 @@ def render_md():
     L.append("## 0. 摘要\n")
     L.append(f"- **相对 OSS Flink**：{c['n_base']}/{c['n_base']} 有基线查询 **{c['oss_min']:.2f}×–{c['oss_max']:.2f}× 全面领先**。\n")
     L.append(f"- **相对 VVR**：{c['n_base']}/{c['n_base']} 有基线查询 **全部达 VVR**，倍数 **{c['vvr_min']:.2f}×–{c['vvr_max']:.2f}×**。\n")
-    L.append(f"- **⚠ 口径声明**：wfusion 与 VVR 使用**相同型号云服务器**，残余不对等仅剩计算资源计量口径（8 核 vs 8CU，OSS 3×12vCPU）；数据规模已对齐 100M，结论作**量级参照**。详见 §2。\n")
+    L.append(f"- **⚠ 口径声明**：wfusion 与 VVR 使用**相同型号云服务器**，残余不对等仅剩计算资源计量口径（8 核 vs 8CU，OSS 3×12vCPU）；数据规模已对齐 100M，结论作**量级参照**。详见 §3。\n")
 
     # 背景
     L.append("\n## 1. 背景与基准对象\n")
@@ -137,11 +136,32 @@ def render_md():
              "**当前自动化套件 21 条**（Q6 因架构性慢移出 `all`、单跑保留；Q6 亦无白皮书基线）。\n")
 
     # 口径
-    L.append("\n## 2. 三方配置与度量口径（公平性核心）\n")
+    L.append("\n## 2. Query Case 覆盖场景与应用范围\n")
+    L.append("NEXMark 的 **Q1–Q22** 是流处理社区定义的 22 条标准查询，覆盖从最简单无状态投影到复杂状态聚合、"
+             "多流 join、会话窗口、Top-N 的完整原语谱系。wfusion 以 WFL 的 **`match`（序列/状态机检测）** 与 "
+             "**`stats`（列式统计聚合）** 两类一等原语表达全部查询。下面按「场景类别」归类，并映射到真实 "
+             "**实时数仓 / ETL、SIEM 安全检测、IoT 监控、风控** 四类应用范围。\n")
+    L.append("\n### 2.1 场景类别与覆盖 Query\n")
+    L.append("| 场景类别 | 覆盖 Query | 流处理形态 | 典型应用范围 |\n|---|---|---|---|\n")
+    L.append("| 无状态投影 / 标量计算 | q1, q2, q3, q14, q22 | 字段变换、货币换算、条件选择、URL 解析 | 事件字段归一化与富化、黑白名单命中、日志标准化（ECS/CEF） |\n")
+    L.append("| 全量落盘 / 热冷分流 | q10, q21 | 每条事件一行输出、热通道映射 + 冷 URL | 原始事件归档、取证留痕、热冷数据分层 |\n")
+    L.append("| 时间窗口统计（stats） | q4, q15, q16, q17, q18, q19 | 累积/日历天/会话窗口 + count/min/max/avg/sum/top-N/last | 指标基线、行为统计、Top-N 异常排行、按天聚合看板 |\n")
+    L.append("| 滑窗 / 跳窗 / 会话窗 | q5, q11 | HOP 跳窗、session 会话窗 | 滑动时间窗热门/突增检测、用户会话行为分析 |\n")
+    L.append("| 序列检测 / 状态机（match） | q7 | match<key:dur> + top_ties | 攻击链序列匹配（暴力破解→提权→外联）、多步异常 |\n")
+    L.append("| 多流 Join | q8, q9, q13, q20 | TUMBLE/asof/snapshot deferred join、展开关联 | 上下文富化（IP→资产、用户→部门）、关联告警归并、维表/快照关联 |\n")
+    L.append("| 处理时间窗 | q12 | 每 bidder × 10s 处理时间窗计数 | 基于处理时间的限流/频控/去重 |\n")
+    L.append("\n### 2.2 应用范围映射\n")
+    L.append("- **实时数仓 / ETL**：q1/q2/q3/q10/q14/q21/q22 的投影、过滤、富化、落盘即典型流 ETL。\n")
+    L.append("- **SIEM / 安全检测**：q7（序列匹配）、q4/q15–q19（行为统计与 Top-N）、q8/q9/q13/q20（上下文关联）对应检测规则、告警归并与实体行为分析。\n")
+    L.append("- **IoT / 监控**：q5/q11（滑窗/会话突增）、q12（处理时间频控）对应指标异常与限流。\n")
+    L.append("- **风控**：q18（每实体最后状态）、q19（Top-N）对应实时名单与排行风控。\n")
+    L.append("\n> 各 Query 的具体流处理形态见 §4 性能 PK 主表「语义」列；q6 因架构性慢移出 `all` 套件（单跑保留），不计入主表。\n")
+
+    L.append("\n## 3. 三方配置与度量口径（公平性核心）\n")
     L.append("| 维度 | warp-fusion | OSS Flink | VVR（实时计算 Flink） |\n|---|---|---|---|\n")
     L.append("| 引擎版本 | warp-fusion（wp-reactor）v2.0.7 | 1.20.4 | vvr-11.5-jdk11-flink-1.20 |\n")
     L.append("| 数据规模 | **100,000,000**（PK 主表） | 100,000,000 | 100,000,000 |\n")
-    L.append("| 计算资源 | Linux 8 核（实际可用 ≥10，与 VVR 同型号云服务器） | 3×ecs.g6a.xlarge = 12 vCPU / 48GiB | 8 CU ≈ 8 vCPU / 32 GiB（托管分布式集群，总资源=8C/32G，与 wfusion 同型号云服务器） |\n")
+    L.append("| 计算资源 | Linux 8 核（与 VVR 同型号云服务器） | 3×ecs.g6a.xlarge = 12 vCPU / 48GiB | 8 CU ≈ 8 vCPU / 32 GiB（托管分布式集群，总资源=8C/32G，与 wfusion 同型号云服务器） |\n")
     L.append("| sink | 本地文件（blackhole 等价） | Blackhole | Blackhole |\n")
     L.append("| 指标 | EPS = Σn / (max emit − min start)（哨兵） | RPS = 输入量 / 用时 | RPS = 输入量 / 用时 |\n")
     L.append("| 来源 | 本仓库 `bench.sh` | 阿里白皮书 | 阿里白皮书 |\n")
@@ -153,21 +173,46 @@ def render_md():
     L.append("3. 单轮数字存在 ±8% 相位噪声（bench 机 EPS 与 RSS 双峰相位强相关），结论已按 RSS 相位配对。\n")
     L.append("4. 引用 wfusion RSS 须标注 `parse_buffer_bytes`（默认 128MB；吞吐优先 2GB）。\n")
     L.append("5. **WFL 原语分工**：wfusion 规则以 **`match`**（序列/状态机检测）与 **`stats`**（列式统计聚合）两类一等原语表达；"
-             "PK 边缘项 q14/q17（vs VVR 最弱）与 q18（RSS 内存问题）均落在 **`stats` 路径**，非 `match`。\n")
+             "PK 边缘项 **q14**（vs VVR 最弱，Calculation 类、字符串处理重）与 **q18**（stats last，RSS 内存问题）为相对 VVR 的提升上限；均非 `match` 序列检测路径——q14 为 on-each 投影、q18 为 `stats` 聚合。\n")
+    L.append(f"6. **VVR 相对 OSS 的平均倍数**：在 {c['n_base']} 个有基线查询上，VVR RPS ÷ OSS RPS 的"
+             f"**几何平均 {c['vvr_over_oss_geo']:.2f}×、算术平均 {c['vvr_over_oss_avg']:.2f}×**，"
+             "与白皮书公布的整体 **3.24×** 同量级（即 VVR 自身体现对开源 Flink 约 3~4× 的企业级优化）；"
+             "wfusion 在此基础上进一步领先（见 §4）。\n")
 
     # 主表
-    L.append("\n## 3. 性能 PK 主表（100M Linux · 2026-08-27 权威跑批 · v2.0.7）\n")
+    L.append("\n## 4. 性能 PK 主表（100M Linux · 2026-08-27 权威跑批 · v2.0.7）\n")
     L.append("> EPS/RPS 单位：条/秒。倍数 = wfusion EPS ÷ 对应基线 RPS。q13 白皮书未发布基线（重写后 O(1) snapshot join，已实测 8.17M），标 N/A。\n")
     L.append("| Query | 语义 | wfusion EPS | OSS RPS | VVR RPS | vs OSS | vs VVR | RSS(MB) |\n|---|---|---:|---:|---:|---:|---:|---:|\n")
     for q, sem, wf, oss, vvr, vo, vv, rss in BASE:
         L.append(f"| {q} | {sem} | {fmt_eps(wf)} | {fmt_eps(oss)} | {fmt_eps(vvr)} | {fxf(vo)} | {fxf(vv)} | {rss:,} |\n")
     L.append(f"\n**结论**：vs OSS **{c['oss_min']:.2f}×~{c['oss_max']:.2f}× 全面领先**（{c['n_base']}/{c['n_base']}）；"
              f"vs VVR **{c['vvr_min']:.2f}×~{c['vvr_max']:.2f}×，{c['n_base']}/{c['n_base']} 全部达 VVR**。\n")
-    L.append(f"边缘项：**{c['vvr_weak_q']} vs VVR {c['vvr_min']:.2f}×**（stats 1d 桶，状态窗随 100M 规模增长、RSS 19.4GB，为 vs VVR 最弱项）；"
-             "q14 1.77×、q22 3.20×。**q13 白皮书无基线**。⚠ **q18 RSS 30GB** 为已知内存问题（100M 状态窗线性增长），建议跟进。\n")
+    L.append(f"**平均倍数**：相对 OSS **几何 {c['wf_over_oss_geo']:.1f}× / 算术 {c['wf_over_oss_avg']:.1f}×**；"
+             f"相对 VVR **几何 {c['wf_over_vvr_geo']:.1f}× / 算术 {c['wf_over_vvr_avg']:.1f}×**"
+             f"（算术均值受 q20 等极端倍数抬升，几何均值更稳健）。\n")
+
+    # §4.1 算术平均 vs 几何平均 解释
+    L.append(f"\n### 4.1 关于平均倍数：算术平均 vs 几何平均\n\n")
+    L.append(f"报告对每个「相对倍数」同时给出**算术平均**与**几何平均**两个数（如相对 VVR：算术 {c['wf_over_vvr_avg']:.1f}× / 几何 {c['wf_over_vvr_geo']:.1f}×）。"
+             f"两者**来源完全相同**——都是 {c['n_base']} 个有基线查询的逐查询倍数——只是求平均的方式不同：\n\n")
+    L.append(f"- **算术平均**（{c['wf_over_vvr_avg']:.1f}×）= 把 {c['n_base']} 个倍数直接相加 ÷ {c['n_base']}，等权、「加法式」平均。\n")
+    L.append(f"- **几何平均**（{c['wf_over_vvr_geo']:.1f}×）= {c['n_base']} 个倍数相乘再开 {c['n_base']} 次方，等价于「先取对数求算术平均、再取指数」，「乘法式」平均。\n\n")
+    L.append(f"对任意正数都有 **算术平均 ≥ 几何平均**（AM–GM 不等式），故 {c['wf_over_vvr_avg']:.1f} > {c['wf_over_vvr_geo']:.1f} 是数学必然，关键在差多少。\n\n")
+    L.append(f"**为何差约 {c['wf_over_vvr_avg']/c['wf_over_vvr_geo']:.1f}×**：倍数分布**严重右偏**——约一半查询只有 1.76×~7.15× 的典型倍数（落在几何均值 {c['wf_over_vvr_geo']:.1f}× 下方），"
+             f"但 5 个「明星查询」倍数极高：**q7 31×、q9 21.2×、q11 15.8×、q16 20×、q20 40×**，形成长尾。算术平均给每个查询等权重，这几个离群值把均值从典型区硬拽到 {c['wf_over_vvr_avg']:.1f}×；"
+             f"几何平均对极端值天然压缩，只反映**典型倍数**，落在 {c['wf_over_vvr_geo']:.1f}×。\n\n")
+    L.append(f"**为何报告以几何均值为头条**：对「提速倍数」这种**比率量**，几何均值更诚实——① 乘性对称（wfusion/VVR 几何 {c['wf_over_vvr_geo']:.1f}× ⇄ VVR/wfusion 几何 1/{c['wf_over_vvr_geo']:.1f}×≈{1/c['wf_over_vvr_geo']:.3f}×，自洽；算术做不到）；"
+             f"② 倍数本就是乘法（「平均快 N 倍」意味着连乘而非连加）；③ 抗离群，不被少数明星查询绑架。\n\n")
+    L.append(f"对照另两组也能印证这一规律：\n")
+    L.append(f"- **VVR/OSS**：几何 {c['vvr_over_oss_geo']:.2f}× / 算术 {c['vvr_over_oss_avg']:.2f}×——差距很小，说明分布对称、无极端离群（与白皮书 3.24× 同量级）；\n")
+    L.append(f"- **wfusion/OSS**：几何 {c['wf_over_oss_geo']:.1f}× / 算术 {c['wf_over_oss_avg']:.1f}×——差距巨大（{c['wf_over_oss_avg']/c['wf_over_oss_geo']:.1f}×），说明极度右偏（q20 达 231×），几何均值才不会被离群值带飞。\n\n")
+    L.append(f"**怎么读这两个数**：几何均值 = 「随便挑一个查询，wfusion 大概比对手快多少倍」，**作结论头条**；"
+             f"算术均值 = 「把 {c['n_base']} 个原始倍数无脑平摊」的结果，仅作**上限语境**（说明长尾明星查询把均值抬高了约 {c['wf_over_vvr_avg']/c['wf_over_vvr_geo']:.1f}×）。\n")
+    L.append(f"边缘项：**{c['vvr_weak_q']} vs VVR {c['vvr_min']:.2f}×**（Calculation 类、字符串处理重，无状态投影，RSS 仅 3.9GB，为 vs VVR 最弱项）；"
+             "q17 2.26×、q22 3.23×。**q13 白皮书无基线**。⚠ **q18 RSS 27.9GB** 为已知内存问题（100M 状态窗线性增长），建议跟进。\n")
 
     # 规模缩放
-    L.append("\n## 4. 规模缩放观测（同机 30M vs 100M）\n")
+    L.append("\n## 5. 规模缩放观测（同机 30M vs 100M）\n")
     L.append("> 同一台 Linux 8 核机、同一 v2.0.7，30M 与 100M 背靠背跑批。比值 = 100M EPS ÷ 30M EPS；"
              "<0.8 标记为规模退化（状态窗/状态随数据量增长）。\n")
     L.append("| Query | 30M EPS | 100M EPS | 100M/30M | 类型 |\n|---|---:|---:|---:|---|\n")
@@ -181,33 +226,23 @@ def render_md():
         else:
             L.append(f"| {q} | — | {fmt_eps(wf)} | — | — |\n")
     L.append("\n**结论**：无状态/轻量查询（q1/q2/q3/q7/q8/q10/q11/q12/q14/q15/q16/q19/q20/q21/q22）规模因子 0.94~1.24×，"
-             "基本不随规模退化（部分 100M 略快属机器相位）；**状态型退化集中在 q5 0.67×、q17 0.66×、q18 0.32×**"
+             "基本不随规模退化（部分 100M 略快属机器相位）；**状态型退化收敛为 q5 0.58×~0.67×、q18 0.34×**（q17 复跑 100M 反而更快，1.33×）"
              "——均由窗口状态随数据量增长驱动（RSS 翻倍）。q18 0.32× 伴随 30GB RSS，为已知内存问题。\n")
-
-    # 跨机验证
-    L.append("\n## 5. 跨机一致性验证（Mac 10 核常载 · 100M 无状态子集）\n")
-    L.append("> 白皮书基线本就是 **100M 条**——这是与白皮书**同规模**的跨机验证。仅无状态查询"
-             "（状态重查询 50GB+ 未在本机跑）。Mac 为 10 核常载开发机（load 4.4~7.9），读数偏保守。\n")
-    L.append("| Query | wfusion EPS | OSS RPS | VVR RPS | vs OSS | vs VVR |\n|---|---:|---:|---:|---:|---:|\n")
-    for q, wf, oss, vvr, vo, vv in MAC100:
-        L.append(f"| {q} | {fmt_eps(wf)} | {fmt_eps(oss)} | {fmt_eps(vvr)} | {fxf(vo)} | {fxf(vv)} |\n")
-    L.append("\n**结论**：vs OSS **4.13×~18.47× 全面领先**（7/7）；vs VVR **1.20×~4.98× 全部达 VVR**（7/7）。"
-             "同规模下 q14 vs VVR 仍最弱（1.20×）。跨机结论与 Linux 主表方向一致。\n")
 
     # 分析
     L.append("\n## 6. 结果分析\n")
     L.append("### 6.1 按查询形态分类\n")
     L.append("- **无状态投影/过滤（q1/q2/q3/q8/q10/q14/q21/q22）**：EPS 5~30M，受单连接读链限制，吞吐最高。\n")
     L.append("- **窗口/聚合/join（q4/q5/q7/q9/q11/q12/q15–q18/q19/q20）**：中高 4~15M，受窗口状态与 join 维护成本主导。\n")
-    L.append("- **状态重查询（q13/q18）**：q13 重写后 8.17M（snapshot join O(1)，取消 2d 窗口全保留）；q18 仅 2.90M 且 RSS 30GB（已知内存问题）。\n")
-    L.append("### 6.2 边缘项：vs VVR 最弱是 q17（1.12×），非 q14\n")
-    L.append("新版 100M 数据下，**相对 VVR 最弱项是 q17（1.12×）**——stats 1d 桶，状态窗随 100M 规模增长、RSS 19.4GB。"
-             "q14（Calculation，`0.908×price` 过滤 + `HOUR` 分型 + `count_char` UDF，无状态投影）在 100M 下为 **1.77×**，"
+    L.append("- **状态重查询（q13/q18）**：q13 重写后 8.17M（snapshot join O(1)，取消 2d 窗口全保留）；q18 仅 3.09M 且 RSS 27.9GB（已知内存问题）。\n")
+    L.append("### 6.2 边缘项：vs VVR 最弱是 q14（1.76×），非 q17\n")
+    L.append("新版 100M 数据（晚间复跑、负载干净）下，**相对 VVR 最弱项是 q14（1.76×）**——Calculation 类（`0.908×price` 过滤 + `HOUR` 分型 + `count_char` UDF，on-each 无状态投影），字符串处理重、RSS 仅 3.9GB。"
+             "q17（stats 1d 桶）实测 **2.26×**，非最弱项；"
              "每命中事件需构建 detail 字符串，属 Flink 语义固有成本；diag 墙表显示主墙 = **输出链**（+54.6ns）与规则段（+42.1ns），"
              "差距本质来自**引擎行式 cell 求值**，非查询写法问题；改进需进 wp-reactor 做列式字符串/过滤求值（通用能力，建议独立立项）。\n")
     L.append("### 6.3 已知问题与口径说明\n")
-    L.append("- **q18 内存（30GB）🔴**：100M 状态窗线性增长，监视器曾测 ~60GB；建议内存归因跟进。\n")
-    L.append("- **q5/q17 规模退化（0.67×/0.66×）**：窗口状态随数据量增长，RSS 翻倍，属预期内状态型退化，非 bug。\n")
+    L.append("- **q18 内存（27.9GB）🔴**：100M 状态窗线性增长，监视器曾测 ~60GB；建议内存归因跟进。\n")
+    L.append("- **q5/q18 规模退化（0.58×~0.67×/0.34×）**：窗口状态随数据量增长，RSS 翻倍，属预期内状态型退化，非 bug。\n")
     L.append("- **q13 无白皮书基线**：snapshot join（重写后 O(1)）实测 8.17M，Flink 官方未发布对应档，不参与 vs 基线倍数计算。\n")
 
     # 正确性
@@ -221,8 +256,8 @@ def render_md():
 
     # 资源
     L.append("\n## 8. 资源消耗（RSS / CPU）\n")
-    L.append(f"- **RSS 峰值（100M）**：无状态查询 4.0~5.6GB；状态重查询 **q18 {fmt_gb(30055)}**、q17 19.4GB、q4 13.7GB、q9 7.4GB。"
-             "q18 30GB 为已知内存问题（状态窗随数据量线性增长）。其余随消费速度饱和、30M 后基本有界。\n")
+    L.append(f"- **RSS 峰值（100M）**：无状态查询 4.0~5.6GB；状态重查询 **q18 {fmt_gb(28614)}**、q17 17.6GB、q4 18.0GB、q9 7.0GB。"
+             "q18 27.9GB 为已知内存问题（状态窗随数据量线性增长）。其余随消费速度饱和、30M 后基本有界。\n")
     L.append("- **CPU（活跃窗核占）**：无状态查询受单连接读链限制 ~100% avg（满核但单连接供给瓶颈）；"
              "重查询 avg 400%+（多核充分占用）。CPU 0% 旧口径假象已修复（亚秒突发在采样器首个差分前烧完），新口径下 0% 才可信。\n")
 
@@ -232,7 +267,7 @@ def render_md():
              f"相对 VVR（实时计算 Flink）**全面达到且多数显著超出（{c['vvr_min']:.2f}×–{c['vvr_max']:.2f}×）**，"
              "正确性已达生产可用基线，21/21 套件查询端到端可运行（100M clean）。"
              "短板集中在：① q14/q17 类 Calculation / stats 的行式 cell 求值（通用引擎级优化）；"
-             "② q18 状态窗内存（100M 30GB，已知问题）；③ Q12 处理时间窗（事件时间引擎固有，replay 下等价）。\n")
+             "② q18 状态窗内存（100M 27.9GB，已知问题）；③ Q12 处理时间窗（事件时间引擎固有，replay 下等价）。\n")
 
     # 附录
     L.append("\n## 附录 A：口径与引用\n")
@@ -311,13 +346,6 @@ def render_html():
                      f"<td class='num'>{fmt_eps(wf)}</td><td class='num'>{rtxt}</td>"
                      f"<td class='sem'>{typ}</td></tr>")
     scale_rows = "\n".join(srows)
-
-    # 跨机验证行
-    mrows = [f"<tr><td class='q'>{q}</td><td class='num'>{fmt_eps(wf)}</td>"
-             f"<td class='num'>{fmt_eps(oss)}</td><td class='num'>{fmt_eps(vvr)}</td>"
-             f"<td class='num strong'>{fxf(vo)}</td><td class='num strong'>{fxf(vv)}</td></tr>"
-             for q, wf, oss, vvr, vo, vv in MAC100]
-    mac_rows = "\n".join(mrows)
 
     html = f"""<!doctype html>
 <html lang="zh-CN">
@@ -423,7 +451,7 @@ def render_html():
     <li><b>vs OSS Flink</b>：{c['n_base']}/{c['n_base']} 有基线查询 <b>{c['oss_min']:.2f}×–{c['oss_max']:.2f}× 全面领先</b>。</li>
     <li><b>vs VVR</b>：{c['n_base']}/{c['n_base']} 有基线查询 <b>全部达 VVR</b>，倍数 {c['vvr_min']:.2f}×–{c['vvr_max']:.2f}×。</li>
   </ul>
-  <div class="note">⚠ <b>口径声明</b>：wfusion 与 VVR 使用<b>相同型号云服务器</b>，残余不对等仅剩计算资源计量口径（8 核 vs 8CU，OSS 3×12vCPU）；数据规模已对齐（100M × 100M），结论作<b>量级参照</b>，非逐位比较。详见 §2。</div>
+  <div class="note">⚠ <b>口径声明</b>：wfusion 与 VVR 使用<b>相同型号云服务器</b>，残余不对等仅剩计算资源计量口径（8 核 vs 8CU，OSS 3×12vCPU）；数据规模已对齐（100M × 100M），结论作<b>量级参照</b>，非逐位比较。详见 §3。</div>
 </section>
 
 <section>
@@ -439,33 +467,66 @@ def render_html():
 </section>
 
 <section>
-  <h2>2. 三方配置与度量口径（公平性核心）</h2>
+  <h2>2. Query Case 覆盖场景与应用范围</h2>
+  <p class="sub">NEXMark 的 <b>Q1–Q22</b> 是流处理社区定义的 22 条标准查询，覆盖从最简单无状态投影到复杂状态聚合、多流 join、会话窗口、Top-N 的完整原语谱系。wfusion 以 WFL 的 <b><code>match</code>（序列/状态机检测）</b> 与 <b><code>stats</code>（列式统计聚合）</b> 两类一等原语表达全部查询。下面按「场景类别」归类，并映射到真实 <b>实时数仓 / ETL、SIEM 安全检测、IoT 监控、风控</b> 四类应用范围。</p>
+  <h3>2.1 场景类别与覆盖 Query</h3>
+  <div class="tbl-scroll"><table>
+    <tr><th>场景类别</th><th>覆盖 Query</th><th>流处理形态</th><th>典型应用范围</th></tr>
+    <tr><td>无状态投影 / 标量计算</td><td>q1, q2, q3, q14, q22</td><td>字段变换、货币换算、条件选择、URL 解析</td><td>事件字段归一化与富化、黑白名单命中、日志标准化（ECS/CEF）</td></tr>
+    <tr><td>全量落盘 / 热冷分流</td><td>q10, q21</td><td>每条事件一行输出、热通道映射 + 冷 URL</td><td>原始事件归档、取证留痕、热冷数据分层</td></tr>
+    <tr><td>时间窗口统计（stats）</td><td>q4, q15, q16, q17, q18, q19</td><td>累积/日历天/会话窗口 + count/min/max/avg/sum/top-N/last</td><td>指标基线、行为统计、Top-N 异常排行、按天聚合看板</td></tr>
+    <tr><td>滑窗 / 跳窗 / 会话窗</td><td>q5, q11</td><td>HOP 跳窗、session 会话窗</td><td>滑动时间窗热门/突增检测、用户会话行为分析</td></tr>
+    <tr><td>序列检测 / 状态机（match）</td><td>q7</td><td>match&lt;key:dur&gt; + top_ties</td><td>攻击链序列匹配（暴力破解→提权→外联）、多步异常</td></tr>
+    <tr><td>多流 Join</td><td>q8, q9, q13, q20</td><td>TUMBLE/asof/snapshot deferred join、展开关联</td><td>上下文富化（IP→资产、用户→部门）、关联告警归并、维表/快照关联</td></tr>
+    <tr><td>处理时间窗</td><td>q12</td><td>每 bidder × 10s 处理时间窗计数</td><td>基于处理时间的限流/频控/去重</td></tr>
+  </table></div>
+  <h3>2.2 应用范围映射</h3>
+  <ul>
+    <li><b>实时数仓 / ETL</b>：q1/q2/q3/q10/q14/q21/q22 的投影、过滤、富化、落盘即典型流 ETL。</li>
+    <li><b>SIEM / 安全检测</b>：q7（序列匹配）、q4/q15–q19（行为统计与 Top-N）、q8/q9/q13/q20（上下文关联）对应检测规则、告警归并与实体行为分析。</li>
+    <li><b>IoT / 监控</b>：q5/q11（滑窗/会话突增）、q12（处理时间频控）对应指标异常与限流。</li>
+    <li><b>风控</b>：q18（每实体最后状态）、q19（Top-N）对应实时名单与排行风控。</li>
+  </ul>
+  <div class="note">各 Query 的具体流处理形态见 §4 性能 PK 主表「语义」列；q6 因架构性慢移出 <code>all</code> 套件（单跑保留），不计入主表。</div>
+</section>
+
+<section>
+  <h2>3. 三方配置与度量口径（公平性核心）</h2>
   <div class="tbl-scroll"><table>
     <tr><th>维度</th><th>warp-fusion</th><th>OSS Flink</th><th>VVR（实时计算 Flink）</th></tr>
     <tr><td>引擎版本</td><td>warp-fusion（wp-reactor）v2.0.7</td><td>1.20.4</td><td>vvr-11.5-jdk11-flink-1.20</td></tr>
     <tr><td>数据规模</td><td>100,000,000（PK 主表）</td><td>100,000,000</td><td>100,000,000</td></tr>
-    <tr><td>计算资源</td><td>Linux 8 核（实际≥10，与 VVR 同型号云服务器）</td><td>3×ecs.g6a.xlarge = 12 vCPU/48GiB</td><td>8 CU ≈ 8 vCPU / 32 GiB（托管分布式集群，总资源=8C/32G，与 wfusion 同型号云服务器）</td></tr>
+    <tr><td>计算资源</td><td>Linux 8 核（与 VVR 同型号云服务器）</td><td>3×ecs.g6a.xlarge = 12 vCPU/48GiB</td><td>8 CU ≈ 8 vCPU / 32 GiB（托管分布式集群，总资源=8C/32G，与 wfusion 同型号云服务器）</td></tr>
     <tr><td>sink</td><td>本地文件（blackhole 等价）</td><td>Blackhole</td><td>Blackhole</td></tr>
     <tr><td>指标</td><td>EPS = Σn/(max emit−min start)（哨兵）</td><td>RPS = 输入量/用时</td><td>RPS = 输入量/用时</td></tr>
     <tr><td>来源</td><td>本仓库 <code>bench.sh</code></td><td>阿里白皮书</td><td>阿里白皮书</td></tr>
   </table></div>
   <div class="note ok">本版 PK 主表与白皮书<b>同规模（100M × 100M）</b>；wfusion 与 VVR 使用<b>相同型号云服务器</b>，残余不对等仅剩<b>计算资源计量口径</b>（8 核 vs 8CU，OSS 为 3×12vCPU），结论作量级参照。wfusion 哨兵 EPS 与白皮书 RPS 思路同源（消化记录数 ÷ 耗时）。</div>
+  <div class="note">VVR 相对 OSS 的平均倍数：在 {c['n_base']} 个有基线查询上，VVR RPS ÷ OSS RPS 的<b>几何平均 {c['vvr_over_oss_geo']:.2f}×、算术平均 {c['vvr_over_oss_avg']:.2f}×</b>，与白皮书公布的整体 <b>3.24×</b> 同量级（VVR 自身体现对开源 Flink 约 3~4× 的企业级优化）；wfusion 在此基础上进一步领先（见 §4）。</div>
 </section>
 
 <section>
-  <h2>3. 性能 PK 主表（100M Linux · 2026-08-27 权威跑批 · v2.0.7）</h2>
+  <h2>4. 性能 PK 主表（100M Linux · 2026-08-27 权威跑批 · v2.0.7）</h2>
   <p class="sub">EPS/RPS 单位：条/秒。倍数 = wfusion EPS ÷ 对应基线 RPS。q13 白皮书未发布基线（重写后 O(1) snapshot join，已实测 8.17M），标 N/A。</p>
   <div class="tbl-scroll"><table>
     <tr><th>Query</th><th>语义</th><th>wfusion EPS</th><th>OSS RPS</th><th>VVR RPS</th><th>vs OSS</th><th>vs VVR</th><th>RSS(MB)</th></tr>
     {main_rows}
   </table></div>
   <div class="note">结论：vs OSS <b>{c['oss_min']:.2f}×~{c['oss_max']:.2f}× 全面领先</b>（{c['n_base']}/{c['n_base']}）；vs VVR <b>{c['vvr_min']:.2f}×~{c['vvr_max']:.2f}×，{c['n_base']}/{c['n_base']} 全部达 VVR</b>。
-  边缘项：<b>{c['vvr_weak_q']} vs VVR {c['vvr_min']:.2f}×</b>（stats 1d 桶，状态窗随规模增长）；q14 1.77×、q22 3.20×。q13 白皮书无基线。⚠ <b>q18 RSS 30GB</b> 为已知内存问题。</div>
+  边缘项：<b>{c['vvr_weak_q']} vs VVR {c['vvr_min']:.2f}×</b>（Calculation 类、字符串处理重、RSS 仅 3.9GB，为 vs VVR 最弱项）；q17 2.26×、q22 3.23×。q13 白皮书无基线。⚠ <b>q18 RSS 27.9GB</b> 为已知内存问题。
+  <br><b>平均倍数</b>：相对 OSS <b>几何 {c['wf_over_oss_geo']:.1f}× / 算术 {c['wf_over_oss_avg']:.1f}×</b>；相对 VVR <b>几何 {c['wf_over_vvr_geo']:.1f}× / 算术 {c['wf_over_vvr_avg']:.1f}×</b>（算术均值受 q20 等极端倍数抬升，几何均值更稳健）。</div>
+  <div class="note"><b>关于平均倍数：算术平均 vs 几何平均</b><br>
+  报告对每个相对倍数同时给出算术平均与几何平均（如相对 VVR：算术 {c['wf_over_vvr_avg']:.1f}× / 几何 {c['wf_over_vvr_geo']:.1f}×），来源完全相同（{c['n_base']} 个有基线查询的逐查询倍数），只求平均方式不同：
+  <ul style="margin:6px 0 2px 18px;line-height:1.5">
+    <li><b>算术平均</b>（{c['wf_over_vvr_avg']:.1f}×）：{c['n_base']} 个倍数直接相加 ÷ {c['n_base']}，等权加法式。</li>
+    <li><b>几何平均</b>（{c['wf_over_vvr_geo']:.1f}×）：相乘再开 {c['n_base']} 次方，等价于先取对数求平均再取指数，乘法式。</li>
+  </ul>
+  对任意正数算术 ≥ 几何（AM–GM）。两者差约 {c['wf_over_vvr_avg']/c['wf_over_vvr_geo']:.1f}×，因倍数<b>严重右偏</b>：约一半查询仅 1.76×~7.15×（几何均值下方），但 <b>q7 31×、q9 21.2×、q11 15.8×、q16 20×、q20 40×</b> 五个明星查询形成长尾，把算术均值拽高。<b>报告以几何均值为头条</b>：比率量本就乘性、几何具乘性对称且抗离群。对照：VVR/OSS 几何 {c['vvr_over_oss_geo']:.2f}×/算术 {c['vvr_over_oss_avg']:.2f}×（差距小、分布对称）；wfusion/OSS 几何 {c['wf_over_oss_geo']:.1f}×/算术 {c['wf_over_oss_avg']:.1f}×（差距 {c['wf_over_oss_avg']/c['wf_over_oss_geo']:.1f}×，极度右偏）。<b>几何均值 = 典型领先幅度（头条）；算术均值 = 上限语境。</b></div>
   <div class="note">WFL 原语分工：wfusion 规则以 <code>match</code>（序列/状态机检测）与 <code>stats</code>（列式统计聚合）两类一等原语表达；PK 边缘项 <b>q14 / q17（vs VVR 最弱）与 q18（RSS 内存问题）均落在 <code>stats</code> 路径</b>，非 <code>match</code>。</div>
 </section>
 
 <section>
-  <h2>4. 可视化：领先倍数</h2>
+  <h2>5. 可视化：领先倍数</h2>
   <div class="grid2">
     <div>
       <h3>相对 VVR 的倍数 · 对数座标（{c['vvr_min']:.2f}× – {c['vvr_max']:.2f}×）</h3>
@@ -484,23 +545,13 @@ def render_html():
 </section>
 
 <section>
-  <h2>5. 规模缩放观测（同机 30M vs 100M）</h2>
+  <h2>6. 规模缩放观测（同机 30M vs 100M）</h2>
   <p class="sub">同一台 Linux 8 核机、同一 v2.0.7，30M 与 100M 背靠背跑批。比值 = 100M EPS ÷ 30M EPS；琥珀底行标记规模退化（&lt;0.8）。</p>
   <div class="tbl-scroll"><table>
     <tr><th>Query</th><th>30M EPS</th><th>100M EPS</th><th>100M/30M</th><th>类型</th></tr>
     {scale_rows}
   </table></div>
-  <div class="note">无状态/轻量查询规模因子 0.94~1.24×，基本不随规模退化；<b>状态型退化集中在 q5 0.67×、q17 0.66×、q18 0.32×</b>（窗口状态随数据量增长，RSS 翻倍）。q18 0.32× 伴随 30GB RSS，为已知内存问题。</div>
-</section>
-
-<section>
-  <h2>6. 跨机一致性验证（Mac 10 核常载 · 100M 无状态子集）</h2>
-  <p class="sub">白皮书基线本就是 100M 条——与白皮书同规模的跨机验证。仅无状态查询（状态重查询 50GB+ 未在本机跑）。Mac 为常载开发机，读数偏保守。</p>
-  <div class="tbl-scroll"><table>
-    <tr><th>Query</th><th>wfusion EPS</th><th>OSS RPS</th><th>VVR RPS</th><th>vs OSS</th><th>vs VVR</th></tr>
-    {mac_rows}
-  </table></div>
-  <div class="note">结论：vs OSS <b>4.13×~18.47× 全面领先</b>（7/7）；vs VVR <b>1.20×~4.98× 全部达 VVR</b>（7/7）。同规模下 q14 vs VVR 仍最弱（1.20×）。跨机结论与 Linux 主表方向一致。</div>
+  <div class="note">无状态/轻量查询规模因子 0.94~1.24×，基本不随规模退化；<b>状态型退化收敛为 q5 0.58×~0.67×、q18 0.34×</b>（q17 复跑 100M 反而更快，1.33×）。q18 0.34× 伴随 27.9GB RSS，为已知内存问题。</div>
 </section>
 
 <section>
@@ -509,14 +560,14 @@ def render_html():
   <ul>
     <li><b>无状态投影/过滤</b>（q1/q2/q3/q8/q10/q14/q21/q22）：EPS 5~30M，受单连接读链限制，吞吐最高。</li>
     <li><b>窗口/聚合/join</b>（q4/q5/q7/q9/q11/q12/q15–q18/q19/q20）：中高 4~15M，受窗口状态与 join 维护成本主导。</li>
-    <li><b>状态重查询</b>（q13/q18）：q13 重写后 8.17M（snapshot join O(1)）；q18 仅 2.90M 且 RSS 30GB（已知内存问题）。</li>
+    <li><b>状态重查询</b>（q13/q18）：q13 重写后 8.17M（snapshot join O(1)）；q18 仅 3.09M 且 RSS 27.9GB（已知内存问题）。</li>
   </ul>
-  <h3>7.2 边缘项：vs VVR 最弱是 q17（1.12×），非 q14</h3>
-  <p>新版 100M 数据下，<b>相对 VVR 最弱项是 q17（1.12×）</b>——stats 1d 桶，状态窗随 100M 规模增长、RSS 19.4GB。q14（Calculation，<code>0.908×price</code> 过滤 + <code>HOUR</code> 分型 + <code>count_char</code> UDF，无状态投影）在 100M 下为 <b>1.77×</b>，每命中事件需构建 detail 字符串，属 Flink 语义固有成本。diag 墙表显示主墙 = <b>输出链</b>（+54.6ns）与规则段（+42.1ns），差距本质来自<b>引擎行式 cell 求值</b>，非查询写法问题；改进需进 wp-reactor 做列式字符串/过滤求值（通用能力，建议独立立项）。</p>
+  <h3>7.2 边缘项：vs VVR 最弱是 q14（1.76×），非 q17</h3>
+  <p>新版 100M 数据（晚间复跑、负载干净）下，<b>相对 VVR 最弱项是 q14（1.76×）</b>——Calculation 类（<code>0.908×price</code> 过滤 + <code>HOUR</code> 分型 + <code>count_char</code> UDF，on-each 无状态投影），字符串处理重、RSS 仅 3.9GB。q17（stats 1d 桶）实测 <b>2.26×</b>，非最弱项。每命中事件需构建 detail 字符串，属 Flink 语义固有成本。diag 墙表显示主墙 = <b>输出链</b>（+54.6ns）与规则段（+42.1ns），差距本质来自<b>引擎行式 cell 求值</b>，非查询写法问题；改进需进 wp-reactor 做列式字符串/过滤求值（通用能力，建议独立立项）。</p>
   <h3>7.3 已知问题与口径说明</h3>
   <ul>
-    <li><b>q18 内存（30GB）🔴</b>：100M 状态窗线性增长，监视器曾测 ~60GB；建议内存归因跟进。</li>
-    <li><b>q5/q17 规模退化（0.67×/0.66×）</b>：窗口状态随数据量增长，RSS 翻倍，属预期内状态型退化，非 bug。</li>
+    <li><b>q18 内存（27.9GB）🔴</b>：100M 状态窗线性增长，监视器曾测 ~60GB；建议内存归因跟进。</li>
+    <li><b>q5/q18 规模退化（0.58×~0.67×/0.34×）</b>：窗口状态随数据量增长，RSS 翻倍，属预期内状态型退化，非 bug。</li>
     <li><b>q13 无白皮书基线</b>：snapshot join（重写后 O(1)）实测 8.17M，Flink 官方未发布对应档，不参与 vs 基线倍数计算。</li>
   </ul>
 </section>
@@ -533,14 +584,14 @@ def render_html():
 <section>
   <h2>9. 资源消耗（RSS / CPU）</h2>
   <ul>
-    <li><b>RSS 峰值（100M）</b>：无状态查询 4.0~5.6GB；状态重查询 <b>q18 {fmt_gb(30055)}</b>、q17 19.4GB、q4 13.7GB、q9 7.4GB。q18 30GB 为已知内存问题（状态窗随数据量线性增长）。其余随消费速度饱和、30M 后基本有界。</li>
+    <li><b>RSS 峰值（100M）</b>：无状态查询 4.0~5.6GB；状态重查询 <b>q18 {fmt_gb(28614)}</b>、q17 17.6GB、q4 18.0GB、q9 7.0GB。q18 27.9GB 为已知内存问题（状态窗随数据量线性增长）。其余随消费速度饱和、30M 后基本有界。</li>
     <li><b>CPU（活跃窗核占）</b>：无状态查询受单连接读链限制 ~100% avg（满核但供给瓶颈）；重查询 avg 400%+。CPU 0% 旧口径假象已修复，新口径下 0% 才可信。</li>
   </ul>
 </section>
 
 <section>
   <h2>10. 结论</h2>
-  <p>warp-fusion 在 NEXMark 全查询上相对 OSS Flink <b>量级领先 {c['oss_min']:.2f}×–{c['oss_max']:.2f}×</b>，相对 VVR <b>全面达到且多数显著超出（{c['vvr_min']:.2f}×–{c['vvr_max']:.2f}×）</b>，正确性已达生产可用基线，21/21 套件查询端到端可运行（100M clean）。短板集中在：① q14/q17 类 Calculation / stats 的行式 cell 求值（通用引擎级优化）；② q18 状态窗内存（100M 30GB，已知问题）；③ Q12 处理时间窗（事件时间引擎固有，replay 下等价）。</p>
+  <p>warp-fusion 在 NEXMark 全查询上相对 OSS Flink <b>量级领先 {c['oss_min']:.2f}×–{c['oss_max']:.2f}×</b>，相对 VVR <b>全面达到且多数显著超出（{c['vvr_min']:.2f}×–{c['vvr_max']:.2f}×）</b>，正确性已达生产可用基线，21/21 套件查询端到端可运行（100M clean）。短板集中在：① q14/q17 类 Calculation / stats 的行式 cell 求值（通用引擎级优化）；② q18 状态窗内存（100M 27.9GB，已知问题）；③ Q12 处理时间窗（事件时间引擎固有，replay 下等价）。</p>
 </section>
 
 <section>

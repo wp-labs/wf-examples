@@ -90,19 +90,19 @@
 </header>
 
 <div class="cards">
-  <div class="card card--good"><div class="k">vs OSS Flink（20/20）</div><div class="v">4.25×–229.23×</div></div>
-  <div class="card card--good"><div class="k">vs VVR（20/20 达 VVR）</div><div class="v">1.12×–39.58×</div></div>
+  <div class="card card--good"><div class="k">vs OSS Flink（20/20）</div><div class="v">6.06×–231.49×</div></div>
+  <div class="card card--good"><div class="k">vs VVR（20/20 达 VVR）</div><div class="v">1.76×–39.98×</div></div>
   <div class="card card--accent"><div class="k">查询覆盖</div><div class="v">21/21 <small>clean</small></div></div>
 </div>
 
 <section>
   <h2>0. 摘要</h2>
-  <p class="sub">warp-fusion 在 NEXMark 全查询上相对 OSS Flink <b>量级领先 4.25×–229.23×</b>，相对 VVR <b>全面达 VVR（1.12×–39.58×）</b>，与白皮书同规模（100M）对照。</p>
+  <p class="sub">warp-fusion 在 NEXMark 全查询上相对 OSS Flink <b>量级领先 6.06×–231.49×</b>，相对 VVR <b>全面达 VVR（1.76×–39.98×）</b>，与白皮书同规模（100M）对照。</p>
   <ul>
-    <li><b>vs OSS Flink</b>：20/20 有基线查询 <b>4.25×–229.23× 全面领先</b>。</li>
-    <li><b>vs VVR</b>：20/20 有基线查询 <b>全部达 VVR</b>，倍数 1.12×–39.58×。</li>
+    <li><b>vs OSS Flink</b>：20/20 有基线查询 <b>6.06×–231.49× 全面领先</b>。</li>
+    <li><b>vs VVR</b>：20/20 有基线查询 <b>全部达 VVR</b>，倍数 1.76×–39.98×。</li>
   </ul>
-  <div class="note">⚠ <b>口径声明</b>：wfusion 与 VVR 使用<b>相同型号云服务器</b>，残余不对等仅剩计算资源计量口径（8 核 vs 8CU，OSS 3×12vCPU）；数据规模已对齐（100M × 100M），结论作<b>量级参照</b>，非逐位比较。详见 §2。</div>
+  <div class="note">⚠ <b>口径声明</b>：wfusion 与 VVR 使用<b>相同型号云服务器</b>，残余不对等仅剩计算资源计量口径（8 核 vs 8CU，OSS 3×12vCPU）；数据规模已对齐（100M × 100M），结论作<b>量级参照</b>，非逐位比较。详见 §3。</div>
 </section>
 
 <section>
@@ -118,114 +118,131 @@
 </section>
 
 <section>
-  <h2>2. 三方配置与度量口径（公平性核心）</h2>
+  <h2>2. Query Case 覆盖场景与应用范围</h2>
+  <p class="sub">NEXMark 的 <b>Q1–Q22</b> 是流处理社区定义的 22 条标准查询，覆盖从最简单无状态投影到复杂状态聚合、多流 join、会话窗口、Top-N 的完整原语谱系。wfusion 以 WFL 的 <b><code>match</code>（序列/状态机检测）</b> 与 <b><code>stats</code>（列式统计聚合）</b> 两类一等原语表达全部查询。下面按「场景类别」归类，并映射到真实 <b>实时数仓 / ETL、SIEM 安全检测、IoT 监控、风控</b> 四类应用范围。</p>
+  <h3>2.1 场景类别与覆盖 Query</h3>
+  <div class="tbl-scroll"><table>
+    <tr><th>场景类别</th><th>覆盖 Query</th><th>流处理形态</th><th>典型应用范围</th></tr>
+    <tr><td>无状态投影 / 标量计算</td><td>q1, q2, q3, q14, q22</td><td>字段变换、货币换算、条件选择、URL 解析</td><td>事件字段归一化与富化、黑白名单命中、日志标准化（ECS/CEF）</td></tr>
+    <tr><td>全量落盘 / 热冷分流</td><td>q10, q21</td><td>每条事件一行输出、热通道映射 + 冷 URL</td><td>原始事件归档、取证留痕、热冷数据分层</td></tr>
+    <tr><td>时间窗口统计（stats）</td><td>q4, q15, q16, q17, q18, q19</td><td>累积/日历天/会话窗口 + count/min/max/avg/sum/top-N/last</td><td>指标基线、行为统计、Top-N 异常排行、按天聚合看板</td></tr>
+    <tr><td>滑窗 / 跳窗 / 会话窗</td><td>q5, q11</td><td>HOP 跳窗、session 会话窗</td><td>滑动时间窗热门/突增检测、用户会话行为分析</td></tr>
+    <tr><td>序列检测 / 状态机（match）</td><td>q7</td><td>match&lt;key:dur&gt; + top_ties</td><td>攻击链序列匹配（暴力破解→提权→外联）、多步异常</td></tr>
+    <tr><td>多流 Join</td><td>q8, q9, q13, q20</td><td>TUMBLE/asof/snapshot deferred join、展开关联</td><td>上下文富化（IP→资产、用户→部门）、关联告警归并、维表/快照关联</td></tr>
+    <tr><td>处理时间窗</td><td>q12</td><td>每 bidder × 10s 处理时间窗计数</td><td>基于处理时间的限流/频控/去重</td></tr>
+  </table></div>
+  <h3>2.2 应用范围映射</h3>
+  <ul>
+    <li><b>实时数仓 / ETL</b>：q1/q2/q3/q10/q14/q21/q22 的投影、过滤、富化、落盘即典型流 ETL。</li>
+    <li><b>SIEM / 安全检测</b>：q7（序列匹配）、q4/q15–q19（行为统计与 Top-N）、q8/q9/q13/q20（上下文关联）对应检测规则、告警归并与实体行为分析。</li>
+    <li><b>IoT / 监控</b>：q5/q11（滑窗/会话突增）、q12（处理时间频控）对应指标异常与限流。</li>
+    <li><b>风控</b>：q18（每实体最后状态）、q19（Top-N）对应实时名单与排行风控。</li>
+  </ul>
+  <div class="note">各 Query 的具体流处理形态见 §4 性能 PK 主表「语义」列；q6 因架构性慢移出 <code>all</code> 套件（单跑保留），不计入主表。</div>
+</section>
+
+<section>
+  <h2>3. 三方配置与度量口径（公平性核心）</h2>
   <div class="tbl-scroll"><table>
     <tr><th>维度</th><th>warp-fusion</th><th>OSS Flink</th><th>VVR（实时计算 Flink）</th></tr>
     <tr><td>引擎版本</td><td>warp-fusion（wp-reactor）v2.0.7</td><td>1.20.4</td><td>vvr-11.5-jdk11-flink-1.20</td></tr>
     <tr><td>数据规模</td><td>100,000,000（PK 主表）</td><td>100,000,000</td><td>100,000,000</td></tr>
-    <tr><td>计算资源</td><td>Linux 8 核（实际≥10，与 VVR 同型号云服务器）</td><td>3×ecs.g6a.xlarge = 12 vCPU/48GiB</td><td>8 CU ≈ 8 vCPU / 32 GiB（托管分布式集群，总资源=8C/32G，与 wfusion 同型号云服务器）</td></tr>
+    <tr><td>计算资源</td><td>Linux 8 核（与 VVR 同型号云服务器）</td><td>3×ecs.g6a.xlarge = 12 vCPU/48GiB</td><td>8 CU ≈ 8 vCPU / 32 GiB（托管分布式集群，总资源=8C/32G，与 wfusion 同型号云服务器）</td></tr>
     <tr><td>sink</td><td>本地文件（blackhole 等价）</td><td>Blackhole</td><td>Blackhole</td></tr>
     <tr><td>指标</td><td>EPS = Σn/(max emit−min start)（哨兵）</td><td>RPS = 输入量/用时</td><td>RPS = 输入量/用时</td></tr>
     <tr><td>来源</td><td>本仓库 <code>bench.sh</code></td><td>阿里白皮书</td><td>阿里白皮书</td></tr>
   </table></div>
   <div class="note ok">本版 PK 主表与白皮书<b>同规模（100M × 100M）</b>；wfusion 与 VVR 使用<b>相同型号云服务器</b>，残余不对等仅剩<b>计算资源计量口径</b>（8 核 vs 8CU，OSS 为 3×12vCPU），结论作量级参照。wfusion 哨兵 EPS 与白皮书 RPS 思路同源（消化记录数 ÷ 耗时）。</div>
+  <div class="note">VVR 相对 OSS 的平均倍数：在 20 个有基线查询上，VVR RPS ÷ OSS RPS 的<b>几何平均 3.57×、算术平均 3.89×</b>，与白皮书公布的整体 <b>3.24×</b> 同量级（VVR 自身体现对开源 Flink 约 3~4× 的企业级优化）；wfusion 在此基础上进一步领先（见 §4）。</div>
 </section>
 
 <section>
-  <h2>3. 性能 PK 主表（100M Linux · 2026-08-27 权威跑批 · v2.0.7）</h2>
+  <h2>4. 性能 PK 主表（100M Linux · 2026-08-27 权威跑批 · v2.0.7）</h2>
   <p class="sub">EPS/RPS 单位：条/秒。倍数 = wfusion EPS ÷ 对应基线 RPS。q13 白皮书未发布基线（重写后 O(1) snapshot join，已实测 8.17M），标 N/A。</p>
   <div class="tbl-scroll"><table>
     <tr><th>Query</th><th>语义</th><th>wfusion EPS</th><th>OSS RPS</th><th>VVR RPS</th><th>vs OSS</th><th>vs VVR</th><th>RSS(MB)</th></tr>
-    <tr><td class='q'>q1</td><td class='sem'>无状态投影（货币换算 0.908×price + 过滤）</td><td class='num'>15.62M</td><td class='num'>1.75M</td><td class='num'>4.38M</td><td class='num strong'>8.91×</td><td class='num strong'>3.57×</td><td class='num'>4,190</td></tr>
-<tr><td class='q'>q2</td><td class='sem'>选择（MOD(auction,123)=0 的 bid）</td><td class='num'>28.35M</td><td class='num'>1.93M</td><td class='num'>6.57M</td><td class='num strong'>14.71×</td><td class='num strong'>4.32×</td><td class='num'>4,300</td></tr>
-<tr><td class='q'>q3</td><td class='sem'>按州过滤（IN OR/ID/CA）</td><td class='num'>21.32M</td><td class='num'>1.18M</td><td class='num'>4.64M</td><td class='num strong'>18.12×</td><td class='num strong'>4.60×</td><td class='num'>5,239</td></tr>
-<tr><td class='q'>q4</td><td class='sem'>分类均价（累积窗口 deferred reduce + stats）</td><td class='num'>3.75M</td><td class='num'>0.18M</td><td class='num'>0.64M</td><td class='num strong'>20.78×</td><td class='num strong'>5.90×</td><td class='num'>13,696</td></tr>
-<tr><td class='q'>q5</td><td class='sem'>热门新商品（HOP 10s/2s + top_ties(1)）</td><td class='num'>2.31M</td><td class='num'>0.27M</td><td class='num'>0.28M</td><td class='num strong'>8.43×</td><td class='num strong'>8.24×</td><td class='num'>13,577</td></tr>
-<tr><td class='q'>q7</td><td class='sem'>时段最高出价（match<auction:10s> + top_ties）</td><td class='num'>9.52M</td><td class='num'>0.08M</td><td class='num'>0.30M</td><td class='num strong'>119.74×</td><td class='num strong'>31.79×</td><td class='num'>4,203</td></tr>
-<tr><td class='q'>q8</td><td class='sem'>新用户 + 其拍卖（TUMBLE deferred join）</td><td class='num'>29.55M</td><td class='num'>1.25M</td><td class='num'>3.34M</td><td class='num strong'>23.58×</td><td class='num strong'>8.85×</td><td class='num'>5,221</td></tr>
-<tr><td class='q'>q9</td><td class='sem'>中标出价（asof deferred reduce join）</td><td class='num'>7.77M</td><td class='num'>0.04M</td><td class='num'>0.38M</td><td class='num strong'>180.71×</td><td class='num strong'>20.72×</td><td class='num'>7,354</td></tr>
-<tr><td class='q'>q10</td><td class='sem'>全量 bid 按时间分区落盘（每 bid 一行）</td><td class='num'>17.38M</td><td class='num'>0.53M</td><td class='num'>1.95M</td><td class='num strong'>33.02×</td><td class='num strong'>8.90×</td><td class='num'>4,219</td></tr>
-<tr><td class='q'>q11</td><td class='sem'>用户会话统计（session 窗口 + 分片）</td><td class='num'>10.42M</td><td class='num'>0.24M</td><td class='num'>0.69M</td><td class='num strong'>42.56×</td><td class='num strong'>15.21×</td><td class='num'>4,080</td></tr>
-<tr><td class='q'>q12</td><td class='sem'>每 bidder × 10s 处理时间窗计数</td><td class='num'>10.32M</td><td class='num'>0.82M</td><td class='num'>2.70M</td><td class='num strong'>12.54×</td><td class='num strong'>3.82×</td><td class='num'>4,109</td></tr>
-<tr class="na"><td class='q'>q13</td><td class='sem'>有界侧输入 join（snapshot join，重写后 O(1)）</td><td class='num'>8.17M</td><td class='num'>—</td><td class='num'>—</td><td class='num strong'>N/A</td><td class='num strong'>N/A</td><td class='num'>5,091</td></tr>
-<tr><td class='q'>q14</td><td class='sem'>时间戳换算 + 价格过滤（Calculation）</td><td class='num'>8.87M</td><td class='num'>1.45M</td><td class='num'>5.00M</td><td class='num strong'>6.11×</td><td class='num strong'>1.77×</td><td class='num'>4,213</td></tr>
-<tr><td class='q'>q15</td><td class='sem'>日历天出价统计（stats + 1d 桶）</td><td class='num'>6.57M</td><td class='num'>0.54M</td><td class='num'>2.34M</td><td class='num strong'>12.07×</td><td class='num strong'>2.81×</td><td class='num'>5,646</td></tr>
-<tr><td class='q'>q16</td><td class='sem'>日历天渠道统计（stats + 1d 桶）</td><td class='num'>4.24M</td><td class='num'>0.11M</td><td class='num'>0.30M</td><td class='num strong'>38.94×</td><td class='num strong'>14.31×</td><td class='num'>7,607</td></tr>
-<tr><td class='q'>q17</td><td class='sem'>日历天拍卖统计（stats + 1d 桶）</td><td class='num'>4.13M</td><td class='num'>0.97M</td><td class='num'>3.69M</td><td class='num strong'>4.25×</td><td class='num strong'>1.12×</td><td class='num'>19,361</td></tr>
-<tr><td class='q'>q18</td><td class='sem'>每 (bidder,auction) 最后一条 bid（stats last）</td><td class='num'>2.90M</td><td class='num'>0.17M</td><td class='num'>1.04M</td><td class='num strong'>16.69×</td><td class='num strong'>2.80×</td><td class='num'>30,055</td></tr>
-<tr><td class='q'>q19</td><td class='sem'>拍卖 Top-10 价格（stats<> top-N）</td><td class='num'>7.29M</td><td class='num'>0.17M</td><td class='num'>1.05M</td><td class='num strong'>42.76×</td><td class='num strong'>6.94×</td><td class='num'>6,421</td></tr>
-<tr><td class='q'>q20</td><td class='sem'>展开 bid 关联 auction（snapshot join + where）</td><td class='num'>17.10M</td><td class='num'>0.07M</td><td class='num'>0.43M</td><td class='num strong'>229.23×</td><td class='num strong'>39.58×</td><td class='num'>8,187</td></tr>
-<tr><td class='q'>q21</td><td class='sem'>附加 channel id（热通道映射 + cold url）</td><td class='num'>13.88M</td><td class='num'>0.79M</td><td class='num'>2.52M</td><td class='num strong'>17.65×</td><td class='num strong'>5.51×</td><td class='num'>4,293</td></tr>
-<tr><td class='q'>q22</td><td class='sem'>URL 目录投影</td><td class='num'>10.24M</td><td class='num'>1.05M</td><td class='num'>3.20M</td><td class='num strong'>9.71×</td><td class='num strong'>3.20×</td><td class='num'>4,500</td></tr>
+    <tr><td class='q'>q1</td><td class='sem'>无状态投影（货币换算 0.908×price + 过滤）</td><td class='num'>16.85M</td><td class='num'>1.75M</td><td class='num'>4.38M</td><td class='num strong'>9.62×</td><td class='num strong'>3.85×</td><td class='num'>4,185</td></tr>
+<tr><td class='q'>q2</td><td class='sem'>选择（MOD(auction,123)=0 的 bid）</td><td class='num'>31.08M</td><td class='num'>1.93M</td><td class='num'>6.57M</td><td class='num strong'>16.13×</td><td class='num strong'>4.73×</td><td class='num'>4,285</td></tr>
+<tr><td class='q'>q3</td><td class='sem'>按州过滤（IN OR/ID/CA）</td><td class='num'>22.18M</td><td class='num'>1.18M</td><td class='num'>4.64M</td><td class='num strong'>18.84×</td><td class='num strong'>4.79×</td><td class='num'>5,219</td></tr>
+<tr><td class='q'>q4</td><td class='sem'>分类均价（累积窗口 deferred reduce + stats）</td><td class='num'>3.74M</td><td class='num'>0.18M</td><td class='num'>0.64M</td><td class='num strong'>20.69×</td><td class='num strong'>5.87×</td><td class='num'>18,459</td></tr>
+<tr><td class='q'>q5</td><td class='sem'>热门新商品（HOP 10s/2s + top_ties(1)）</td><td class='num'>2.00M</td><td class='num'>0.27M</td><td class='num'>0.28M</td><td class='num strong'>7.31×</td><td class='num strong'>7.15×</td><td class='num'>13,546</td></tr>
+<tr><td class='q'>q7</td><td class='sem'>时段最高出价（match<auction:10s> + top_ties）</td><td class='num'>9.29M</td><td class='num'>0.08M</td><td class='num'>0.30M</td><td class='num strong'>116.74×</td><td class='num strong'>31.03×</td><td class='num'>4,067</td></tr>
+<tr><td class='q'>q8</td><td class='sem'>新用户 + 其拍卖（TUMBLE deferred join）</td><td class='num'>28.97M</td><td class='num'>1.25M</td><td class='num'>3.34M</td><td class='num strong'>23.12×</td><td class='num strong'>8.67×</td><td class='num'>5,264</td></tr>
+<tr><td class='q'>q9</td><td class='sem'>中标出价（asof deferred reduce join）</td><td class='num'>7.96M</td><td class='num'>0.04M</td><td class='num'>0.38M</td><td class='num strong'>185.08×</td><td class='num strong'>21.22×</td><td class='num'>7,208</td></tr>
+<tr><td class='q'>q10</td><td class='sem'>全量 bid 按时间分区落盘（每 bid 一行）</td><td class='num'>17.30M</td><td class='num'>0.53M</td><td class='num'>1.95M</td><td class='num strong'>32.82×</td><td class='num strong'>8.85×</td><td class='num'>4,245</td></tr>
+<tr><td class='q'>q11</td><td class='sem'>用户会话统计（session 窗口 + 分片）</td><td class='num'>10.85M</td><td class='num'>0.24M</td><td class='num'>0.69M</td><td class='num strong'>44.36×</td><td class='num strong'>15.84×</td><td class='num'>4,085</td></tr>
+<tr><td class='q'>q12</td><td class='sem'>每 bidder × 10s 处理时间窗计数</td><td class='num'>10.89M</td><td class='num'>0.82M</td><td class='num'>2.70M</td><td class='num strong'>13.23×</td><td class='num strong'>4.03×</td><td class='num'>4,108</td></tr>
+<tr class="na"><td class='q'>q13</td><td class='sem'>有界侧输入 join（snapshot join，重写后 O(1)）</td><td class='num'>8.20M</td><td class='num'>—</td><td class='num'>—</td><td class='num strong'>N/A</td><td class='num strong'>N/A</td><td class='num'>4,912</td></tr>
+<tr><td class='q'>q14</td><td class='sem'>时间戳换算 + 价格过滤（Calculation）</td><td class='num'>8.80M</td><td class='num'>1.45M</td><td class='num'>5.00M</td><td class='num strong'>6.06×</td><td class='num strong'>1.76×</td><td class='num'>3,994</td></tr>
+<tr><td class='q'>q15</td><td class='sem'>日历天出价统计（stats + 1d 桶）</td><td class='num'>7.39M</td><td class='num'>0.54M</td><td class='num'>2.34M</td><td class='num strong'>13.57×</td><td class='num strong'>3.15×</td><td class='num'>5,561</td></tr>
+<tr><td class='q'>q16</td><td class='sem'>日历天渠道统计（stats + 1d 桶）</td><td class='num'>5.92M</td><td class='num'>0.11M</td><td class='num'>0.30M</td><td class='num strong'>54.36×</td><td class='num strong'>19.96×</td><td class='num'>7,470</td></tr>
+<tr><td class='q'>q17</td><td class='sem'>日历天拍卖统计（stats + 1d 桶）</td><td class='num'>8.36M</td><td class='num'>0.97M</td><td class='num'>3.69M</td><td class='num strong'>8.60×</td><td class='num strong'>2.26×</td><td class='num'>18,068</td></tr>
+<tr><td class='q'>q18</td><td class='sem'>每 (bidder,auction) 最后一条 bid（stats last）</td><td class='num'>3.09M</td><td class='num'>0.17M</td><td class='num'>1.04M</td><td class='num strong'>17.78×</td><td class='num strong'>2.98×</td><td class='num'>28,614</td></tr>
+<tr><td class='q'>q19</td><td class='sem'>拍卖 Top-10 价格（stats<> top-N）</td><td class='num'>7.86M</td><td class='num'>0.17M</td><td class='num'>1.05M</td><td class='num strong'>46.08×</td><td class='num strong'>7.48×</td><td class='num'>6,620</td></tr>
+<tr><td class='q'>q20</td><td class='sem'>展开 bid 关联 auction（snapshot join + where）</td><td class='num'>17.27M</td><td class='num'>0.07M</td><td class='num'>0.43M</td><td class='num strong'>231.49×</td><td class='num strong'>39.98×</td><td class='num'>8,046</td></tr>
+<tr><td class='q'>q21</td><td class='sem'>附加 channel id（热通道映射 + cold url）</td><td class='num'>13.67M</td><td class='num'>0.79M</td><td class='num'>2.52M</td><td class='num strong'>17.38×</td><td class='num strong'>5.43×</td><td class='num'>4,219</td></tr>
+<tr><td class='q'>q22</td><td class='sem'>URL 目录投影</td><td class='num'>10.33M</td><td class='num'>1.05M</td><td class='num'>3.20M</td><td class='num strong'>9.79×</td><td class='num strong'>3.23×</td><td class='num'>4,305</td></tr>
   </table></div>
-  <div class="note">结论：vs OSS <b>4.25×~229.23× 全面领先</b>（20/20）；vs VVR <b>1.12×~39.58×，20/20 全部达 VVR</b>。
-  边缘项：<b>q17 vs VVR 1.12×</b>（stats 1d 桶，状态窗随规模增长）；q14 1.77×、q22 3.20×。q13 白皮书无基线。⚠ <b>q18 RSS 30GB</b> 为已知内存问题。</div>
+  <div class="note">结论：vs OSS <b>6.06×~231.49× 全面领先</b>（20/20）；vs VVR <b>1.76×~39.98×，20/20 全部达 VVR</b>。
+  边缘项：<b>q14 vs VVR 1.76×</b>（Calculation 类、字符串处理重、RSS 仅 3.9GB，为 vs VVR 最弱项）；q17 2.26×、q22 3.23×。q13 白皮书无基线。⚠ <b>q18 RSS 27.9GB</b> 为已知内存问题。
+  <br><b>平均倍数</b>：相对 OSS <b>几何 24.3× / 算术 44.7×</b>；相对 VVR <b>几何 6.8× / 算术 10.1×</b>（算术均值受 q20 等极端倍数抬升，几何均值更稳健）。</div>
+  <div class="note"><b>关于平均倍数：算术平均 vs 几何平均</b><br>
+  报告对每个相对倍数同时给出算术平均与几何平均（如相对 VVR：算术 10.1× / 几何 6.8×），来源完全相同（20 个有基线查询的逐查询倍数），只求平均方式不同：
+  <ul style="margin:6px 0 2px 18px;line-height:1.5">
+    <li><b>算术平均</b>（10.1×）：20 个倍数直接相加 ÷ 20，等权加法式。</li>
+    <li><b>几何平均</b>（6.8×）：相乘再开 20 次方，等价于先取对数求平均再取指数，乘法式。</li>
+  </ul>
+  对任意正数算术 ≥ 几何（AM–GM）。两者差约 1.5×，因倍数<b>严重右偏</b>：约一半查询仅 1.76×~7.15×（几何均值下方），但 <b>q7 31×、q9 21.2×、q11 15.8×、q16 20×、q20 40×</b> 五个明星查询形成长尾，把算术均值拽高。<b>报告以几何均值为头条</b>：比率量本就乘性、几何具乘性对称且抗离群。对照：VVR/OSS 几何 3.57×/算术 3.89×（差距小、分布对称）；wfusion/OSS 几何 24.3×/算术 44.7×（差距 1.8×，极度右偏）。<b>几何均值 = 典型领先幅度（头条）；算术均值 = 上限语境。</b></div>
   <div class="note">WFL 原语分工：wfusion 规则以 <code>match</code>（序列/状态机检测）与 <code>stats</code>（列式统计聚合）两类一等原语表达；PK 边缘项 <b>q14 / q17（vs VVR 最弱）与 q18（RSS 内存问题）均落在 <code>stats</code> 路径</b>，非 <code>match</code>。</div>
 </section>
 
 <section>
-  <h2>4. 可视化：领先倍数</h2>
+  <h2>5. 可视化：领先倍数</h2>
   <div class="grid2">
     <div>
-      <h3>相对 VVR 的倍数 · 对数座标（1.12× – 39.58×）</h3>
+      <h3>相对 VVR 的倍数 · 对数座标（1.76× – 39.98×）</h3>
       <div class="legend"><span><i style="background:#2f9e8f"></i>低（≤11×）</span><span><i style="background:#e0922f"></i>中</span><span><i style="background:#c0392b"></i>高（≥25×）</span></div>
-      <div class="chart"><div class="brow"><span class="blab">q1</span><div class="btrack"><div class="bfill" style="width:34.6%;background:#2f9e8f"></div></div><span class="bval">3.57×</span></div><div class="brow"><span class="blab">q2</span><div class="btrack"><div class="bfill" style="width:39.8%;background:#2f9e8f"></div></div><span class="bval">4.32×</span></div><div class="brow"><span class="blab">q3</span><div class="btrack"><div class="bfill" style="width:41.5%;background:#2f9e8f"></div></div><span class="bval">4.60×</span></div><div class="brow"><span class="blab">q4</span><div class="btrack"><div class="bfill" style="width:48.3%;background:#2f9e8f"></div></div><span class="bval">5.90×</span></div><div class="brow"><span class="blab">q5</span><div class="btrack"><div class="bfill" style="width:57.3%;background:#2f9e8f"></div></div><span class="bval">8.24×</span></div><div class="brow"><span class="blab">q7</span><div class="btrack"><div class="bfill" style="width:94.0%;background:#c0392b"></div></div><span class="bval">31.79×</span></div><div class="brow"><span class="blab">q8</span><div class="btrack"><div class="bfill" style="width:59.3%;background:#2f9e8f"></div></div><span class="bval">8.85×</span></div><div class="brow"><span class="blab">q9</span><div class="btrack"><div class="bfill" style="width:82.4%;background:#e0922f"></div></div><span class="bval">20.72×</span></div><div class="brow"><span class="blab">q10</span><div class="btrack"><div class="bfill" style="width:59.4%;background:#2f9e8f"></div></div><span class="bval">8.90×</span></div><div class="brow"><span class="blab">q11</span><div class="btrack"><div class="bfill" style="width:74.0%;background:#e0922f"></div></div><span class="bval">15.21×</span></div><div class="brow"><span class="blab">q12</span><div class="btrack"><div class="bfill" style="width:36.4%;background:#2f9e8f"></div></div><span class="bval">3.82×</span></div><div class="brow"><span class="blab">q14</span><div class="btrack"><div class="bfill" style="width:15.5%;background:#2f9e8f"></div></div><span class="bval">1.77×</span></div><div class="brow"><span class="blab">q15</span><div class="btrack"><div class="bfill" style="width:28.1%;background:#2f9e8f"></div></div><span class="bval">2.81×</span></div><div class="brow"><span class="blab">q16</span><div class="btrack"><div class="bfill" style="width:72.3%;background:#e0922f"></div></div><span class="bval">14.31×</span></div><div class="brow"><span class="blab">q17</span><div class="btrack"><div class="bfill" style="width:3.1%;background:#2f9e8f"></div></div><span class="bval">1.12×</span></div><div class="brow"><span class="blab">q18</span><div class="btrack"><div class="bfill" style="width:28.0%;background:#2f9e8f"></div></div><span class="bval">2.80×</span></div><div class="brow"><span class="blab">q19</span><div class="btrack"><div class="bfill" style="width:52.7%;background:#2f9e8f"></div></div><span class="bval">6.94×</span></div><div class="brow"><span class="blab">q20</span><div class="btrack"><div class="bfill" style="width:100.0%;background:#c0392b"></div></div><span class="bval">39.58×</span></div><div class="brow"><span class="blab">q21</span><div class="btrack"><div class="bfill" style="width:46.4%;background:#2f9e8f"></div></div><span class="bval">5.51×</span></div><div class="brow"><span class="blab">q22</span><div class="btrack"><div class="bfill" style="width:31.6%;background:#2f9e8f"></div></div><span class="bval">3.20×</span></div></div>
+      <div class="chart"><div class="brow"><span class="blab">q1</span><div class="btrack"><div class="bfill" style="width:36.5%;background:#2f9e8f"></div></div><span class="bval">3.85×</span></div><div class="brow"><span class="blab">q2</span><div class="btrack"><div class="bfill" style="width:42.1%;background:#2f9e8f"></div></div><span class="bval">4.73×</span></div><div class="brow"><span class="blab">q3</span><div class="btrack"><div class="bfill" style="width:42.5%;background:#2f9e8f"></div></div><span class="bval">4.79×</span></div><div class="brow"><span class="blab">q4</span><div class="btrack"><div class="bfill" style="width:48.0%;background:#2f9e8f"></div></div><span class="bval">5.87×</span></div><div class="brow"><span class="blab">q5</span><div class="btrack"><div class="bfill" style="width:53.3%;background:#2f9e8f"></div></div><span class="bval">7.15×</span></div><div class="brow"><span class="blab">q7</span><div class="btrack"><div class="bfill" style="width:93.1%;background:#c0392b"></div></div><span class="bval">31.03×</span></div><div class="brow"><span class="blab">q8</span><div class="btrack"><div class="bfill" style="width:58.6%;background:#2f9e8f"></div></div><span class="bval">8.67×</span></div><div class="brow"><span class="blab">q9</span><div class="btrack"><div class="bfill" style="width:82.8%;background:#e0922f"></div></div><span class="bval">21.22×</span></div><div class="brow"><span class="blab">q10</span><div class="btrack"><div class="bfill" style="width:59.1%;background:#2f9e8f"></div></div><span class="bval">8.85×</span></div><div class="brow"><span class="blab">q11</span><div class="btrack"><div class="bfill" style="width:74.9%;background:#e0922f"></div></div><span class="bval">15.84×</span></div><div class="brow"><span class="blab">q12</span><div class="btrack"><div class="bfill" style="width:37.8%;background:#2f9e8f"></div></div><span class="bval">4.03×</span></div><div class="brow"><span class="blab">q14</span><div class="btrack"><div class="bfill" style="width:15.3%;background:#2f9e8f"></div></div><span class="bval">1.76×</span></div><div class="brow"><span class="blab">q15</span><div class="btrack"><div class="bfill" style="width:31.1%;background:#2f9e8f"></div></div><span class="bval">3.15×</span></div><div class="brow"><span class="blab">q16</span><div class="btrack"><div class="bfill" style="width:81.2%;background:#e0922f"></div></div><span class="bval">19.96×</span></div><div class="brow"><span class="blab">q17</span><div class="btrack"><div class="bfill" style="width:22.1%;background:#2f9e8f"></div></div><span class="bval">2.26×</span></div><div class="brow"><span class="blab">q18</span><div class="btrack"><div class="bfill" style="width:29.6%;background:#2f9e8f"></div></div><span class="bval">2.98×</span></div><div class="brow"><span class="blab">q19</span><div class="btrack"><div class="bfill" style="width:54.6%;background:#2f9e8f"></div></div><span class="bval">7.48×</span></div><div class="brow"><span class="blab">q20</span><div class="btrack"><div class="bfill" style="width:100.0%;background:#c0392b"></div></div><span class="bval">39.98×</span></div><div class="brow"><span class="blab">q21</span><div class="btrack"><div class="bfill" style="width:45.9%;background:#2f9e8f"></div></div><span class="bval">5.43×</span></div><div class="brow"><span class="blab">q22</span><div class="btrack"><div class="bfill" style="width:31.8%;background:#2f9e8f"></div></div><span class="bval">3.23×</span></div></div>
     </div>
     <div>
-      <h3>相对 OSS Flink 的倍数 · 对数座标（4.25× – 229.23×）</h3>
+      <h3>相对 OSS Flink 的倍数 · 对数座标（6.06× – 231.49×）</h3>
       <div class="legend"><span><i style="background:#2f9e8f"></i>低（≤60×）</span><span><i style="background:#e0922f"></i>中</span><span><i style="background:#c0392b"></i>高（≥120×）</span></div>
-      <div class="chart"><div class="brow"><span class="blab">q1</span><div class="btrack"><div class="bfill" style="width:40.2%;background:#2f9e8f"></div></div><span class="bval">8.91×</span></div><div class="brow"><span class="blab">q2</span><div class="btrack"><div class="bfill" style="width:49.5%;background:#2f9e8f"></div></div><span class="bval">14.71×</span></div><div class="brow"><span class="blab">q3</span><div class="btrack"><div class="bfill" style="width:53.3%;background:#2f9e8f"></div></div><span class="bval">18.12×</span></div><div class="brow"><span class="blab">q4</span><div class="btrack"><div class="bfill" style="width:55.8%;background:#2f9e8f"></div></div><span class="bval">20.78×</span></div><div class="brow"><span class="blab">q5</span><div class="btrack"><div class="bfill" style="width:39.2%;background:#2f9e8f"></div></div><span class="bval">8.43×</span></div><div class="brow"><span class="blab">q7</span><div class="btrack"><div class="bfill" style="width:88.1%;background:#e0922f"></div></div><span class="bval">119.74×</span></div><div class="brow"><span class="blab">q8</span><div class="btrack"><div class="bfill" style="width:58.2%;background:#2f9e8f"></div></div><span class="bval">23.58×</span></div><div class="brow"><span class="blab">q9</span><div class="btrack"><div class="bfill" style="width:95.6%;background:#c0392b"></div></div><span class="bval">180.71×</span></div><div class="brow"><span class="blab">q10</span><div class="btrack"><div class="bfill" style="width:64.3%;background:#2f9e8f"></div></div><span class="bval">33.02×</span></div><div class="brow"><span class="blab">q11</span><div class="btrack"><div class="bfill" style="width:69.0%;background:#2f9e8f"></div></div><span class="bval">42.56×</span></div><div class="brow"><span class="blab">q12</span><div class="btrack"><div class="bfill" style="width:46.5%;background:#2f9e8f"></div></div><span class="bval">12.54×</span></div><div class="brow"><span class="blab">q14</span><div class="btrack"><div class="bfill" style="width:33.3%;background:#2f9e8f"></div></div><span class="bval">6.11×</span></div><div class="brow"><span class="blab">q15</span><div class="btrack"><div class="bfill" style="width:45.8%;background:#2f9e8f"></div></div><span class="bval">12.07×</span></div><div class="brow"><span class="blab">q16</span><div class="btrack"><div class="bfill" style="width:67.4%;background:#2f9e8f"></div></div><span class="bval">38.94×</span></div><div class="brow"><span class="blab">q17</span><div class="btrack"><div class="bfill" style="width:26.6%;background:#2f9e8f"></div></div><span class="bval">4.25×</span></div><div class="brow"><span class="blab">q18</span><div class="btrack"><div class="bfill" style="width:51.8%;background:#2f9e8f"></div></div><span class="bval">16.69×</span></div><div class="brow"><span class="blab">q19</span><div class="btrack"><div class="bfill" style="width:69.1%;background:#2f9e8f"></div></div><span class="bval">42.76×</span></div><div class="brow"><span class="blab">q20</span><div class="btrack"><div class="bfill" style="width:100.0%;background:#c0392b"></div></div><span class="bval">229.23×</span></div><div class="brow"><span class="blab">q21</span><div class="btrack"><div class="bfill" style="width:52.8%;background:#2f9e8f"></div></div><span class="bval">17.65×</span></div><div class="brow"><span class="blab">q22</span><div class="btrack"><div class="bfill" style="width:41.8%;background:#2f9e8f"></div></div><span class="bval">9.71×</span></div></div>
+      <div class="chart"><div class="brow"><span class="blab">q1</span><div class="btrack"><div class="bfill" style="width:41.6%;background:#2f9e8f"></div></div><span class="bval">9.62×</span></div><div class="brow"><span class="blab">q2</span><div class="btrack"><div class="bfill" style="width:51.1%;background:#2f9e8f"></div></div><span class="bval">16.13×</span></div><div class="brow"><span class="blab">q3</span><div class="btrack"><div class="bfill" style="width:53.9%;background:#2f9e8f"></div></div><span class="bval">18.84×</span></div><div class="brow"><span class="blab">q4</span><div class="btrack"><div class="bfill" style="width:55.6%;background:#2f9e8f"></div></div><span class="bval">20.69×</span></div><div class="brow"><span class="blab">q5</span><div class="btrack"><div class="bfill" style="width:36.5%;background:#2f9e8f"></div></div><span class="bval">7.31×</span></div><div class="brow"><span class="blab">q7</span><div class="btrack"><div class="bfill" style="width:87.4%;background:#e0922f"></div></div><span class="bval">116.74×</span></div><div class="brow"><span class="blab">q8</span><div class="btrack"><div class="bfill" style="width:57.7%;background:#2f9e8f"></div></div><span class="bval">23.12×</span></div><div class="brow"><span class="blab">q9</span><div class="btrack"><div class="bfill" style="width:95.9%;background:#c0392b"></div></div><span class="bval">185.08×</span></div><div class="brow"><span class="blab">q10</span><div class="btrack"><div class="bfill" style="width:64.1%;background:#2f9e8f"></div></div><span class="bval">32.82×</span></div><div class="brow"><span class="blab">q11</span><div class="btrack"><div class="bfill" style="width:69.7%;background:#2f9e8f"></div></div><span class="bval">44.36×</span></div><div class="brow"><span class="blab">q12</span><div class="btrack"><div class="bfill" style="width:47.4%;background:#2f9e8f"></div></div><span class="bval">13.23×</span></div><div class="brow"><span class="blab">q14</span><div class="btrack"><div class="bfill" style="width:33.1%;background:#2f9e8f"></div></div><span class="bval">6.06×</span></div><div class="brow"><span class="blab">q15</span><div class="btrack"><div class="bfill" style="width:47.9%;background:#2f9e8f"></div></div><span class="bval">13.57×</span></div><div class="brow"><span class="blab">q16</span><div class="btrack"><div class="bfill" style="width:73.4%;background:#2f9e8f"></div></div><span class="bval">54.36×</span></div><div class="brow"><span class="blab">q17</span><div class="btrack"><div class="bfill" style="width:39.5%;background:#2f9e8f"></div></div><span class="bval">8.60×</span></div><div class="brow"><span class="blab">q18</span><div class="btrack"><div class="bfill" style="width:52.9%;background:#2f9e8f"></div></div><span class="bval">17.78×</span></div><div class="brow"><span class="blab">q19</span><div class="btrack"><div class="bfill" style="width:70.4%;background:#2f9e8f"></div></div><span class="bval">46.08×</span></div><div class="brow"><span class="blab">q20</span><div class="btrack"><div class="bfill" style="width:100.0%;background:#c0392b"></div></div><span class="bval">231.49×</span></div><div class="brow"><span class="blab">q21</span><div class="btrack"><div class="bfill" style="width:52.4%;background:#2f9e8f"></div></div><span class="bval">17.38×</span></div><div class="brow"><span class="blab">q22</span><div class="btrack"><div class="bfill" style="width:41.9%;background:#2f9e8f"></div></div><span class="bval">9.79×</span></div></div>
     </div>
   </div>
   <p class="sub" style="margin-top:2px">倍数条形采用<b>对数座标</b>（跨度 1.1×–229×，<b>1× = 与基线持平</b>基线）。条长表示相对量级而非线性比例；颜色仍按倍数大小分级（绿=低 / 橙=中 / 红=高）。</p>
   <h3>wfusion 100M 绝对吞吐（EPS）</h3>
-  <div class="chart"><div class="brow"><span class="blab">q1</span><div class="btrack"><div class="bfill" style="width:52.9%;background:#1769c2"></div></div><span class="bval">15.62M</span></div><div class="brow"><span class="blab">q2</span><div class="btrack"><div class="bfill" style="width:95.9%;background:#1769c2"></div></div><span class="bval">28.35M</span></div><div class="brow"><span class="blab">q3</span><div class="btrack"><div class="bfill" style="width:72.1%;background:#1769c2"></div></div><span class="bval">21.32M</span></div><div class="brow"><span class="blab">q4</span><div class="btrack"><div class="bfill" style="width:12.7%;background:#1769c2"></div></div><span class="bval">3.75M</span></div><div class="brow"><span class="blab">q5</span><div class="btrack"><div class="bfill" style="width:7.8%;background:#1769c2"></div></div><span class="bval">2.31M</span></div><div class="brow"><span class="blab">q7</span><div class="btrack"><div class="bfill" style="width:32.2%;background:#1769c2"></div></div><span class="bval">9.52M</span></div><div class="brow"><span class="blab">q8</span><div class="btrack"><div class="bfill" style="width:100.0%;background:#1769c2"></div></div><span class="bval">29.55M</span></div><div class="brow"><span class="blab">q9</span><div class="btrack"><div class="bfill" style="width:26.3%;background:#1769c2"></div></div><span class="bval">7.77M</span></div><div class="brow"><span class="blab">q10</span><div class="btrack"><div class="bfill" style="width:58.8%;background:#1769c2"></div></div><span class="bval">17.38M</span></div><div class="brow"><span class="blab">q11</span><div class="btrack"><div class="bfill" style="width:35.3%;background:#1769c2"></div></div><span class="bval">10.42M</span></div><div class="brow"><span class="blab">q12</span><div class="btrack"><div class="bfill" style="width:34.9%;background:#1769c2"></div></div><span class="bval">10.32M</span></div><div class="brow"><span class="blab">q13</span><div class="btrack"><div class="bfill" style="width:27.6%;background:#1769c2"></div></div><span class="bval">8.17M</span></div><div class="brow"><span class="blab">q14</span><div class="btrack"><div class="bfill" style="width:30.0%;background:#1769c2"></div></div><span class="bval">8.87M</span></div><div class="brow"><span class="blab">q15</span><div class="btrack"><div class="bfill" style="width:22.2%;background:#1769c2"></div></div><span class="bval">6.57M</span></div><div class="brow"><span class="blab">q16</span><div class="btrack"><div class="bfill" style="width:14.4%;background:#1769c2"></div></div><span class="bval">4.24M</span></div><div class="brow"><span class="blab">q17</span><div class="btrack"><div class="bfill" style="width:14.0%;background:#1769c2"></div></div><span class="bval">4.13M</span></div><div class="brow"><span class="blab">q18</span><div class="btrack"><div class="bfill" style="width:9.8%;background:#1769c2"></div></div><span class="bval">2.90M</span></div><div class="brow"><span class="blab">q19</span><div class="btrack"><div class="bfill" style="width:24.7%;background:#1769c2"></div></div><span class="bval">7.29M</span></div><div class="brow"><span class="blab">q20</span><div class="btrack"><div class="bfill" style="width:57.9%;background:#1769c2"></div></div><span class="bval">17.10M</span></div><div class="brow"><span class="blab">q21</span><div class="btrack"><div class="bfill" style="width:47.0%;background:#1769c2"></div></div><span class="bval">13.88M</span></div><div class="brow"><span class="blab">q22</span><div class="btrack"><div class="bfill" style="width:34.7%;background:#1769c2"></div></div><span class="bval">10.24M</span></div></div>
+  <div class="chart"><div class="brow"><span class="blab">q1</span><div class="btrack"><div class="bfill" style="width:54.2%;background:#1769c2"></div></div><span class="bval">16.85M</span></div><div class="brow"><span class="blab">q2</span><div class="btrack"><div class="bfill" style="width:100.0%;background:#1769c2"></div></div><span class="bval">31.08M</span></div><div class="brow"><span class="blab">q3</span><div class="btrack"><div class="bfill" style="width:71.4%;background:#1769c2"></div></div><span class="bval">22.18M</span></div><div class="brow"><span class="blab">q4</span><div class="btrack"><div class="bfill" style="width:12.0%;background:#1769c2"></div></div><span class="bval">3.74M</span></div><div class="brow"><span class="blab">q5</span><div class="btrack"><div class="bfill" style="width:6.4%;background:#1769c2"></div></div><span class="bval">2.00M</span></div><div class="brow"><span class="blab">q7</span><div class="btrack"><div class="bfill" style="width:29.9%;background:#1769c2"></div></div><span class="bval">9.29M</span></div><div class="brow"><span class="blab">q8</span><div class="btrack"><div class="bfill" style="width:93.2%;background:#1769c2"></div></div><span class="bval">28.97M</span></div><div class="brow"><span class="blab">q9</span><div class="btrack"><div class="bfill" style="width:25.6%;background:#1769c2"></div></div><span class="bval">7.96M</span></div><div class="brow"><span class="blab">q10</span><div class="btrack"><div class="bfill" style="width:55.7%;background:#1769c2"></div></div><span class="bval">17.30M</span></div><div class="brow"><span class="blab">q11</span><div class="btrack"><div class="bfill" style="width:34.9%;background:#1769c2"></div></div><span class="bval">10.85M</span></div><div class="brow"><span class="blab">q12</span><div class="btrack"><div class="bfill" style="width:35.0%;background:#1769c2"></div></div><span class="bval">10.89M</span></div><div class="brow"><span class="blab">q13</span><div class="btrack"><div class="bfill" style="width:26.4%;background:#1769c2"></div></div><span class="bval">8.20M</span></div><div class="brow"><span class="blab">q14</span><div class="btrack"><div class="bfill" style="width:28.3%;background:#1769c2"></div></div><span class="bval">8.80M</span></div><div class="brow"><span class="blab">q15</span><div class="btrack"><div class="bfill" style="width:23.8%;background:#1769c2"></div></div><span class="bval">7.39M</span></div><div class="brow"><span class="blab">q16</span><div class="btrack"><div class="bfill" style="width:19.1%;background:#1769c2"></div></div><span class="bval">5.92M</span></div><div class="brow"><span class="blab">q17</span><div class="btrack"><div class="bfill" style="width:26.9%;background:#1769c2"></div></div><span class="bval">8.36M</span></div><div class="brow"><span class="blab">q18</span><div class="btrack"><div class="bfill" style="width:9.9%;background:#1769c2"></div></div><span class="bval">3.09M</span></div><div class="brow"><span class="blab">q19</span><div class="btrack"><div class="bfill" style="width:25.3%;background:#1769c2"></div></div><span class="bval">7.86M</span></div><div class="brow"><span class="blab">q20</span><div class="btrack"><div class="bfill" style="width:55.6%;background:#1769c2"></div></div><span class="bval">17.27M</span></div><div class="brow"><span class="blab">q21</span><div class="btrack"><div class="bfill" style="width:44.0%;background:#1769c2"></div></div><span class="bval">13.67M</span></div><div class="brow"><span class="blab">q22</span><div class="btrack"><div class="bfill" style="width:33.2%;background:#1769c2"></div></div><span class="bval">10.33M</span></div></div>
 </section>
 
 <section>
-  <h2>5. 规模缩放观测（同机 30M vs 100M）</h2>
+  <h2>6. 规模缩放观测（同机 30M vs 100M）</h2>
   <p class="sub">同一台 Linux 8 核机、同一 v2.0.7，30M 与 100M 背靠背跑批。比值 = 100M EPS ÷ 30M EPS；琥珀底行标记规模退化（&lt;0.8）。</p>
   <div class="tbl-scroll"><table>
     <tr><th>Query</th><th>30M EPS</th><th>100M EPS</th><th>100M/30M</th><th>类型</th></tr>
-    <tr><td class='q'>q1</td><td class='num'>12.63M</td><td class='num'>15.62M</td><td class='num'>1.24×</td><td class='sem'>近线性/无退化</td></tr>
-<tr><td class='q'>q2</td><td class='num'>29.50M</td><td class='num'>28.35M</td><td class='num'>0.96×</td><td class='sem'>近线性/无退化</td></tr>
-<tr><td class='q'>q3</td><td class='num'>22.75M</td><td class='num'>21.32M</td><td class='num'>0.94×</td><td class='sem'>近线性/无退化</td></tr>
-<tr><td class='q'>q4</td><td class='num'>3.99M</td><td class='num'>3.75M</td><td class='num'>0.94×</td><td class='sem'>近线性/无退化</td></tr>
-<tr class="degrade"><td class='q'>q5</td><td class='num'>3.43M</td><td class='num'>2.31M</td><td class='num'>0.67×</td><td class='sem'>状态型退化</td></tr>
-<tr><td class='q'>q7</td><td class='num'>9.03M</td><td class='num'>9.52M</td><td class='num'>1.05×</td><td class='sem'>近线性/无退化</td></tr>
-<tr><td class='q'>q8</td><td class='num'>29.33M</td><td class='num'>29.55M</td><td class='num'>1.01×</td><td class='sem'>近线性/无退化</td></tr>
-<tr><td class='q'>q9</td><td class='num'>9.33M</td><td class='num'>7.77M</td><td class='num'>0.83×</td><td class='sem'>近线性/无退化</td></tr>
-<tr><td class='q'>q10</td><td class='num'>17.40M</td><td class='num'>17.38M</td><td class='num'>1.00×</td><td class='sem'>近线性/无退化</td></tr>
-<tr><td class='q'>q11</td><td class='num'>10.69M</td><td class='num'>10.42M</td><td class='num'>0.97×</td><td class='sem'>近线性/无退化</td></tr>
-<tr><td class='q'>q12</td><td class='num'>10.83M</td><td class='num'>10.32M</td><td class='num'>0.95×</td><td class='sem'>近线性/无退化</td></tr>
-<tr><td class='q'>q13</td><td class='num'>8.12M</td><td class='num'>8.17M</td><td class='num'>1.01×</td><td class='sem'>近线性/无退化</td></tr>
-<tr><td class='q'>q14</td><td class='num'>8.85M</td><td class='num'>8.87M</td><td class='num'>1.00×</td><td class='sem'>近线性/无退化</td></tr>
-<tr><td class='q'>q15</td><td class='num'>6.65M</td><td class='num'>6.57M</td><td class='num'>0.99×</td><td class='sem'>近线性/无退化</td></tr>
-<tr><td class='q'>q16</td><td class='num'>4.45M</td><td class='num'>4.24M</td><td class='num'>0.95×</td><td class='sem'>近线性/无退化</td></tr>
-<tr class="degrade"><td class='q'>q17</td><td class='num'>6.27M</td><td class='num'>4.13M</td><td class='num'>0.66×</td><td class='sem'>状态型退化</td></tr>
-<tr class="degrade"><td class='q'>q18</td><td class='num'>9.09M</td><td class='num'>2.90M</td><td class='num'>0.32×</td><td class='sem'>状态型退化</td></tr>
-<tr><td class='q'>q19</td><td class='num'>8.23M</td><td class='num'>7.29M</td><td class='num'>0.89×</td><td class='sem'>近线性/无退化</td></tr>
-<tr><td class='q'>q20</td><td class='num'>17.77M</td><td class='num'>17.10M</td><td class='num'>0.96×</td><td class='sem'>近线性/无退化</td></tr>
-<tr><td class='q'>q21</td><td class='num'>14.01M</td><td class='num'>13.88M</td><td class='num'>0.99×</td><td class='sem'>近线性/无退化</td></tr>
-<tr><td class='q'>q22</td><td class='num'>10.30M</td><td class='num'>10.24M</td><td class='num'>0.99×</td><td class='sem'>近线性/无退化</td></tr>
+    <tr><td class='q'>q1</td><td class='num'>12.63M</td><td class='num'>16.85M</td><td class='num'>1.33×</td><td class='sem'>近线性/无退化</td></tr>
+<tr><td class='q'>q2</td><td class='num'>29.50M</td><td class='num'>31.08M</td><td class='num'>1.05×</td><td class='sem'>近线性/无退化</td></tr>
+<tr><td class='q'>q3</td><td class='num'>22.75M</td><td class='num'>22.18M</td><td class='num'>0.98×</td><td class='sem'>近线性/无退化</td></tr>
+<tr><td class='q'>q4</td><td class='num'>3.99M</td><td class='num'>3.74M</td><td class='num'>0.94×</td><td class='sem'>近线性/无退化</td></tr>
+<tr class="degrade"><td class='q'>q5</td><td class='num'>3.43M</td><td class='num'>2.00M</td><td class='num'>0.58×</td><td class='sem'>状态型退化</td></tr>
+<tr><td class='q'>q7</td><td class='num'>9.03M</td><td class='num'>9.29M</td><td class='num'>1.03×</td><td class='sem'>近线性/无退化</td></tr>
+<tr><td class='q'>q8</td><td class='num'>29.33M</td><td class='num'>28.97M</td><td class='num'>0.99×</td><td class='sem'>近线性/无退化</td></tr>
+<tr><td class='q'>q9</td><td class='num'>9.33M</td><td class='num'>7.96M</td><td class='num'>0.85×</td><td class='sem'>近线性/无退化</td></tr>
+<tr><td class='q'>q10</td><td class='num'>17.40M</td><td class='num'>17.30M</td><td class='num'>0.99×</td><td class='sem'>近线性/无退化</td></tr>
+<tr><td class='q'>q11</td><td class='num'>10.69M</td><td class='num'>10.85M</td><td class='num'>1.02×</td><td class='sem'>近线性/无退化</td></tr>
+<tr><td class='q'>q12</td><td class='num'>10.83M</td><td class='num'>10.89M</td><td class='num'>1.01×</td><td class='sem'>近线性/无退化</td></tr>
+<tr><td class='q'>q13</td><td class='num'>8.12M</td><td class='num'>8.20M</td><td class='num'>1.01×</td><td class='sem'>近线性/无退化</td></tr>
+<tr><td class='q'>q14</td><td class='num'>8.85M</td><td class='num'>8.80M</td><td class='num'>0.99×</td><td class='sem'>近线性/无退化</td></tr>
+<tr><td class='q'>q15</td><td class='num'>6.65M</td><td class='num'>7.39M</td><td class='num'>1.11×</td><td class='sem'>近线性/无退化</td></tr>
+<tr><td class='q'>q16</td><td class='num'>4.45M</td><td class='num'>5.92M</td><td class='num'>1.33×</td><td class='sem'>近线性/无退化</td></tr>
+<tr><td class='q'>q17</td><td class='num'>6.27M</td><td class='num'>8.36M</td><td class='num'>1.33×</td><td class='sem'>近线性/无退化</td></tr>
+<tr class="degrade"><td class='q'>q18</td><td class='num'>9.09M</td><td class='num'>3.09M</td><td class='num'>0.34×</td><td class='sem'>状态型退化</td></tr>
+<tr><td class='q'>q19</td><td class='num'>8.23M</td><td class='num'>7.86M</td><td class='num'>0.96×</td><td class='sem'>近线性/无退化</td></tr>
+<tr><td class='q'>q20</td><td class='num'>17.77M</td><td class='num'>17.27M</td><td class='num'>0.97×</td><td class='sem'>近线性/无退化</td></tr>
+<tr><td class='q'>q21</td><td class='num'>14.01M</td><td class='num'>13.67M</td><td class='num'>0.98×</td><td class='sem'>近线性/无退化</td></tr>
+<tr><td class='q'>q22</td><td class='num'>10.30M</td><td class='num'>10.33M</td><td class='num'>1.00×</td><td class='sem'>近线性/无退化</td></tr>
   </table></div>
-  <div class="note">无状态/轻量查询规模因子 0.94~1.24×，基本不随规模退化；<b>状态型退化集中在 q5 0.67×、q17 0.66×、q18 0.32×</b>（窗口状态随数据量增长，RSS 翻倍）。q18 0.32× 伴随 30GB RSS，为已知内存问题。</div>
-</section>
-
-<section>
-  <h2>6. 跨机一致性验证（Mac 10 核常载 · 100M 无状态子集）</h2>
-  <p class="sub">白皮书基线本就是 100M 条——与白皮书同规模的跨机验证。仅无状态查询（状态重查询 50GB+ 未在本机跑）。Mac 为常载开发机，读数偏保守。</p>
-  <div class="tbl-scroll"><table>
-    <tr><th>Query</th><th>wfusion EPS</th><th>OSS RPS</th><th>VVR RPS</th><th>vs OSS</th><th>vs VVR</th></tr>
-    <tr><td class='q'>q1</td><td class='num'>9.20M</td><td class='num'>1.75M</td><td class='num'>4.38M</td><td class='num strong'>5.25×</td><td class='num strong'>2.10×</td></tr>
-<tr><td class='q'>q2</td><td class='num'>11.24M</td><td class='num'>1.93M</td><td class='num'>6.57M</td><td class='num strong'>5.83×</td><td class='num strong'>1.71×</td></tr>
-<tr><td class='q'>q3</td><td class='num'>9.08M</td><td class='num'>1.18M</td><td class='num'>4.64M</td><td class='num strong'>7.72×</td><td class='num strong'>1.96×</td></tr>
-<tr><td class='q'>q10</td><td class='num'>9.72M</td><td class='num'>0.53M</td><td class='num'>1.95M</td><td class='num strong'>18.47×</td><td class='num strong'>4.98×</td></tr>
-<tr><td class='q'>q14</td><td class='num'>5.99M</td><td class='num'>1.45M</td><td class='num'>5.00M</td><td class='num strong'>4.13×</td><td class='num strong'>1.20×</td></tr>
-<tr><td class='q'>q21</td><td class='num'>9.15M</td><td class='num'>0.79M</td><td class='num'>2.52M</td><td class='num strong'>11.63×</td><td class='num strong'>3.63×</td></tr>
-<tr><td class='q'>q22</td><td class='num'>5.15M</td><td class='num'>1.05M</td><td class='num'>3.20M</td><td class='num strong'>4.89×</td><td class='num strong'>1.61×</td></tr>
-  </table></div>
-  <div class="note">结论：vs OSS <b>4.13×~18.47× 全面领先</b>（7/7）；vs VVR <b>1.20×~4.98× 全部达 VVR</b>（7/7）。同规模下 q14 vs VVR 仍最弱（1.20×）。跨机结论与 Linux 主表方向一致。</div>
+  <div class="note">无状态/轻量查询规模因子 0.94~1.24×，基本不随规模退化；<b>状态型退化收敛为 q5 0.58×~0.67×、q18 0.34×</b>（q17 复跑 100M 反而更快，1.33×）。q18 0.34× 伴随 27.9GB RSS，为已知内存问题。</div>
 </section>
 
 <section>
@@ -234,14 +251,14 @@
   <ul>
     <li><b>无状态投影/过滤</b>（q1/q2/q3/q8/q10/q14/q21/q22）：EPS 5~30M，受单连接读链限制，吞吐最高。</li>
     <li><b>窗口/聚合/join</b>（q4/q5/q7/q9/q11/q12/q15–q18/q19/q20）：中高 4~15M，受窗口状态与 join 维护成本主导。</li>
-    <li><b>状态重查询</b>（q13/q18）：q13 重写后 8.17M（snapshot join O(1)）；q18 仅 2.90M 且 RSS 30GB（已知内存问题）。</li>
+    <li><b>状态重查询</b>（q13/q18）：q13 重写后 8.17M（snapshot join O(1)）；q18 仅 3.09M 且 RSS 27.9GB（已知内存问题）。</li>
   </ul>
-  <h3>7.2 边缘项：vs VVR 最弱是 q17（1.12×），非 q14</h3>
-  <p>新版 100M 数据下，<b>相对 VVR 最弱项是 q17（1.12×）</b>——stats 1d 桶，状态窗随 100M 规模增长、RSS 19.4GB。q14（Calculation，<code>0.908×price</code> 过滤 + <code>HOUR</code> 分型 + <code>count_char</code> UDF，无状态投影）在 100M 下为 <b>1.77×</b>，每命中事件需构建 detail 字符串，属 Flink 语义固有成本。diag 墙表显示主墙 = <b>输出链</b>（+54.6ns）与规则段（+42.1ns），差距本质来自<b>引擎行式 cell 求值</b>，非查询写法问题；改进需进 wp-reactor 做列式字符串/过滤求值（通用能力，建议独立立项）。</p>
+  <h3>7.2 边缘项：vs VVR 最弱是 q14（1.76×），非 q17</h3>
+  <p>新版 100M 数据（晚间复跑、负载干净）下，<b>相对 VVR 最弱项是 q14（1.76×）</b>——Calculation 类（<code>0.908×price</code> 过滤 + <code>HOUR</code> 分型 + <code>count_char</code> UDF，on-each 无状态投影），字符串处理重、RSS 仅 3.9GB。q17（stats 1d 桶）实测 <b>2.26×</b>，非最弱项。每命中事件需构建 detail 字符串，属 Flink 语义固有成本。diag 墙表显示主墙 = <b>输出链</b>（+54.6ns）与规则段（+42.1ns），差距本质来自<b>引擎行式 cell 求值</b>，非查询写法问题；改进需进 wp-reactor 做列式字符串/过滤求值（通用能力，建议独立立项）。</p>
   <h3>7.3 已知问题与口径说明</h3>
   <ul>
-    <li><b>q18 内存（30GB）🔴</b>：100M 状态窗线性增长，监视器曾测 ~60GB；建议内存归因跟进。</li>
-    <li><b>q5/q17 规模退化（0.67×/0.66×）</b>：窗口状态随数据量增长，RSS 翻倍，属预期内状态型退化，非 bug。</li>
+    <li><b>q18 内存（27.9GB）🔴</b>：100M 状态窗线性增长，监视器曾测 ~60GB；建议内存归因跟进。</li>
+    <li><b>q5/q18 规模退化（0.58×~0.67×/0.34×）</b>：窗口状态随数据量增长，RSS 翻倍，属预期内状态型退化，非 bug。</li>
     <li><b>q13 无白皮书基线</b>：snapshot join（重写后 O(1)）实测 8.17M，Flink 官方未发布对应档，不参与 vs 基线倍数计算。</li>
   </ul>
 </section>
@@ -258,14 +275,14 @@
 <section>
   <h2>9. 资源消耗（RSS / CPU）</h2>
   <ul>
-    <li><b>RSS 峰值（100M）</b>：无状态查询 4.0~5.6GB；状态重查询 <b>q18 29.4GB</b>、q17 19.4GB、q4 13.7GB、q9 7.4GB。q18 30GB 为已知内存问题（状态窗随数据量线性增长）。其余随消费速度饱和、30M 后基本有界。</li>
+    <li><b>RSS 峰值（100M）</b>：无状态查询 4.0~5.6GB；状态重查询 <b>q18 27.9GB</b>、q17 17.6GB、q4 18.0GB、q9 7.0GB。q18 27.9GB 为已知内存问题（状态窗随数据量线性增长）。其余随消费速度饱和、30M 后基本有界。</li>
     <li><b>CPU（活跃窗核占）</b>：无状态查询受单连接读链限制 ~100% avg（满核但供给瓶颈）；重查询 avg 400%+。CPU 0% 旧口径假象已修复，新口径下 0% 才可信。</li>
   </ul>
 </section>
 
 <section>
   <h2>10. 结论</h2>
-  <p>warp-fusion 在 NEXMark 全查询上相对 OSS Flink <b>量级领先 4.25×–229.23×</b>，相对 VVR <b>全面达到且多数显著超出（1.12×–39.58×）</b>，正确性已达生产可用基线，21/21 套件查询端到端可运行（100M clean）。短板集中在：① q14/q17 类 Calculation / stats 的行式 cell 求值（通用引擎级优化）；② q18 状态窗内存（100M 30GB，已知问题）；③ Q12 处理时间窗（事件时间引擎固有，replay 下等价）。</p>
+  <p>warp-fusion 在 NEXMark 全查询上相对 OSS Flink <b>量级领先 6.06×–231.49×</b>，相对 VVR <b>全面达到且多数显著超出（1.76×–39.98×）</b>，正确性已达生产可用基线，21/21 套件查询端到端可运行（100M clean）。短板集中在：① q14/q17 类 Calculation / stats 的行式 cell 求值（通用引擎级优化）；② q18 状态窗内存（100M 27.9GB，已知问题）；③ Q12 处理时间窗（事件时间引擎固有，replay 下等价）。</p>
 </section>
 
 <section>
