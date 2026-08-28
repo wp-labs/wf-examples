@@ -12,12 +12,14 @@ OSS Flink / VVR 基线。查询覆盖与语义对齐判定见 `docs/CAPABILITY_G
 ```
 bench.sh                 # 基准驱动（生成/复用帧 → 起 daemon → send-arrow 回放 → 采样）
 diag.sh                  # 性能墙定位驱动（perf-diag 三档墙梯 → 每段增量成本 + 墙判定）
+verify_file.sh           # 文件源正确性验证（batch 模式 → benchmark.ndjson → oracle 对拍）
 conf/wfusion.toml        # daemon 配置（parse/rule 并行度等）
+conf/wfusion_file.toml   # 文件源 batch 配置（verify_file.sh 基线，rules 需指向 models/queries）
 conf/perf-diag.toml      # 诊断模式·无档（bench.sh 用：只要哨兵精确 EPS 口径）
 conf/perf-diag-wall.toml # 诊断模式·三档墙梯（diag.sh 用：floor → rules → full）
 models/queries/qN.wfl    # 查询定义（唯一权威来源，每文件一组同族规则）
 models/schemas/          # 事件 schema（nexmark.wfs）
-topology/                # source/sink 拓扑（send-arrow 源、blackhole 汇）
+topology/                # source/sink 拓扑（send-arrow 源、blackhole 汇；sinks_file/ 为文件源用）
 scripts/                 # 数据生成 + 正确性验证工具（见下文）
 data/                    # 运行产物（gitignore）：帧文件、bench 结果、metrics、ground truth
 ```
@@ -68,6 +70,8 @@ Flink 参照系 = 官方 `nexmark/nexmark` 测试集 **Q1~Q22 全部 22 条查�
 - 逐 alert 明细对拍（旧 28k 探针 `alerts.ndjson` 方案）随引擎 sink 改造已由计数级对拍替代。
 - 各查询 EMIT 期望值 / 已知波动 / 特殊口径（Q11 分片、Q12 处理时间近似、Q13 形状对齐）
   见 `docs/CAPABILITY_GAP_MATRIX.md` §一·§二 与 `docs/SEMANTIC_ALIGNMENT.md` §5~§6。
+- **文件源路径验证**：`./verify_file.sh`（1M 数据 batch 模式，逐查询对拍；含已知尾批
+  丢失与引擎快速重放非确定的如实报告）——见下文「文件源验证工具：verify_file.sh」。
 
 > **100M 吞吐跑批的正确性侧证（2026-08-17 记录）**：当时 Q1-Q9 全 clean、
 > q2=747,816（0.8129%）、q9=6,000,000（记录见 git 历史）。
@@ -122,6 +126,27 @@ MAX_FRAME_BYTES=1048576 ./bench.sh all replay 30m    # 指定帧 cap（默认 8M
    漏采成 0%（实测假象）——新口径下 0% 才可信；短跑（<2s）读数仍只宜作量级参考。
 6. 消费侧计数器提取：`python3 scripts/extract_emitted.py data/metrics.ndjson`
    （counter 跨 1s 区间求和；gauge 取峰值，不可混用）。
+
+## 文件源验证工具：verify_file.sh
+
+`bench.sh --verify` 验证的是 daemon+TCP 注入路径；`verify_file.sh` 验证**文件源路径**
+（`conf/wfusion_file.toml` 同款 batch 配置）：`wfusion batch` 直读预编码帧，规则 EMIT 落到
+`topology/sinks_file/business.d/benchmark.toml` 指定的 `data/alerts/benchmark.ndjson`，逐查询与
+`wfgen verify-nexmark` ground truth 对拍。
+
+```bash
+./verify_file.sh [query=q1..q22|all] [total=1m|10m|30m|100m]   # 默认 all 1m，~2-4 分钟
+```
+
+- **逐查询单跑**（每查询 rules = 该查询 .wfl）：多规则同跑存在规则间交互差异（实测 all 跑：
+  q8 7565→1、q11 17081→118234），单规则保真。
+- **双口径**：oracle 对拍以 `metrics.ndjson` 的 `emitted_total` 为权威引擎计数（规则任务
+  join 后导出，与 bench.sh 一致）；`benchmark.ndjson` 文件计数作一致性交叉检查。
+- **已知尾批丢失**：文件 sink 关机时最后 ≤2 个未满 alert 批不落盘（实测 q1 恒缺 2531/920000），
+  报告 ⚠ 不判失败；缺额 >1% 标 ⚠⚠。
+- **引擎快速重放非确定（2026-08-28 1M 扫描）**：batch 自动关机与规则尾收口竞态，q3/q5/q7
+  （尾部 close 丢 0~7 条）、q13（中间管道消费，flaky 0~7%）、q20（join 可见性 3~4%）如实报
+  FAIL —— 属引擎待修项，非规则逻辑错；其余 17 条逐轮与 oracle 一致 ✅。
 
 ## 性能墙定位工具：diag.sh
 
