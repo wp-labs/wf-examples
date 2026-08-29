@@ -33,12 +33,23 @@
 #   cancel 时生产者（q13a flush_pipes 广播）可能晚于首次 drain 后通道为空才投递；
 #   旧 `if rx.is_empty() break` 提前退出 → 尾部批次被丢。修复：push loop cancel 分支
 #   改为截止时间（1s）驱动的持续消费（wf-runtime/engine_task/mod.rs）。
-# - **引擎快速重放非确定（剩余已知项，2026-08-28 1M 全量扫描）**：batch 自动关机与
-#   规则尾收口/分片路径存在既有竞态，以下查询如实报 FAIL，属引擎待修项，非规则逻辑错：
-#     q3  auction_seller 尾部 close 丢 0~7（6060↔6052，flaky）
-#     q5/q7  尾桶 close 恒差 1（51→50 / 10→9，尾窗口边界）
-#     q20  snapshot join 分片路径丢 3~4%（flaky；rule_parallelism=1 时与 oracle 完全一致）
-#   其余查询（q1/q2/q4/q6/q8/q9/q10/q11/q12/q13/q14/q15/q16/q17/q18/q19/q21/q22）
+# - **引擎多规则正确性修复（wp-reactor 2026-08-29，3fda01c）**：多规则同跑模式
+#   （生产形态）的三个数量级异常已定位并修复：
+#     q8 7565→1：窗口 join 索引只按首个注册 join 的右字段建（set_join_key 幂等），
+#       q20 用 id 注册后 q8（seller）索引查询得「索引命中但空」假空 → 全 miss；
+#       修复 join 索引字段校验 + 扫描回退（join_lookup/asof_candidates 三路径）。
+#     q11 17081→118234 / q6 错乱：窗口分片注册是覆盖式单一 (keys) 配置，多规则
+#       不同 key 分片同一窗口互相覆盖 → 有状态规则状态切碎；修复冲突检测回退单 worker。
+#     q7 单 worker 54 vs 10：单 worker + conv 规则无 conv stage，内联 apply_conv
+#       按 close 批次聚合（≠桶）→ 每批 top1；修复单 worker 分支补 conv stage。
+# - **引擎快速重放非确定（剩余已知项，2026-08-29）**：以下查询如实报 FAIL，属引擎
+#   待修项，非规则逻辑错：
+#     q3  auction_seller 尾部 close 丢 0~7（flaky）
+#     q5/q7  单规则 sharded 尾桶 close 差 1（多规则单 worker 模式已正确：51/10）
+#     q6/q20  snapshot join 流式竞态：高负载下目标窗 append 提交滞后于 join 读取，
+#       丢 3~8%（flaky；单规则低负载时与 oracle 一致）
+#     q13  中间管道消费竞态残留（偶发缺 0~4%，已大幅缓解）
+#   其余查询（q1/q2/q4/q8/q9/q10/q11/q12/q14/q15/q16/q17/q18/q19/q21/q22）
 #   逐轮与 oracle 一致 ✅。
 # - **q12** 已知差异（fixed+close 收口，oracle 理想值）由 verify-nexmark 内置 known
 #   列表处理：报告 ⚠ 但不判失败。

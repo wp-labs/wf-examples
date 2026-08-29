@@ -146,9 +146,13 @@ MAX_FRAME_BYTES=1048576 ./bench.sh all replay 30m    # 指定帧 cap（默认 8M
   （`flush()` 补 flush_alerts）+ q13 中间管道消费竞态修复（push loop cancel 改为 1s
   截止时间驱动）——修复后 q1/q10/q14/q21/q22 文件计数与指标完全一致；交叉检查保留作
   回归守卫（缺额 >1% 标 ⚠⚠）。
-- **引擎快速重放非确定（剩余已知项，2026-08-28 1M 扫描）**：q3/q5/q7（尾窗口 close
-  边界，丢 0~7 条）、q20（snapshot join 分片路径 3~4%，单 worker 时与 oracle 一致）
-  如实报 FAIL —— 属引擎待修项，非规则逻辑错；其余 18 条逐轮与 oracle 一致 ✅。
+- **引擎多规则正确性修复（wp-reactor 3fda01c）**：多规则同跑（生产形态）三个数量级
+  异常已修复——q8（join 索引 key 覆盖，7565→1）、q11（分片 key 覆盖，session 切碎
+  118234）、q7（单 worker 缺 conv stage，54 vs 10）；q5/q7 多规则单 worker 模式已与
+  oracle 一致（51/10）。
+- **引擎快速重放非确定（剩余已知项）**：q3（尾 close 0~7 条）、q5/q7 单规则 sharded
+  尾桶差 1、q6/q20（snapshot join 流式竞态 3~8%，低负载单规则时与 oracle 一致）、
+  q13（管道竞态残留偶发）——如实报 FAIL，属引擎待修项，非规则逻辑错。
 
 ## 性能墙定位工具：diag.sh
 
