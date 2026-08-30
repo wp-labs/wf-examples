@@ -64,7 +64,8 @@ max_window_bytes = "512MB"
 over_cap = "2d"
 
 # q13 有界侧输入静态表（knowdb CSV 加载 key 0..9999 → value；nexmark.wfs 的
-# window<provider> side_input；daemon 从 knowdb.toml 加载 data/side_input/side_input.csv）
+# window<provider> side_input；daemon 从 models/schemas/knowdb.toml 加载
+# side_input/side_input.csv）
 [window.side_input]
 mode = "local"
 table = "side_input"

@@ -4,7 +4,8 @@
 > 与标准 NEXMark / 阿里白皮书（Flink）的**语义对齐状态、对齐逻辑与验证锚点**，
 > 防止拿错语义的数字做 PK 结论（q3 曾因此出现 1.4× 假象，见 §5）。
 > 与 `../README.md`（套件结构）、`OSS_VVR_BASELINE.md`（OSS/VVR 基线）、
-> `NEXMARK.md`（基准背景/数据/正确性）互为配套。
+> `NEXMARK.md`（基准背景/数据/正确性）互为配套；执行器应用矩阵见 §8
+> （原 SEMANTIC_SUPPORT_MATRIX.md，2026-08-30 合并）。
 
 ## 1. 为什么需要语义对齐
 
@@ -40,7 +41,7 @@ wfgen verify-nexmark <N> --query qN
 
 ## 4. 各查询语义状态表（当前）
 
-> 参考系：nexmark-flink 官方 `qN.sql`（逐条核实见 `REVIEW_FLINK_CONFORMANCE_2026-08-23.md`）。
+> 参考系：nexmark-flink 官方 `qN.sql`（权威原文见 `NEXMARK_AUTHORITATIVE_SEMANTICS.md`）。
 > 状态三级：✅ 对齐 / ⚠️ 部分（已声明近似）/ ❌ 能力面（cap，非 Flink 语义）。
 
 | 查询 | 对齐状态 | 标准语义（nexmark-flink qN.sql） | wfusion 语义 | 差异说明 |
@@ -129,3 +130,55 @@ join 字段作键（`match<category/seller>`）已落地 P0/P1（引擎 + checke
 - 引用任何 wfusion vs OSS/VVR 倍数前，先查 §4 状态表确认该查询语义对齐。
 - q3 旧 100M 数字（11.26M，无过滤语义）已失效；对照一律以最新跑批为准
   （`BENCH_RESULTS.md`）。
+
+---
+
+## 8. 执行器应用矩阵（原 SEMANTIC_SUPPORT_MATRIX.md，2026-08-30 合并）
+
+> 本文回答两个问题——**① 每个查询的语义是否得到全面支持；② CEP / Stat / Join / on-each 是否被正确应用**。
+> 执行器：**on-each**（无状态投影/过滤）、**CEP**（match 状态机：fixed/sliding/session + measure + conv）、
+> **Stats**（`stats<...>` 列式批执行器：group by + count/distinct/min/max/avg/sum/last/top + where 行过滤）、
+> **Join 族**（snapshot/asof/anti/interval，P1-P4 含 `within`/`reduce`/`emit at` deferred）。
+
+### 8.1 判定标准
+
+**语义全面支持** = 三面同时对齐：输入面（数据/触发条件与权威一致）、输出基数（每事件/每窗/每键一行的数量）、值语义（聚合口径/字段值/并列规则）。
+
+**执行器应用正确** = 该查询用对了执行器家族（无状态变换用 on-each、纯聚合用 Stats、join 用 Join 原语、状态序列用 CEP），且是**最小形态**（无冗余包裹）。状态三档：✅ 全面支持 / ⚠️ 近似（有已声明偏差）/ ❌ 未支持或严重偏差。
+
+### 8.2 总览矩阵
+
+| Q | 权威算子形态 | 当前实现执行器 | 语义 | 执行器判断 |
+|---|---|---|---|---|
+| Q1 | 无状态投影（0.908×price） | `on each` | ✅ | ✅ on-each 正确 |
+| Q2 | 过滤（MOD(auction,123)=0） | `on each` + bind filter | ✅ | ✅ on-each 正确 |
+| Q3 | 增量 join + 过滤（INNER + state∈OR/ID/CA + category=10） | `match<id:10m>` + join snapshot + where | ✅ | ✅ join 正确；⚠️ CEP 包裹冗余（on-each + join + where 即可，Q20 同款写法） |
+| Q4 | **两层聚合 avg-of-max**（内层每 auction max 胜出价 → 外层按 category avg） | 双规则链：deferred `reduce maxrow` → 中间窗 `auction_finals` → `stats<1d:fixed> group by(category) avg` | ✅ | ✅（2026-08-23 落地） |
+| Q5 | HOP 滑窗(2s,10s) 每窗 bid 数最多 auction（并列全出） | `match<auction:hop(10s, 2s)>` + close count + conv `top_ties(1)` | ✅ | ✅（窗口形状/基数与权威一致，并列全输出） |
+| Q6 | OVER 窗口（每 seller 最近 10 笔成交胜出价均值；**官方未落地**） | `match<seller:10m>` + join-then-key + avg≥200 阈值 | ⚠️ | ⚠️ 形态不同（阈值告警 vs 流式输出）；「最近 N 笔滑动均值」是能力缺口 |
+| Q7 | 每 10s 桶全局最高价 bid（并列全出） | `match<auction:10s:fixed>` + close max + conv `top_ties(1)` | ✅ | ✅（残留 = auction 粒度 vs 权威 bid 行粒度） |
+| Q8 | person⋈auction **同窗 join**（10s 桶内注册且创建拍卖） | **P3 deferred 存在 join**：`within [p.dateTime, <bucket_end(10s)] on p.id==auction_events.seller emit at bucket_end` | ✅ | ✅ deferred join 正确（10M 对拍一致） |
+| Q9 | 生命周期内胜出价（ROW_NUMBER price DESC, dateTime ASC） | **P3 deferred + reduce**：`within [a.dateTime, a.expires] reduce maxrow(price) tie(dateTime asc) as winner emit at a.expires` | ✅ | ✅ deferred + reduce 正确（10M 对拍一致） |
+| Q10 | 全量投影落盘（dt/hm 分区） | `on each` | ✅ | ✅ on-each 正确 |
+| Q11 | session 窗口 count（gap 10s，每会话一行） | `match<bidder:session(10s)>` + close count | ✅ | ✅ CEP 正确（每会话一行对齐） |
+| Q12 | 固定窗口 count（**处理时间** p_time） | `match<bidder:10s:fixed>` / `stats<10s:fixed> group by (b.bidder)` | ⚠️ | ✅ 两者皆可（stats 更优）；⚠️ 事件时间近似处理时间 |
+| Q13 | 流 ⋈ 有界 side input（mod(auction,10000)=key） | `match<bidder:10m>` + join person snapshot | ⚠️ | ✅ join snapshot 正确；⚠️ 键近似（bidder vs mod(auction,10000)）；**P4 provider 精确化路径已就绪** |
+| Q14 | 投影 + CASE 分型 + UDF + 价格过滤 | `on each` + bind filter + if/strftime + count_char | ✅ | ✅ on-each 正确 |
+| Q15 | 全局 12 列聚合（4 count + 8 distinct，FILTER 分档） | CEP `match<:30m:fixed>` 12 measure；**stats 版存在** | ✅ | ✅ **stats 是正确执行器**；⚠️ bench 默认跑 CEP 版 |
+| Q16 | channel 复合键聚合（15 列） | CEP `match<channel:30m:fixed>`；**stats 版存在** | ✅ | ✅ stats 正确（复合键）；⚠️ bench 默认 CEP 版 |
+| Q17 | auction 复合键聚合（count 分档 + min/max/avg/sum） | CEP `match<auction:30m:fixed>`；**stats 版存在** | ✅ | ✅ stats 正确；⚠️ bench 默认 CEP 版 |
+| Q18 | dedup（每 (bidder,auction) 最后一条**字段值**） | CEP 版输出键+计数（无 last 值）；**stats 版 last 度量** | ✅ | ✅ **stats last 正确**（字段值带出）；CEP 版值语义缺失 |
+| Q19 | per-auction top-10（ROW_NUMBER price DESC） | **stats `group by (b.auction) + top(10, b.price)`** | ✅ | ✅ stats top 正确（同价先到在前） |
+| Q20 | filter join（bid⋈auction + category=10） | `on each` + join snapshot + where | ✅ | ✅ join 正确 |
+| Q21 | CASE + regexp 提取 + 过滤（热 50% + cold 有参 90% → 95% 输出） | `on each` + bind filter（channel_id 数据侧预生成） | ✅ | ✅ on-each 正确 |
+| Q22 | split 投影（SPLIT_INDEX(url,'/',3/4/5)） | `on each` + let + mvindex | ✅ | ✅ on-each 正确 |
+
+### 8.3 执行器应用总评
+
+- **整体健康**：22 个查询中 20 个的执行器形态（on-each/join/stats/CEP-session）合理，没有
+  「拿 CEP 硬塞 stats 场景」的方向性错误——CEP 版 Q15-18 只是历史遗留，stats 版已为标准 `qN.wfl`。
+- **能力已就绪、实现已迁移**（2026-08-22）：Q8/Q9 从 CEP 近似迁移到 P3 deferred join。
+- **一个能力缺口**：Q6 滑动 last-N（Flink 官方亦未落地）；Q4/Q5/Q7 已随 2026-08-23 双规则链 /
+  HOP / `top_ties` 落地闭环。
+- **Q13 键近似**：P4 provider 静态表 + checker「仅 snapshot」约束已落地，只差 bench 数据侧导出 person 表。
+- 历史分类分析与行动项（§3-§6 原稿）已随合并清理，git 可追溯；已解决项见 `CAPABILITY_GAP_MATRIX.md` §二。

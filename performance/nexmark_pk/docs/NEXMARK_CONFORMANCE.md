@@ -60,8 +60,8 @@
 
 ## 四、数据口径变更记录
 
-**v5（2026-08-22）**：六处数据生成偏离全部按官方公式修正（见
-`REVIEW_WFGEN_DATA_GEN_DEVIATIONS.md`）：事件时间映射改为固定 100µs/事件
+**v5（2026-08-22）**：六处数据生成偏离全部按官方公式修正（数据侧偏离详见
+`NEXMARK_AUTHORITATIVE_DATA_GEN.md`）：事件时间映射改为固定 100µs/事件
 （原固定 30min span）、auction 有效期 horizon 固定 0.1666s（并按官方毫秒取整
 复刻 166/167ms 相位抖动）、extra ±20% 体积抖动（半开区间）、字符串长度
 3+rand(max-3)+special、cold 通道均匀随机 + `abs(Integer.reverse(i))` 且 90% 追加

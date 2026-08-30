@@ -1,0 +1,7 @@
+[sink_group]
+name = "default_infra"
+[[sink_group.sinks]]
+# blackhole：丢弃输出，只保留处理吞吐（对齐 Flink Nexmark 的 discarding sink 口径）。
+# 想保留落盘：connect = "file_json_sink" + params base="data" file="default.ndjson"
+connect = "blackhole_sink"
+name = "default_out"

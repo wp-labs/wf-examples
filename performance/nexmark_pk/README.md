@@ -1,137 +1,184 @@
 # nexmark_pk — NEXMark 基准：吞吐 PK + 正确性验证（对齐 Flink 官方基线）
 
-与 Flink 对齐的 PK case：**同一份权威基准数据（NEXMark）+ 同一批查询（Q1~Q22）+ 同输出
-口径（blackhole 丢弃）**，跑引擎实测吞吐与输出正确性，对照阿里 Nexmark 白皮书发布的
-OSS Flink / VVR 基线。查询覆盖与语义对齐判定见 `docs/CAPABILITY_GAP_MATRIX.md`（22 条全实现）；
-**性能数字以当次跑批 `data/bench_*_replay.txt` 为准**（历史实测报告已清理，见 git 历史）。
-**度量口径（EPS 哨兵机制 / RSS / CPU 活跃窗 / 正确性对拍）见 `docs/TEST_PLAN.md`；
-实测结果归档（含 Linux 跑批）见 `docs/BENCH_RESULTS.md`。**
+本目录是 wfusion 引擎的 **NEXMark 基准套件**：同一份确定性基准数据（Q1~Q22 全量查询），
+对照阿里 Nexmark 白皮书的 OSS Flink / VVR 基线做吞吐 PK，并用真实 WFL 规则引擎 ground truth
+验证输出正确性。三个核心工具：
 
-## 目录结构
+| 工具 | 回答的问题 |
+|---|---|
+| `bench.sh` | **吞吐/内存是多少**（EPS / RSS / CPU，对 Flink PK） |
+| `diag.sh` | **墙在管线哪一段**（性能墙定位） |
+| `verify_daemon.sh` | **输出是否正确**（daemon+TCP 路径 vs oracle 对拍） |
 
-```
-bench.sh                 # 基准驱动（生成/复用帧 → 起 daemon → send-arrow 回放 → 采样）
-diag.sh                  # 性能墙定位驱动（perf-diag 三档墙梯 → 每段增量成本 + 墙判定）
-conf/wfusion.toml        # daemon 配置（parse/rule 并行度等）
-conf/perf-diag.toml      # 诊断模式·无档（bench.sh 用：只要哨兵精确 EPS 口径）
-conf/perf-diag-wall.toml # 诊断模式·三档墙梯（diag.sh 用：floor → rules → full）
-models/queries/qN.wfl    # 查询定义（唯一权威来源，每文件一组同族规则）
-models/schemas/          # 事件 schema（nexmark.wfs）
-topology/                # source/sink 拓扑（send-arrow 源、blackhole 汇）
-scripts/                 # 数据生成 + 正确性验证工具（见下文）
-data/                    # 运行产物（gitignore）：帧文件、bench 结果、metrics、ground truth
-```
+背景（事件模型 / 查询语义 / 正确性标准）见 [`docs/NEXMARK.md`](docs/NEXMARK.md)；
+查询覆盖判定见 [`docs/CAPABILITY_GAP_MATRIX.md`](docs/CAPABILITY_GAP_MATRIX.md)；
+实测结果归档见 [`docs/BENCH_RESULTS.md`](docs/BENCH_RESULTS.md)。
 
-## 数据（NEXMark 事件模型）
-
-`wfgen gen-nexmark <count> [--seed N]`（默认 seed=1，StdRng，确定性、流式、内存有界）：
-
-| 流 | 占比 | 说明 |
-|---|---|---|
-| person_events | 2% | 30M 总量 = 600k person |
-| auction_events | 6% | 30M 总量 = 1.8M auction |
-| bid_events | 92% | 30M 总量 = 27.6M bid |
-
-事件时间线性映射、严格递增（固定 100µs/事件，30M → 3000s，等价 Flink `outOfOrderGroupSize=1`）；生成语义
-**严格对齐 Flink 官方** `nexmark/nexmark` 默认配置：价格对数均匀 `round(10^(6u)×100)`
-（[100, 1e8)）、hot auction 50% / hot seller·bidder 75%（最近 100 人批次）、bid 引用最近
-`numInFlightAuctions=100` 个 auction ± 10 lead、seller/bidder 引用最近 `numActivePeople=1000`
-人 ± 10 lead、auction 有效期 = 1+[0,2×horizon) ms、category 10..14、channel 50% 热门
-4 通道 + 50% channel-N、city/state 10 城/6 州、name/email/creditCard/itemName/description
-随机生成（官方数组与 nextString）、extra 补齐到 avgByteSize（200/500/100）。
-**同一 count + seed 的生成结果字节级确定**（`wfgen gen-nexmark`，确定性已验证）。
-与 Flink 官方定义的**逐项对照（含残余差异说明）**见
-[`NEXMARK_CONFORMANCE.md`](./docs/NEXMARK_CONFORMANCE.md)；`gen-nexmark --check` 与
-`verify-nexmark` 会在报告尾部自动输出符合性摘要。
-
-## 查询：与 Flink Nexmark 测试集的逻辑匹配度
-
-Flink 参照系 = 官方 `nexmark/nexmark` 测试集 **Q1~Q22 全部 22 条查询**（`qN.sql`，
-权威原文见 `docs/NEXMARK_AUTHORITATIVE_SEMANTICS.md`）。22 条已全部实现（`models/queries/`），
-逐条判定（18 已有 / Q12 待补强 / Q6·Q11·Q13 特殊口径）见
-[`CAPABILITY_GAP_MATRIX.md`](./docs/CAPABILITY_GAP_MATRIX.md)，复核见
-[`REVIEW_FLINK_CONFORMANCE_2026-08-23.md`](./docs/REVIEW_FLINK_CONFORMANCE_2026-08-23.md)，
-各查询语义对齐细节见 `docs/SEMANTIC_ALIGNMENT.md` / `docs/SEMANTIC_SUPPORT_MATRIX.md`。
-
-### 正确性验证（30M replay，seed=1）
-
-期望值由 `wfgen verify-nexmark`（真实 WFL 规则引擎）对同一份确定性数据逐规则算出：
-`bench.sh <q> replay 30m --verify` 在 wfgen 内与引擎实际 EMIT 计数对拍
-（git-diff 同款分层：L1 哈希 → L2 Myers → L3 明细，退出码 0=一致 / 1=有差异）。
-
-- **全量 30M replay**：22 查询全部 `[clean]`（appended 30M/30M + 致命计数器归零），
-  登记见 `docs/CAPABILITY_GAP_MATRIX.md` §一。
-- **`--verify` oracle 对拍**：Q8 已修复并对拍一致（10M = 82,446 identical；三处根因：
-  到期 miss 的 join 目标 append 滞后 → EOS 重试补出、shutdown flush 的 EMIT 指标尾部导出、
-  flush 按最终事件水位收口不误扫尾部桶）；Q9 同口径一致；其余查询的 daemon 级对拍
-  **待跑**（Q19 stats oracle 未接入 = known-diff，标 ⚠ 不判失败）。
-- 逐 alert 明细对拍（旧 28k 探针 `alerts.ndjson` 方案）随引擎 sink 改造已由计数级对拍替代。
-- 各查询 EMIT 期望值 / 已知波动 / 特殊口径（Q11 分片、Q12 处理时间近似、Q13 形状对齐）
-  见 `docs/CAPABILITY_GAP_MATRIX.md` §一·§二 与 `docs/SEMANTIC_ALIGNMENT.md` §5~§6。
-
-> **100M 吞吐跑批的正确性侧证（2026-08-17 记录）**：当时 Q1-Q9 全 clean、
-> q2=747,816（0.8129%）、q9=6,000,000（记录见 git 历史）。
-
-## 基准工具：bench.sh
+## 快速开始
 
 ```bash
-./bench.sh [query=all|q1..q22] [feed=replay|stream] [total=100m|30m|10m]
-MAX_FRAME_BYTES=1048576 ./bench.sh all replay 30m    # 指定帧 cap（默认 8MiB）
+./bench.sh q1 replay 10m        # 性能测试：q1 单查询，10M 数据重放
+./bench.sh all replay 30m       # 全量 22 查询吞吐 PK（all=逐个单规则，不含 q6，见下）
+./bench.sh mix replay 10m       # 混跑：全部规则一个 daemon 同时跑（多规则同跑，对照 all）
+./verify_daemon.sh all 1m       # 正确性验证：daemon+TCP 路径全量对拍（~2-4 分钟）
+./diag.sh q5 10m                # 性能诊断：定位 q5 的墙在哪一段
 ```
 
-- **feed=replay**（默认，PK 口径）：gen-nexmark → dump-frames 预编码 Arrow 帧 →
-  send-arrow 重放（默认 **单连接**整文件推，`CONNECTIONS=1`、`SHARD_KEYS` 空；
-  多连接仅在有状态负载需要键闭包分片时用）。事件按 30s 桶序（v2 排序数据），
-  帧/分片缓存带 `DATA_VER`（默认 v2）指纹，`data/bench_<total>_v2.frames`
-  跨查询复用，存在即不重生成。**测引擎峰值持续吞吐（性能基准口径）**。
-- **feed=stream**：wfgen 实时生成按 RATE 注入（事件时间随墙钟推进，客户端编码
-  上限 ~760k/s——**非引擎能力**，EPS 不可比）。**使用场景**：
-  ① 真实时间窗口语义（`over=10m` 时间驱逐/watermark 按真实时间实时发生，而非
-  replay 的追赶式）；② 长时稳定性/内存有界（中低速持续跑几十分钟~几小时，看
-  RSS 是否有界、不泄漏）；③ 生产形态模拟（事件时间=现在，验证 late/`allowed_lateness`
-  行为）。**不用于**吞吐对比与短时跑批。
-- 输出每查询 `data/bench_<q>_<feed>.txt`：EPS + RSS 峰值 + 驱逐数 + 口径标注
-  （`eps_mode=sentinel|metrics-append`）；`data/perf_sentinel.ndjson` 为哨兵
-  四元组流（完成信号 + EPS 数据源），`data/metrics.ndjson` 为计数器流，
-  `data/{wfusion,daemon}.log` 为引擎日志。
+## 1. 性能测试：bench.sh
+
+```bash
+./bench.sh [query=all|mix|q1..q22] [feed=replay|stream] [total=100m|30m|10m|1m]
+WARMUP=1 ./bench.sh all replay 30m     # 预热一轮再测（stash 重建后首跑偏低，剔除）
+PARSE_PARALLELISM=6 RULE_PARALLELISM=6 ./bench.sh q1 replay 10m   # 调并行度
+CONNECTIONS=4 SHARD_KEYS="bid_events:auction,..." ./bench.sh q2 replay 30m  # 键闭包分片
+./bench.sh mix replay 30m      # 混跑：全部规则同时加载进一个 daemon（测多规则同跑）
+```
+
+- **feed=replay**（默认，PK 口径）：预编码 Arrow 帧线速重放，**测引擎峰值持续吞吐**。
+  事件按 30s 桶序、事件时间固定 100µs/事件；帧缓存 `data/bench_<total>_v5.frames`
+  跨查询复用（存在即不重生成，`DATA_VER` 指纹防旧缓存静默复用）。
+- **feed=stream**：wfgen 实时生成按 `RATE` 注入（客户端编码上限 ~760k/s，**非引擎能力**，
+  EPS 不可比）。只用于：① 真实时间窗口语义（watermark/驱逐按真实时间发生）；② 长时稳定性
+  内存有界（看 RSS 是否泄漏）；③ 生产形态模拟（late / `allowed_lateness`）。**不用于**吞吐对比。
+- **all 与 mix 的区别**：`all` = 每个查询**单独**一个 daemon 跑（单规则集，规则互不干扰），
+  输出每查询一行；`mix` = 全部规则**同时**加载进一个 daemon 混跑（共享 parse/rule 并行度，
+  规则间资源竞争真实可见），只输出一行合并吞吐。`all` 用来逐查询横向对比，`mix` 用来
+  看规则叠加时的真实合并吞吐（可与 all 的均值对照出同跑开销）。
+- **mix 的规模（2026-08-30 修复后）**：曾因 join 索引单 key 独占冻结在 30M
+  （q8 按 seller / q20 按 id 共窗，后注册者回退全窗扫描 → q8 deferred join
+  O(全窗)×pending 卡死）——wp-reactor 改**多 key join 索引**后 30M 已正常
+  （EPS ~760K、~105s、clean；1m/10m 同理）。100M 未验证：30M RSS≈9.3GB
+  线性外推 ~30GB，需大内存机。
+- **all/mix 均不含 q6**：join-then-key 单线程 + 逐事件 sliding 状态机，架构性慢，单跑研究用
+  `./bench.sh q6 ...`。
+
+### 输出行怎么读
+
+```
+q1/replay: EPS=12,881,009 · RSS_peak=3,571MB · CPU 240%avg/382%max · evict=39
+           · appended=30,000,000/30,000,000 · eps_mode=sentinel · conns=1
+           · [clean] p=10 r=10 c=1 frame_mb=8 load=1.6 · 08-30_00:42:10
+```
+
+| 列 | 含义 |
+|---|---|
+| `EPS` | 引擎消化速率 = 哨兵窗 Σn/(max_emit−min_start)（整轮均值，非峰值） |
+| `RSS_peak` | 全生命周期驻留峰值（100ms 采样） |
+| `CPU avg/max` | **引擎活跃窗**内核占数（多核可 >100%，100% ≈ 1 核满） |
+| `evict` | 窗口驱逐数（有值属正常窗口关闭） |
+| `appended` | 追平 = 数据完整性无丢失（旁证） |
+| `eps_mode` | `sentinel`=精确口径；`metrics-append`/`⚠TIMEOUT`=兑底值，只作量级参考 |
+| `[clean]` | 致命计数器（append_failed/dropped_late/cursor_gap/...）全零 = 测量可信 |
+| `p/r/c/frame_mb` | parse/rule 并行度、连接数、帧 cap（引用数字时必须带上） |
+
+结果写 `data/bench_<q>_<feed>.txt`；哨兵流 `data/perf_sentinel.ndjson`、计数器流
+`data/metrics.ndjson`、引擎日志 `data/{wfusion,daemon}.log`。
 
 ### 测量纪律（违反会得出假结论）
 
-1. **计时口径 = 哨兵四元组**（2026-08-24 起）：daemon 以 `--perf-diag
-   conf/perf-diag.toml` 启动（无档 = 门控全 false，性能零影响，仅注册
-   `__wf_sentinel` 窗口），`send-arrow/stream --sentinel` 启用**分连接哨兵**：
-   每条连接 copy 完自己的数据后追加哨兵帧（round=连接号，单连接 1 条 round=0）；
-   引擎等**数据窗排空**后写 `{round,n,start_ns,emit_ns}`，EPS =
-   Σn/(max emit_ns − min start_ns)——无 metrics 轮询（±200ms）粒度误差，短跑
-   读数同样可信，且多连接时各连接 dt 可对比（连接均衡/慢连接诊断）。
-   哨兵超时退回 append_total 轮询兑底（`eps_mode=metrics-append`，TIMEOUT 标注）。
-   （旧口径：metrics 三输入流 append 计数器求和追平 TOTAL 的时刻。）
-   完整链路（哨兵帧生成/引擎落盘/聚合/兑底）见 `docs/TEST_PLAN.md` §1。
-2. **RSS 口径（2026-08-17 起）**：`parse_buffer_bytes` 默认值已改为 128MB
-   （P0-② content 记账，18 槽）——q1 100M ≈ 6.1M / RSS ~5.9GB，旧默认
-   （256MB 解码记账）为 5.93M / 4.4GB。吞吐优先场景显式调大预算（bench 默认
-   2GB：q1 7.5M+，RSS 随吞吐升至 12-14GB）。引用 RSS 数字时必须标注所用
-   `parse_buffer_bytes`，旧口径数字（“100M 6.8GB”等）与现默认不直接对等。
-3. **A/B 必须不限速**：`RATE=10000000`（限速会把 EPS 封顶在 RATE）。
-4. **同时段交错对比**：bench 机 EPS 与 RSS_peak 呈双峰相位强相关（同配置差 ±8%），
-   结论必须按 RSS 相位配对；单轮数字只能作量级参考。
-5. **CPU 口径（2026-08-24 起）**：`CPU X%avg/Y%max` 是**引擎活跃窗**（哨兵
-   start_ns/emit_ns ± 0.5s）内的核占数（多核可 >100%），100ms 采样；采样器先
-   产出 cputime 差分基线才启动客户端（防亚秒突发在首个差分前烧完 → 假 0%）。
-   此前 1s 粗采样 + 全生命周期统计会把亚秒级突发（如 q2 26M EPS ≈ 0.4s）稀释/
-   漏采成 0%（实测假象）——新口径下 0% 才可信；短跑（<2s）读数仍只宜作量级参考。
-6. 消费侧计数器提取：`python3 scripts/extract_emitted.py data/metrics.ndjson`
-   （counter 跨 1s 区间求和；gauge 取峰值，不可混用）。
+1. **先看 `eps_mode=`**：非 sentinel 的 EPS/CPU 只作量级参考。
+2. **预热轮**：stash 重建后首跑系统性偏低（曾三次复现），`WARMUP=1` 剔除。
+3. **A/B 必须不限速**：`RATE` 会把 EPS 封顶（限速 = 测供给不是引擎）。
+4. **同时段交错对比**：EPS 与 RSS_peak 双峰相位强相关（同配置差 ±8%），结论按 RSS 相位配对；
+   单轮数字只作量级参考。
+5. **引用 RSS 必须标注 `parse_buffer_bytes`**：128MB 与 2GB 预算的 EPS/RSS 不可直接对等。
+6. **CPU 是活跃窗口径**（哨兵 start/emit ± 0.5s，100ms cputime 差分）：全生命周期统计会把
+   亚秒级突发（q2/q8 ≈ 0.4s）稀释成 0% 假象；短跑（<2s）读数只宜作量级参考。
 
-## 性能墙定位工具：diag.sh
+完整度量口径（哨兵链路 / 兑底 / 采样）见 `docs/NEXMARK.md` §7。
 
-`bench.sh` 回答「吞吐是多少」，`diag.sh` 回答「**墙在管线哪一段**」——基于引擎内置的
-性能诊断模式（perf-diag）三档墙梯，单 daemon 不重启逐段切除：
+## 2. 正确性验证：怎么是正确的
+
+### 正确性标准
+
+**正确 = 两条同时成立**：
+
+1. **数据完整性无丢失** → 结果行 `[clean]`：`appended` 追平（如 30M/30M）且致命计数器
+   （append_failed / dropped_late / cursor_gap / channel_full / sink_dispatch_failed）全零。
+2. **输出与确定性 ground truth 一致** → 每规则 EMIT 计数与 oracle 期望逐规则相等。
+
+**ground truth 从哪来**：`wfgen verify-nexmark` 用**真实 WFL 规则引擎**（非手写模拟器）处理
+与引擎**同一份确定性数据**（同 count+seed 字节级确定）+ **同一套 .wfl 规则**，逐规则算出期望
+`emitted_total`——保证「比的是同一个查询、同一份数据」。对拍是 git-diff 同款分层（L1 哈希 →
+L2 Myers → L3 明细），退出码 0=一致 / 1=有差异。**oracle 的完整定义（处理流程/三档验证
+层级/排除与边界）见 [`docs/ORACLE_VERIFY.md`](docs/ORACLE_VERIFY.md)。**
+
+**判定层级**（验证输出逐查询）：
+
+| 结果 | 含义 | 处理 |
+|---|---|---|
+| `PASS` | 与 oracle 精确一致 | ✅ |
+| `FAIL` | 有差异（oracle diff） | 看 diff 明细：引擎 bug 待修 / 已知 flaky |
+| `DIRTY` | 致命计数器非零 | 测量作废，重跑 |
+| ⚠ known-diff | 已知差异（如 q12 fixed+close 尾桶收口） | 不判失败 |
+
+**当前已知 FAIL**：无——22 查询全 PASS，但注意 **q12 是豁免放行而非一致**（引擎多收尾部桶，
+1M 实测 27,446 vs oracle 10,240，+168%；由 verify-nexmark 内置 known 列表处理不判失败）。其余 21
+个真一致（L1+L2+L3 全过，含 stats 的 q4b/q15-q19 值级对拍）。历史 FAIL（q3/q5/q7）已修复：q7/q5 =
+close_all 尾桶收口语义，q3 = join 索引与提交前沿竞态。**每个查询「验证正确」的判定逻辑
+（正确语义 + 断言什么 + 覆盖层 + 状态）见 [`docs/QUERY_VERIFY_LOGIC.md`](docs/QUERY_VERIFY_LOGIC.md)。**
+
+**规模口径**：
+- **30M**：逐位对拍（权威）；**100M**：EMIT 与 30M 同比例侧证 + `[clean]`（oracle 工作集
+  ~19GB，不跑 100M 对拍）；**特殊口径查询**（q11/q12/q13）：多轮端到端 EMIT 确定性 + `[clean]`。
+- **防误判**：`max_memory` 超限会**静默丢弃事件**（不报错、`[clean]` 照常）→ EMIT 变少，极易
+  误判成「引擎正确、对拍基准错」——配置必须按公式预留（见 `docs/NEXMARK.md` §5.6）；多规则
+  同跑存在规则间交互差异（q8/q11 曾数量级异常）→ 单规则/多规则分路径验证。
+
+### 验证路径
+
+基于同一 ground truth，深度验证走 daemon+TCP 路径（唯一全深度脚本），`bench.sh --verify`
+做性能跑批的浅回归：
+
+| 路径 | 命令 | 验证对象 | 深度 |
+|---|---|---|---|
+| daemon+TCP（深） | `./verify_daemon.sh [query] [total]` | 生产形态：TCP 注入 + 常驻 + SIGTERM flush 收口 | L1+L2+L3 |
+| daemon+TCP（浅） | `./bench.sh <q> replay 30m --verify` | 同上，但 blackhole sink 只对拍 EMIT 计数 | 仅 L1 |
+
+**推荐**：`verify_daemon.sh` 做全深度正确性验证；`bench.sh --verify` 用于性能跑批的顺带回归
+（只查计数）。（batch 文件源路径曾由 verify_file.sh 覆盖，2026-08-30 起并入 daemon 验证，已移除。）
+
+### verify_daemon.sh（daemon 路径）
 
 ```bash
-./diag.sh [query=q1|q1,q5,q9|all] [total=1m|10m|30m]
-./diag.sh q5 10m                   # 预热档默认开（消除首档冷分配偏差）
-WARMUP=0 ./diag.sh q1 10m          # 关预热（省一档时间/内存，仅粗看方向时用）
+./verify_daemon.sh all 1m      # 默认 all + 1M 快验（~2-4 分钟）
+./verify_daemon.sh q3 1m       # 单查询
+```
+
+- **注入/收口形态**：`wfusion daemon` TCP 监听 → `send-arrow` 推帧 → metrics 追平
+  （appended ≥ N 且 acked_lag == 0，所有被消费窗口消费完）→ SIGTERM flush 尾批收口落盘
+  `data/alerts/benchmark.ndjson` → L1/L2/L3 三层对拍。
+- **逐查询单跑**（每查询 rules = 该查询 .wfl）：多规则同跑存在规则间交互差异，单规则保真。
+- **双口径交叉**：`metrics.ndjson` 的 `emitted_total`（权威引擎计数）+ 输出文件
+  `data/alerts/benchmark.ndjson` 逐行计数，再与 oracle 对拍；致命计数器非零 → `[dirty]` 作废。
+- **指标口径脏检测（2026-08-30 加固）**：残留 wfusion 进程可能往 metrics.ndjson 写外来 label
+  → 循环前清残留进程 + 校验 emitted_total label 恰为当前 query 规则集合，脏则自动重跑一次。
+- 覆盖 batch 文件源路径跑不到的注入/收口形态：TCP 注入 + 常驻进程 + 关机 flush 尾批收口
+  （bench.sh `--verify` 因 blackhole sink 只对拍 L1 计数，本脚本补 L2/L3 深度）。
+- 不注册哨兵窗（哨兵 alert 会污染落盘对拍，完成信号用 metrics 追平——bench.sh 同款兑底口径）。
+- **已知尾批丢失/竞态均已修复**（wp-reactor 2026-08-28~30）：on-each 关机尾批、q13 中间管道
+  竞态、q6/q20 snapshot join 竞态、q8/q11/q7 多规则交互。
+- **当前状态**：22/22 显示 PASS，但 q12 为**豁免放行**（fixed+close 收口多收尾部桶，
+  1M 引擎 27,446 vs oracle 10,240，+168%，known 列表剔除不判失败）；其余 21 个 L1+L2+L3
+  真一致（历史 q3/q5/q7 FAIL 已修复：close_all 尾桶收口语义 + join 索引/提交前沿竞态），
+  如实记录于 docs/ORACLE_VERIFY.md 与 docs/QUERY_VERIFY_LOGIC.md。
+
+### bench.sh --verify（daemon 路径，仅 L1）
+
+```bash
+./bench.sh q9 replay 30m --verify    # 单查询 daemon 对拍（只对拍 EMIT 计数）
+```
+
+30M 全量多规则对拍（q6=872,913 / q20=196,517）已 4/4 轮精确。
+
+## 3. 性能诊断：diag.sh
+
+`bench.sh` 回答「吞吐是多少」，`diag.sh` 回答「**墙在管线哪一段**」——基于引擎内置
+perf-diag 三档墙梯，单 daemon 不重启逐段切除，每段增量成本 = 相对上一档。
+
+```bash
+./diag.sh q5 10m                   # 默认预热档开（消除首档冷分配偏差）
+WARMUP=0 ./diag.sh q1 10m          # 关预热（仅粗看方向时用）
 N_LIST=1m,10m ./diag.sh q1 10m     # 多个 N（每个 N 重启一套完整墙梯）
 STAGES=floor,full ./diag.sh q1 10m # 自定义墙梯（跳过中间档）
 GEN_FRAMES=1 ./diag.sh q1 10m      # 帧缺失时自动生成（与 bench.sh 共享缓存）
@@ -143,58 +190,54 @@ GEN_FRAMES=1 ./diag.sh q1 10m      # 帧缺失时自动生成（与 bench.sh 共
 | `rules` | 切输出链 | + 规则求值 → **增量 = 规则墙** |
 | `full` | 不切 | + 输出链 → **增量 = 输出墙** |
 
-输出 `data/diag_<q>_<total>.txt`：每档 EPS/耗时/每事件 ns/**增量成本**/**占全链**/CPU%/RSS +
-墙判定（主墙 = 增量最大段，附**基线占比**「墙前基线占全链多少」；CPU 占核比 >50% = 忙墙、
-<15% = 等/供给墙并细分：RSS 逐档上涌 → 窗口/join 容量，RSS 平稳 → 供给侧）+ 健康校验
-（`appended` 追平、致命计数器、`emitted_total`）。预热档**只占一行占位、不显示任何数字**——
-它跑在「窗口全空 + 冷启动」的特殊状态，与后续档不可比（q1 无状态查询它反而慢、q9 join 查询它虚高）。
-
-### 实测墙表（2026-08-24，M3 Max 12 核，N=10M，预热档开）
-
-| 查询 | floor | rules | full | 主墙（占全链） | CPU 占用 | 判定 |
-|---|---|---|---|---|---|---|
-| q1（无状态投影） | 31.8M | 33.0M（−1.2ns） | 18.8M（+22.9ns） | 输出链 43% | 53% | 忙墙 → 采样定位段内热点 |
-| q5（滑窗 top-N） | 31.7M | 939k（+1032.8ns） | 918k（+24.7ns） | 规则求值 95% | 9% | 等/供给墙 → 查串行/同步，profiler 采到的是等待栈 |
-| q9（deferred join） | 0.99M | 678k（+470.5ns） | 704k（−56ns） | 规则段 33%（**基线 floor 已占 71%**） | 9% | 等墙细分：RSS 1.4× 温和增长 → 查规则段等待/join 串行，而非供给侧 |
-
-> **q9 的读法**：主墙增量（+470.5ns）只占全链 33%，墙前基线（floor 1005.3ns）自己就占 71%
-> ——所以 q9 的真瓶颈是**窗口/join 侧整体成本**（三流 join 的窗口维护被计在 floor 段），规则
-> 段增量是第二道墙。单看「增量最大段」会漏掉这个结构，报告因此同时给出基线占比。
-
-> 两次独立运行的 `floor` 一致（31.7 / 31.8M）——管道净段与查询无关，可作口径自校验。
+输出 `data/diag_<q>_<total>.txt`：每档 EPS/耗时/每事件 ns/增量成本/占全链/CPU%/RSS +
+**墙判定**（主墙 = 增量最大段，附**基线占比**「墙前基线占全链多少」；CPU 占核比 >50% = 忙墙
+→ 下一步 CPU 采样定位热点；<15% = 等/供给墙，RSS 逐档上涌 → 窗口/join 容量，平稳 → 供给侧）。
 
 ### 诊断纪律（违反会得出假结论）
 
-1. **预热档默认开，别关**（`WARMUP=0` 才关）：墙梯在单 daemon 内顺序跑，**首档独自承担窗口
-   冷分配/page fault**。实测 q1 10m 不预热时 `floor`(21.2M) 反而慢于 `rules`(26.6M) 25%，
-   偏差大于信号（RSS 逐档 1.98→3.10→4.07GB 即痕迹）；预热后 `floor` 升到 31.8M、墙梯
-   恢复单调。脚本会在出现负增量时报警并根据预热是否已开给不同处理建议。
-2. **帧文件必须与当前 schema 同版本**：旧版本帧（缺 `channel_id`/多 `wp_src_ip` 等）会
-   在 window actor 报 `schema mismatch` 后**整批丢弃**，只剩哨兵被处理 → 墙表出现
-   50M EPS 级假象。`diag.sh` 因此**不自动复用其它 `DATA_VER` 的帧**，且强制校验
-   `appended = N × 档数`（不追平即判失败并给出根因）。
-3. **`--n-list` 一次只能给一个 N**：哨兵驱动的切换在每档**首个**哨兵后即发生，同档的
-   第 2 个 N/第 2 轮会吃到下一档门控。`diag.sh` 因此把 `N_LIST` 拆成外层循环（每个 N
-   重启一套墙梯），而不是交给 `wfgen perf-diag --n-list` 一次跑多值。
-4. **事件时间跨度 ≤ `allowed_lateness`**：墙梯把同一份数据发 N 次，事件时间不随重发前进，
-   重发数据的迟到量 = 数据跨度（v5 = 100µs/事件，30M → 3000s > 默认 1800s）。超出即被
-   `late_policy=drop` 丢弃 → rules/full 档实际无数据。脚本默认自动放宽
-   （`LATENESS_FIX=1`，只影响迟到判定、不影响吞吐口径），并拦截跨度超窗口 `over=1h` 的规模。
-5. **RSS 列是档内峰值、随墙梯累积**（同一份数据发多次），不是该段的内存成本；内存分析用 `bench.sh`。
-6. **on-each 类查询的输出墙口径**：`cut_output` 在 on-each 直投路径上于 `OutputRecord`
-   构造**之前**返回（该路径的 emitted 计数与 append 耦合、无法保留），所以 q1 这类查询的
-   `rules → full` 增量包含「构造 + append（record→列）+ 通道 + sink 物化/序列化/写」；
-   match 类查询的构造成本已计入 `rules` 档。
+1. **预热档默认开，别关**：首档独自承担窗口冷分配/page fault，实测不预热时 floor 反而慢于
+   rules 25%，偏差大于信号；脚本在负增量时报警。
+2. **帧文件必须与当前 schema 同版本**：旧版帧会整批丢弃 → 50M EPS 级假象；脚本强制校验
+   `appended = N × 档数`，不追平即判失败。
+3. **`--n-list` 一次只能给一个 N**：哨兵驱动切换在每档首个哨兵后即发生，多 N 会吃到下一档门控。
+4. **事件时间跨度 ≤ allowed_lateness**：同一份数据发 N 次，重发即迟到；超限被 drop → rules/full
+   档实际无数据。脚本自动放宽并拦截超 `over=1h` 的规模。
+5. **RSS 是档内峰值、随墙梯累积**，不是该段内存成本；内存分析用 `bench.sh`。
+6. **on-each 查询的输出墙口径**：`cut_output` 在 on-each 直投路径上于 OutputRecord 构造之前
+   返回，q1 类查询的 `rules→full` 增量含「构造 + append + 通道 + sink 物化」；match 类计入 rules 档。
 
-## scripts/ 工具清单
+## 4. 目录结构
 
-| 脚本 | 用途 |
-|---|---|
-| `wfgen verify-nexmark [--query qN] [--engine-emit data]` | 真实规则引擎 ground truth + 引擎 EMIT 对拍（git-diff 同款分层） |
-| `extract_emitted.py` | metrics.ndjson → emitted/append/正确性计数器汇总 |
-| `read_metrics.py` | metrics NDJSON 指定 stage/name/label 最新值查询 |
-| `bench_lib.py` | bench.sh / diag.sh（两 case 共享，位于 `../scripts/`）的度量工具库（comma/parse-n/EPS/引擎游标/哨兵汇总/告警摘要/正确性摘要/CPU·RSS 采样），纯标准库，子命令分派可单独验证：`python3 ../scripts/bench_lib.py --help` |
-| `diag_analyze.py` | diag.sh（两 case 共享，位于 `../scripts/`）的墙表/墙判定/健康分析器（哨兵四元组 × CPU·RSS 采样 × metrics），输入走环境变量 |
+```
+bench.sh                 # 基准驱动（生成/复用帧 → 起 daemon → send-arrow 回放 → 采样）
+diag.sh                  # 性能墙定位驱动（perf-diag 三档墙梯 → 每段增量成本 + 墙判定）
+verify_daemon.sh         # 正确性验证（daemon TCP 注入 → benchmark.ndjson → oracle 对拍）
+conf/wfusion.toml        # daemon 配置（parse/rule 并行度等）
+conf/perf-diag.toml      # 诊断模式·无档（bench.sh：哨兵精确 EPS 口径）
+conf/perf-diag-wall.toml # 诊断模式·三档墙梯（diag.sh）
+models/queries/qN.wfl    # 查询定义（唯一权威来源，每文件一组同族规则）
+models/schemas/          # 事件 schema（nexmark.wfs）+ windows.toml + knowdb.toml（q13 侧输入表）
+topology/                # source/sink 拓扑（send-arrow 源、blackhole 汇；sinks_file/ 为验证落盘用）
+scripts/                 # metrics 工具（extract_emitted / read_metrics / compare-metrics / verify_file_lib）
+side_input/              # q13 有界侧输入 CSV（models/schemas/knowdb.toml 引用）
+scenarios/nexmark.wfg    # 数据生成场景定义
+docs/                    # 背景/口径/结果归档（NEXMARK、BENCH_RESULTS、CAPABILITY_GAP、ORACLE_VERIFY 等 10 篇）
+data/                    # 运行产物（gitignore）：帧文件、bench 结果、metrics、ground truth
+```
+
+## 5. 背景与参考文档
+
+- **数据模型**：三流 person 2% / auction 6% / bid 92%，事件时间固定 100µs/事件、严格递增，
+  生成语义严格对齐 Flink 官方（价格对数均匀 / hot 分布 / 引用窗口），同 count+seed **字节级确定**
+  ——正确性可验证的前提。详见 [`docs/NEXMARK.md`](docs/NEXMARK.md) §1~§3 与
+  [`docs/NEXMARK_CONFORMANCE.md`](docs/NEXMARK_CONFORMANCE.md)。
+- **查询**：Q1~Q22 全实现；逐条能力/语义判定见
+  [`docs/CAPABILITY_GAP_MATRIX.md`](docs/CAPABILITY_GAP_MATRIX.md)，语义对齐状态表与执行器
+  矩阵见 [`docs/SEMANTIC_ALIGNMENT.md`](docs/SEMANTIC_ALIGNMENT.md)（§4 / §8），权威 SQL 原文
+  见 [`docs/NEXMARK_AUTHORITATIVE_SEMANTICS.md`](docs/NEXMARK_AUTHORITATIVE_SEMANTICS.md)。
+- **结果归档**：[`docs/BENCH_RESULTS.md`](docs/BENCH_RESULTS.md)（按跑批日期分节，含 Linux）；
+  OSS/VVR 白皮书基线见 [`docs/OSS_VVR_BASELINE.md`](docs/OSS_VVR_BASELINE.md)。
 
 ## 前提
 
@@ -202,3 +245,4 @@ GEN_FRAMES=1 ./diag.sh q1 10m      # 帧缺失时自动生成（与 bench.sh 共
   `dump-frames`/`send-arrow`、`stream` 子命令。
 - `nc`、`python3`；端口 9800 空闲。
 - 正确性验证另需 sink 输出（file_json_sink 的 alerts.ndjson），吞吐 PK 用 blackhole。
+- 数据量对应帧缓存可复用；清理生成产物用 `./bench.sh clean [cache|all]`。

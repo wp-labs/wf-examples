@@ -1,6 +1,6 @@
 # NEXMark 权威查询语义参考（Flink / nexmark-flink）
 
-> **本文件只记录权威定义，不含任何对齐/评审结论。** 对齐情况见同目录 `REVIEW_FLINK_CONFORMANCE_2026-08-23.md`。
+> **本文件只记录权威定义，不含任何对齐/评审结论。** 对齐情况见同目录 `SEMANTIC_ALIGNMENT.md`。
 
 ## 权威出处（Authoritative Source）
 
@@ -977,5 +977,5 @@ SELECT
 ## 附注
 
 - 本文件的"权威"指 **`github.com/nexmark/nexmark` 仓库的 `nexmark-flink` 模块**（Flink 官方 NexMark 基准实现）。该仓库是当前业界对照 Flink 语义的事实标准来源。
-- 我们自己的实现位于 `wf-examples/performance/nexmark_pk/models/queries/qN.wfl`，其与上述权威语义的对齐情况**不在本文件讨论范围**，见 `REVIEW_FLINK_CONFORMANCE_2026-08-23.md`。
+- 我们自己的实现位于 `wf-examples/performance/nexmark_pk/models/queries/qN.wfl`，其与上述权威语义的对齐情况**不在本文件讨论范围**，见 `SEMANTIC_ALIGNMENT.md`。
 - 若需核对最新原文，请以仓库 raw URL 为准（本文件为 2026-08-21 快照）。
