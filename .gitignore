@@ -14,3 +14,4 @@ performance/qradar_pk/ab_results/
 performance/qradar_pk/data/
 performance/qradar_pk/topology_1/
 performance/qradar_pk/gen.log
+performance/nexmark_pk/__pycache__/
