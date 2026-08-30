@@ -2,6 +2,21 @@
 
 All notable changes to the wf-examples performance / verification scenarios will be documented in this file.
 
+## [2026-08-30]
+
+### Added
+
+- **nexmark_pk `bench.sh` mix 参数——全部规则同跑**：`./bench.sh mix replay <total>` 把 21 个查询（23 条规则，不含 q6）**同时**加载进一个 daemon 混跑，输出一行合并吞吐（与 `all` 逐个单规则相对）。规则集用 symlink 清单（`data/mix_rules/`）加载以排除 q6（混跑里 q6 会门控整个跑批）；stream feed 的 `--wfl` 同步传全部查询文件；`--verify` 对 mix 跳过（多规则同跑 EMIT 不能与 oracle 单规则对拍，正确性走 verify_daemon.sh）。依赖 wp-reactor 2.0.10 的 **join 索引多 key 支持**：30M 从冻结（ingest 卡 ~1.5M）到 105s / EPS 763K / clean；1m EPS 211K → 1.27M（6×）。
+- **nexmark_pk 结果归档 mix 分节**：`docs/BENCH_RESULTS.md` 新增 2026-08-30 mix 数据（1m/10m/30m：EPS 1.27M / 938K / 707,729，全 clean）+ **调和模型验证** `1/mix = Σ(1/solo_i) − (N−1)·P`（P≈35ns 共享管线成本）——由 `all` 单跑预测 30M ≈ 763K，与实测 762,800 吻合。
+
+### Removed
+
+- **nexmark_pk `verify_file.sh`（batch 文件源路径）**：验证脚本收敛——batch 文件源路径并入 daemon 路径，`verify_daemon.sh` 成为唯一全深度（L1+L2+L3）验证入口；配套删除其专属配置 `conf/wfusion_file.toml`，README/docs/scripts 引用同步（含 warp-fusion `wfgen verify-nexmark` 注释）。
+
+### Changed
+
+- **nexmark_pk `bench.sh`**：query 参数支持 `mix`（q1..q22|all|mix）；`all` 与 `mix` 语义在用法、报错信息与 README §1 明确区分——`all` = 每个查询独立 daemon 逐个单规则跑，`mix` = 全部规则争同一引擎（共享 parse/rule 并行度，规则间资源竞争真实可见）。
+
 ## [2026-08-24]
 
 ### Added
