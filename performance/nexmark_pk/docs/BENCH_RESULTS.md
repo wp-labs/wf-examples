@@ -8,6 +8,38 @@
 
 ---
 
+## 2026-08-30 Mac mini（10 核）· mix replay（全规则同跑）
+
+> `mix` = 21 个查询（23 条规则，不含 q6）**同时**加载进一个 daemon 混跑，只输出一行
+> 合并吞吐（2026-08-30 新增模式，与 `all` 逐个单规则相对；见 README §1 / bench.sh 头注释）。
+> 修复背景：首跑 30M 冻结（ingest 卡 ~1.5M）——q8 deferred join 的 join 索引**单 key 独占**
+> （q8 按 seller / q20 按 id 共窗），后注册者回退全窗扫描 O(全窗)×pending；wp-reactor
+> **多 key join 索引**修复后可用（每 key 字段各建索引，见 `multi_key_bench.rs`）。
+
+- **命令**：`./bench.sh mix replay <1m|10m|30m>`
+- **环境**：Mac mini（10 核）；p=10 r=10 c=1，frame_mb=8，conns=1
+- **版本**：wp-reactor 多 key join 索引修复后
+- **结果**：全部 `[clean]`（appended 追平、SUMMARY clean、eps_mode=sentinel）
+
+| total | EPS | RSS_peak (MB) | CPU avg/max (%) | evict | load | 结束时刻 |
+|---|---|---|---|---|---|---|
+| 1m | 1,268,713 | 1,743 | 482 / 949 | 0 | 17.0 | 22:06:37 |
+| 10m | 938,445 | 9,559 | 742 / 880 | 90 | 7.0 | 22:29:48 |
+| 30m | **707,729** | **8,682** | **691 / 903** | 588 | 7.4 | 22:29:07 |
+
+（另两轮同配置复跑：10m=1,089,324 / 30m=762,800，随负载波动 ±8% 内）
+
+### 观测与备注
+
+1. **调和模型验证**：`1/mix = Σ(1/solo_i) − (N−1)·P`（P≈35ns 共享管线成本），
+   由 `all` 单跑结果预测 30m mix ≈ 763K，与实测 762,800 吻合（见 git 讨论）。
+2. **CPU 未打满**（~7/10 核，单跑同样如此）——引擎流水线并行效率的整体特性，
+   非 mix 特有退化；混跑吞吐远低于单规则是定义使然（每事件被 23 条规则各处理一遍）。
+3. **100m 未验证**：RSS 30m≈8.7GB 线性外推 ~29GB，需大内存机。
+4. 逐规则 EMIT 附录以当次 `data/bench_mix_replay.txt` 为准（q9=q4a 一致性等）。
+
+---
+
 ## 2026-08-27 Linux（8 核）· replay 100M 全量 21 查询
 
 - **命令**：`./bench.sh all replay 100m`（feed=replay, total=100,000,000, slice_ms=1000, cores=8）

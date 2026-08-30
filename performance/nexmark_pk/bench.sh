@@ -10,7 +10,12 @@
 #            （~760k，客户端实时编码受限）—— 测长时实时流稳定性/内存有界
 #
 # 用法:
-#   ./bench.sh [query=q1|..|q22|all] [feed=replay|stream] [total=100m|30m|10m]   (旧名 cont 已移除)
+#   ./bench.sh [query=q1|..|q22|all|mix] [feed=replay|stream] [total=100m|30m|10m]   (旧名 cont 已移除)
+#   query=all  逐个跑：每个查询一个独立 daemon（单规则集），顺序循环全部查询（不含 q6）
+#   query=mix  混跑：全部规则同时加载进**一个** daemon（多规则同跑，测合并吞吐，不含 q6）
+#              ——与 all 的区别：all 每查询单独跑（规则互不干扰，输出每查询一行）；
+#                mix 所有规则争同一引擎（parse/rule 并行度共享，规则间资源竞争真实可见，
+#                只输出一行合并吞吐）。
 #   ./bench.sh clean [cache|all]   清除生成数据：
 #       cache（默认）= 预编码帧/分片缓存 + 日志 + 临时文件（可再生，磁盘大头，
 #                     典型 ~10G/100m）；保留结果文件 data/bench_*.txt
@@ -31,6 +36,7 @@
 # 示例:
 #   PARSE_PARALLELISM=6 RULE_PARALLELISM=6 MAX_FRAME_BYTES=204800 ./bench.sh q1 replay 100m
 #   WARMUP=1 ./bench.sh all replay 30m
+#   ./bench.sh mix replay 30m     # 全部规则一个 daemon 混跑（合并吞吐，对照 all 逐个均值）
 #   CONNECTIONS=4 SHARD_KEYS="bid_events:auction,auction_events:id,person_events:id" ./bench.sh q2 replay 30m  # 有状态:键闭包多连接
 #   DATA_VER=old ./bench.sh q1 replay 100m   # 强制用旧乱序数据复现对比
 #
@@ -61,12 +67,13 @@ if [ "${1:-}" = "clean" ]; then
       pkill -9 -f "wfusion daemon" 2>/dev/null
       pkill -9 -f "wfgen send-arrow" 2>/dev/null
       sleep 1
-      # 大缓存：预编码帧 + 键闭包分片帧（可再生）
+      # 大缓存：预编码帧 + 键闭包分片帧 + mix 规则 symlink 清单（可再生）
       rm -f data/bench_*.frames data/shard_*.frames
+      rm -rf data/mix_rules
       # 日志/临时：运行残留（start_daemon 每次 rm -f 重写，可任意删）
       rm -f data/metrics.ndjson data/wfusion.log data/daemon.log data/stream.log \
             data/error.ndjson data/burst_bench.jsonl data/bench_q1q21_100m.log \
-            data/daemon_file.log data/wfusion_file.log data/perf_sentinel.ndjson \
+            data/daemon_file.log data/perf_sentinel.ndjson \
             data/bench_*_rss.txt \
             /tmp/bench_rss.txt /tmp/bench_conf.toml /tmp/bench_conf.toml.tmp \
             /tmp/bench_gt_verify.json /tmp/bench_warmup_q1.txt
@@ -212,17 +219,28 @@ case "$TOTAL" in
 esac
 case "$QUERY" in
   q1|q2|q3|q4|q5|q6|q7|q8|q9|q10|q11|q12|q13|q14|q15|q16|q17|q18|q19|q20|q21|q22) QUERIES=("$QUERY");;
-  # q6 排除出 all（2026-08-26）：join-then-key（键 seller 在 join 侧）单线程 +
+  # q6 排除出 all/mix（2026-08-26）：join-then-key（键 seller 在 join 侧）单线程 +
   # 逐事件 sliding 状态机 + 每事件命中 emit（avg>=200 条件宽松）——30M 仅 634K
-  # EPS（1 核 1576ns/evt），架构性慢（非局部可修），拉低 all 均值且拖长总时长。
+  # EPS（1 核 1576ns/evt），架构性慢（非局部可修）。all 里拉低均值且拖长总时长；
+  # mix 里更会**门控整个混跑**（完成信号等最慢窗口排空，EPS 被拖到 ~600K 量级）。
   # 单跑研究仍可用 `./bench.sh q6 ...`（保留在上面显式列表）。
+  # all=逐个单规则顺序跑；mix=全部规则同跑一个 daemon（多规则混跑，见头注释）。
   all) QUERIES=(q1 q2 q3 q4 q5 q7 q8 q9 q10 q11 q12 q13 q14 q15 q16 q17 q18 q19 q20 q21 q22);;
-  *) echo "bad query '$QUERY' (q1..q22|all，all 不含 q6)"; exit 1;;
+  mix) QUERIES=(mix);;
+  *) echo "bad query '$QUERY' (q1..q22|all|mix；all=逐个单规则，mix=全部规则同跑，均不含 q6)"; exit 1;;
 esac
 case "$FEED" in
   replay|stream) ;;
   *) echo "bad feed '$FEED' (replay|stream；旧名 cont 已于 2026-08-20 移除，用 replay)"; exit 1;;
 esac
+
+# mix 规模注记（2026-08-30 引擎修复后）：全规则同跑曾因 join 索引单 key 独占
+# （q8 按 seller / q20 按 id 共窗，后注册者回退全窗扫描）冻结在 ~1.5M——wp-reactor
+# 改多 key join 索引后 30M 已正常（EPS ~760K、~105s、clean）。100M 未验证：
+# RSS 30M≈9.3GB 线性外推 ~30GB，内存不足的机器请先 clean 或降级 10m/30m。
+if [ "$QUERY" = "mix" ] && [ "$TOTAL" = "100m" ]; then
+  echo "⚠ mix + 100m：全规则同跑 100M 未验证（30M RSS≈9.3GB 线性外推 ~30GB，需大内存机）" >&2
+fi
 
 mkdir -p data
 # 核数探测：Linux 用 nproc（sysctl hw.ncpu 是 macOS 专属，Linux 下会报错 → cores=?
@@ -338,9 +356,22 @@ stat_samples() {
 # 并行度默认取 conf/wfusion.toml；-p/-r flag 或环境变量覆盖。
 write_conf() {
   local Q="$1" M="$2"
+  local RULES="models/queries/$Q.wfl"
+  if [ "$Q" = "mix" ]; then
+    # mix = 全部规则同跑：把 all 的查询集（除 q6，见校验处注释）symlink 进 data/mix_rules/
+    # 再 glob——不能直接 models/queries/*.wfl（会把 q6 拉进来门控整个混跑）。每次跑重建
+    # （rm -rf）防残留旧文件；symlink 而非 copy，规则文件永不漂移。
+    rm -rf data/mix_rules && mkdir -p data/mix_rules
+    local QF
+    for QF in models/queries/q*.wfl; do
+      case "$(basename "$QF")" in q6.wfl) continue;; esac
+      ln -sf "../../$QF" "data/mix_rules/$(basename "$QF")"
+    done
+    RULES="data/mix_rules/*.wfl"
+  fi
   PARSE_V_EFF="${PARSE:-$(sed -n 's/^parse_parallelism = *//p' conf/wfusion.toml | head -1)}"
   RULE_V_EFF="${RULE:-$(sed -n 's/^rule_parallelism = *//p' conf/wfusion.toml | head -1)}"
-  sed -e "s|^rules = .*|rules = \"models/queries/$Q.wfl\"|" \
+  sed -e "s|^rules = .*|rules = \"${RULES}\"|" \
       -e "s|^parse_parallelism = .*|parse_parallelism = ${PARSE_V_EFF}|" \
       -e "s|^rule_parallelism = .*|rule_parallelism = ${RULE_V_EFF}|" \
       conf/wfusion.toml > /tmp/bench_conf.toml
@@ -641,8 +672,11 @@ run_stream_one() {
   wait_sampler_baseline   # 先拿 cputime 差分基线，再启动流（防亚秒突发 0% 假象）
 
   local T0=$("$PY" "$LIB" now)
+  # mix：--wfl 传全部查询文件（脚本内 glob 展开；data/mix_rules/ 由 write_conf 建好）
+  local WFL_ARGS="models/queries/$Q.wfl"
+  [ "$Q" = "mix" ] && WFL_ARGS="data/mix_rules/*.wfl"
   "$WFGEN" stream --scenario-dir scenarios --ws models/schemas/nexmark.wfs \
-    --wfl models/queries/$Q.wfl --addr 127.0.0.1:$PORT \
+    --wfl $WFL_ARGS --addr 127.0.0.1:$PORT \
     --rate "$RATE" --slice-ms "$SLICE_MS" --sentinel "$TOTAL_N" > data/stream.log 2>&1 &
   local S=$!
 
@@ -753,13 +787,19 @@ fi
 # 性能：真实规则引擎逐事件 × 规则数，10m≈80s / 30m≈5-15min（负载相关）；
 # 单查询 --verify 传 --query 只验证该查询的规则（26 → 1 个文件）。
 if [ "$VERIFY" = "1" ] && [ "$FEED" = "replay" ]; then
-  # stderr 保留（进度条走 stderr；stdout 是 JSON + diff 报告）
-  VERIFY_SCOPE=""
-  [ "$QUERY" != "all" ] && VERIFY_SCOPE="--query $QUERY"
-  echo "== verify: wfgen verify-nexmark ${TOTAL_N}（真实规则引擎${VERIFY_SCOPE:+ $VERIFY_SCOPE}）对拍 EMIT =="
-  if "$WFGEN" verify-nexmark "$TOTAL_N" $VERIFY_SCOPE --engine-emit data; then
-    echo "== verify: 全部一致 ✅ =="
+  if [ "$QUERY" = "mix" ]; then
+    # mix 是多规则同跑：EMIT 计数受规则间交互影响，不能与 oracle 单规则期望对拍
+    # （历史 q8/q11 数量级差异；正确性验证走 verify_daemon.sh 逐查询单跑保真）——跳过并明示。
+    echo "== verify: query=mix 跳过——混跑 EMIT 不能与 oracle 单规则对拍（正确性请用 verify_daemon.sh 逐查询）=="
   else
-    echo "== verify: 存在差异 ❌（见上方 diff 明细）=="
+    # stderr 保留（进度条走 stderr；stdout 是 JSON + diff 报告）
+    VERIFY_SCOPE=""
+    [ "$QUERY" != "all" ] && VERIFY_SCOPE="--query $QUERY"
+    echo "== verify: wfgen verify-nexmark ${TOTAL_N}（真实规则引擎${VERIFY_SCOPE:+ $VERIFY_SCOPE}）对拍 EMIT =="
+    if "$WFGEN" verify-nexmark "$TOTAL_N" $VERIFY_SCOPE --engine-emit data; then
+      echo "== verify: 全部一致 ✅ =="
+    else
+      echo "== verify: 存在差异 ❌（见上方 diff 明细）=="
+    fi
   fi
 fi

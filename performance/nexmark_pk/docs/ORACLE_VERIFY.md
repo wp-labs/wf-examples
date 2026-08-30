@@ -44,7 +44,7 @@ wfgen gen-nexmark <N> --seed 1
 | 层 | 机制 | 验证粒度 | 覆盖 |
 |---|---|---|---|
 | L1 计数对拍 | `--engine-emit`：`规则名 计数` 文本行 diff | 每规则输出**条数** | 全部规则 |
-| L2 内容断言 | `verify_file.sh` → `verify_file_lib.py content` | 每条 alert 的字段**形状/约束**（CHECKS 表 + 通用断言） | 全部规则 |
+| L2 内容断言 | `verify_daemon.sh` → `verify_file_lib.py content` | 每条 alert 的字段**形状/约束**（CHECKS 表 + 通用断言） | 全部规则 |
 | L3 字段级明细对拍 | `--detail-diff`：oracle 逐条 yield 字段值 vs 引擎 `benchmark.ndjson` | **每条 alert 的每个字段值** | 已求值 yield 的规则（CEP/on-each/match/deferred） |
 
 三档递进：L1 保证「数量对」，L2 保证「字段形状对」，L3 保证「字段值对」。
@@ -82,7 +82,7 @@ oracle 侧只对**已求值 yield 字段**的 alert 产出明细行；以下规�
 | stats 规则 | q4b_category_avg、q15~q19 | oracle 的 stats close 未求值 yield 字段（待接入） |
 | 中间管道输出 | q4a_auction_finals、q13a_bid_mod | yield 到中间窗（auction_finals/bid_mod），不写引擎 benchmark.ndjson |
 | known 差异 | q12_bidder_10s_window_count | fixed+close 收口非确定（oracle 理想值，见 §6） |
-| 工具级例外 | q6（join 可见性非确定）、q13b（provider 静态表） | 见 §6，由 verify_file.sh 跳过 `--detail-diff` |
+| 工具级例外 | q6（join 可见性非确定）、q13b（provider 静态表） | 见 §6，由 verify_daemon.sh 跳过 `--detail-diff` |
 
 ## 5. 输出
 
@@ -100,7 +100,7 @@ oracle 侧只对**已求值 yield 字段**的 alert 产出明细行；以下规�
   （1M 实测 oracle=10,240 vs 引擎=27,446，多 ~168%；10M 实测 oracle=102,400 vs 引擎=282,514）；
   oracle 事件时间到末尾即止，为理想值。**q12 是豁免放行而非验证一致，引擎待修项。**
 
-### 工具级边界（verify_file.sh 跳过 L3）
+### 工具级边界（verify_daemon.sh 跳过 L3）
 
 - **q13（provider 静态表 join）**：q13b 的 `side_input` 是 knowdb 静态表，oracle 不加载
   knowdb → join 富化字段（`detail=side_input.value`）oracle 为空，无法对拍。由 L2 CHECKS
@@ -121,12 +121,12 @@ oracle 侧只对**已求值 yield 字段**的 alert 产出明细行；以下规�
 ## 7. 使用
 
 ```bash
-# L1 + L3 一次跑（verify_file.sh 单查询内部即此调用）
-wfgen verify-nexmark 1000000 --query q1 --engine-emit data/verify_emit_q1.txt \
+# L1 + L3 一次跑（verify_daemon.sh 单查询内部即此调用）
+wfgen verify-nexmark 1000000 --query q1 --engine-emit data/verify_daemon_emit_q1.txt \
   --detail-diff data/alerts/benchmark.ndjson
 
-# 全量（verify_file.sh all 1m 内部逐查询执行）
-./verify_file.sh all 1m
+# 全量（verify_daemon.sh all 1m 内部逐查询执行）
+./verify_daemon.sh all 1m
 ```
 
 oracle 输出的 JSON 明细（纯 oracle 模式，无 --engine-emit）：

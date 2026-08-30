@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""verify_file.sh 的度量/校验库（2026-08-30 从 verify_file.sh 内嵌 heredoc 抽出）。
+"""verify_daemon.sh 的度量/校验库（2026-08-30 从 verify_file.sh 内嵌 heredoc 抽出，后者已移除）。
 
-verify_file.sh 逐查询 batch 跑完后调用本库完成三个口径 + 一道守卫：
+verify_daemon.sh 逐查询跑完后调用本库完成三个口径 + 一道守卫：
 - dirty   <rule_names>          指标口径脏检测：metrics.ndjson 的 emitted_total label
                                  必须恰为当前 query 规则集（缺/外来 = 脏 → 重跑）
 - counts  <emit_path> <cnt_path> 权威计数：metrics.emitted_total（→EMIT 文件）+ 输出

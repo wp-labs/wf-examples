@@ -287,8 +287,9 @@ q5 30m 432MB < 512MB 不触发 ✅——这就是 30m 对拍只有 q17/q19/q20 �
 ### 7.6 复现命令
 
 ```sh
-./bench.sh all replay 10m          # 22 查询全量吞吐 + RSS + CPU（哨兵 EPS 口径）
-./bench.sh all replay 10m --verify # 同上 + 每查询 oracle 对拍（~40min 量级）
+./bench.sh all replay 10m          # 22 查询全量吞吐 + RSS + CPU（哨兵 EPS 口径；all=逐个单规则）
+./bench.sh mix replay 10m           # 混跑：全部规则一个 daemon 同跑（多规则合并吞吐，不含 q6）
+./bench.sh all replay 10m --verify # 同上 + 每查询 oracle 对拍（~40min 量级；mix 不支持 --verify）
 ./bench.sh q2 replay 10m           # 单查询
 ./diag.sh q5 10m                   # 性能墙定位（六档墙梯 + 每段 CPU/RSS）
 python3 scripts/extract_emitted.py data/metrics.ndjson  # 消费侧计数器

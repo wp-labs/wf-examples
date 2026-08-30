@@ -13,7 +13,7 @@
 |---|---|---|
 | L1 计数 | 每规则输出条数 == oracle | 全部规则 |
 | L2 内容断言 | 每条 alert 的字段形状 + 业务语义约束 | 全部规则 |
-| L3 值级对拍 | 每条 alert 的每个 yield 字段值 == oracle（multiset） | q1-q3, q5, q7-q11, q14, q20-q22 + **stats 全部（q4b/q15-q19）**——q18/q19 键字段修复后 stats 的 yield 字段已可求值，verify_file.sh 对它们同样传 `--detail-diff` 且实测 multiset identical |
+| L3 值级对拍 | 每条 alert 的每个 yield 字段值 == oracle（multiset） | q1-q3, q5, q7-q11, q14, q20-q22 + **stats 全部（q4b/q15-q19）**——q18/q19 键字段修复后 stats 的 yield 字段已可求值，verify_daemon.sh 对它们同样传 `--detail-diff` 且实测 multiset identical |
 | L3 排除 | 中间输出（q4a/q13a，oracle intermediate 标记剔除）、known（q12，见下）、工具排除（q6/q13，join 可见性/静态表无基线） | 由 L1 + L2 覆盖 |
 
 ## 逐查询判定逻辑

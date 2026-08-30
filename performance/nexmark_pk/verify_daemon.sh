@@ -1,27 +1,26 @@
 #!/usr/bin/env bash
-# verify_daemon.sh — daemon（TCP 注入 + SIGTERM flush）路径的正确性验证
+# verify_daemon.sh — daemon（TCP 注入 + SIGTERM flush）路径的正确性验证（全深度唯一脚本）
 #
-# 与 verify_file.sh（batch 文件源）互补：同一份预编码帧经 TCP 注入、metrics 追平
-# （appended ≥ N 且 acked_lag == 0）、常驻进程 SIGTERM flush 收口，输出落盘
-# data/alerts/benchmark.ndjson 后做同样的 **L1（metrics.emitted_total）+ L2（内容
-# 断言）+ L3（--detail-diff 值级对拍）三层验证**。
+# 同一份预编码帧经 TCP 注入、metrics 追平（appended ≥ N 且 acked_lag == 0）、
+# 常驻进程 SIGTERM flush 收口，输出落盘 data/alerts/benchmark.ndjson 后做
+# **L1（metrics.emitted_total）+ L2（内容断言）+ L3（--detail-diff 值级对拍）三层验证**。
 #
-# 覆盖 batch 路径跑不到的注入/收口形态：TCP 注入 + 常驻 + 关机 flush 尾批收口
-# （bench.sh --verify 因 blackhole sink 只对拍 L1 计数；本脚本改用 sinks_file
-# 落盘 → L2/L3 同样深度）。
+# 覆盖注入/收口形态：TCP 注入 + 常驻 + 关机 flush 尾批收口（bench.sh --verify 因
+# blackhole sink 只对拍 L1 计数；本脚本改用 sinks_file 落盘 → L2/L3 同样深度）。
+# 历史 verify_file.sh（batch 文件源路径）已移除（2026-08-30），本脚本为唯一全深度验证入口。
 #
 # 用法:
 #   ./verify_daemon.sh [query=q1|..|q22|all] [total=1m|10m|30m|100m]
 #     默认 all + 1m（1M 数据快验）。total 对应的预编码帧
 #     data/bench_<total>_v5.frames 必须存在（bench.sh 会生成；1m 缓存已入库）。
-#   env（与 verify_file.sh / bench.sh 同款）:
+#   env（与 bench.sh 同款）:
 #     REPO / WFUSION / WFGEN   二进制来源（默认 ../../../warp-fusion/target/release）
 #     PARSE_PARALLELISM / RULE_PARALLELISM   并行度（默认取 conf/wfusion.toml）
 #     DATA_VER   帧缓存版本（默认 v5）
 #     SKIP_BIN_CHECK=1 / BIN_CHECK_STRICT=1   二进制新鲜度自检开关
 #
 # 输出: 每查询一行摘要（stdout + data/verify_daemon_all.txt）；逐查询明细
-#   data/verify_daemon_<Q>.txt（同 verify_file.sh 的 verify_file_<Q>.txt 结构）。
+#   data/verify_daemon_<Q>.txt（文件/指标双口径计数 + oracle 报告）。
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
@@ -31,7 +30,7 @@ DATA_VER="${DATA_VER:-v5}"
 PARSE="${PARSE_PARALLELISM:-}"
 RULE="${RULE_PARALLELISM:-}"
 
-# 二进制来源（同 verify_file.sh）：优先本地 warp-fusion release；回退 PATH。
+# 二进制来源（同 bench.sh）：优先本地 warp-fusion release；回退 PATH。
 REPO="${REPO:-}"
 if [ -z "$REPO" ] && [ -d "../../../warp-fusion" ]; then
   REPO="$(cd ../../../warp-fusion && pwd)"
@@ -51,7 +50,7 @@ if [ -z "$WFUSION" ] || [ -z "$WFGEN" ]; then
   exit 1
 fi
 
-# 二进制新鲜度自检（同 verify_file.sh）：path 依赖才检查二进制是否早于源码。
+# 二进制新鲜度自检（同 bench.sh）：path 依赖才检查二进制是否早于源码。
 if [ "${SKIP_BIN_CHECK:-0}" != "1" ] && [ -n "$REPO" ] && [ -n "$WFUSION" ] \
    && [ -d "$REPO/../wp-reactor/crates" ] \
    && grep -qE '^wf-engine = \{ *path' "$REPO/Cargo.toml" 2>/dev/null; then
@@ -67,7 +66,7 @@ fi
 
 PY="${PYTHON:-python3}"
 LIB="../scripts/bench_lib.py"        # 哨兵/appended/acked-lag（bench.sh 同款）
-VFLIB="scripts/verify_file_lib.py"   # dirty/counts/cross/content（verify_file.sh 同款）
+VFLIB="scripts/verify_file_lib.py"   # 验证度量/校验库：dirty/counts/cross/content
 PORT=9800
 
 TOTAL_N=1000000
@@ -251,7 +250,7 @@ for Q in "${QUERIES[@]}"; do
     break
   done
   # 两次尝试均失败（启动失败/追平超时/指标脏）：必须如实报 FAIL，不能静默跳过
-  # ——否则汇总可能显示"全部一致"但实际少了该查询（verify_file.sh 的 batch=FAIL 同款）。
+  # ——否则汇总可能显示"全部一致"但实际少了该查询（与启动失败分支同款，如实报 FAIL）。
   if [ "$BATCH_OK" != "1" ]; then
     echo "$Q | FAIL | daemon=两次尝试均失败（启动/追平超时/指标脏，见 data/daemon_file.log）" >> "$SUMMARY"
     echo "$Q | FAIL | daemon=两次尝试均失败（启动/追平超时/指标脏）"
@@ -267,7 +266,7 @@ for Q in "${QUERIES[@]}"; do
   # ---- 交叉检查：文件输出 vs metrics（尾批丢失 → ⚠ 警告不判失败）----
   CROSS=$("$PY" "$VFLIB" cross "$CNT_FILE")
 
-  # ---- oracle 对拍（--detail-diff 字段级对拍；q13/q6 例外同 verify_file.sh）----
+  # ---- oracle 对拍（--detail-diff 字段级对拍；q13/q6 例外见 docs/ORACLE_VERIFY.md §6）----
   ORACLE_LOG="data/verify_daemon_oracle_${Q}.log"
   DETAIL_DIFF="--detail-diff data/alerts/benchmark.ndjson"
   if [ "$Q" = "q13" ] || [ "$Q" = "q6" ]; then
