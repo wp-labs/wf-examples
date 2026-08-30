@@ -97,7 +97,8 @@ oracle 侧只对**已求值 yield 字段**的 alert 产出明细行；以下规�
 
 - **q12_bidder_10s_window_count**：fixed+close 收口非确定——引擎 fixed 收口预算
   （`MAX_EXPIRY_SCAN_BUDGET`）+ scan_timeouts 墙钟推进，快速 replay 可能多收/漏收尾部桶
-  （10M 实测 oracle=102,400 vs 引擎=282,514）；oracle 事件时间到末尾即止，为理想值。
+  （1M 实测 oracle=10,240 vs 引擎=27,446，多 ~168%；10M 实测 oracle=102,400 vs 引擎=282,514）；
+  oracle 事件时间到末尾即止，为理想值。**q12 是豁免放行而非验证一致，引擎待修项。**
 
 ### 工具级边界（verify_file.sh 跳过 L3）
 
@@ -114,7 +115,8 @@ oracle 侧只对**已求值 yield 字段**的 alert 产出明细行；以下规�
   6051 等 flaky 波动）——2026-08-30 已修复：q7/q5 = close_all 尾桶收口语义
   （窗口终点按窗起点算 + 水位对齐到桶边界；hop 用 slide 粒度 + 真 ceil），
   q3 = join 索引与提交前沿竞态（frontier 回退不再领先索引内容 + eager gate
-  冷启动不 bail）。当前 22 查询全 PASS，L3 明细对拍 identical。
+  冷启动不 bail）。当前 22 查询全 PASS：**21 个 L1+L2+L3 真一致**（含 stats 的
+  q4b/q15-q19 值级对拍），**q12 为 known 豁免放行**（见上，+168% 差异，待修）。
 
 ## 7. 使用
 

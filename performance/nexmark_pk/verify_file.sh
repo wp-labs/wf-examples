@@ -28,8 +28,9 @@
 # - **已修复**（wp-reactor 2026-08-28~30）：文件 sink 关机尾批丢失、q13 中间管道
 #   消费竞态、q8/q11/q7 多规则交互、q6/q20 snapshot join 竞态、q3（join 索引与
 #   提交前沿竞态）、q5/q7（close_all 尾桶收口语义）。当前 22 查询全 PASS。
-# - **剩余已知项**：q12 known（fixed+close 收口）由 verify-nexmark 内置列表处理
-#   （⚠ 不判失败）。
+# - **剩余已知项**：q12 known（fixed+close 收口，1M 引擎 27446 vs oracle 10240 多
+#   ~168%）由 verify-nexmark 内置列表处理（⚠ 不判失败）——q12 是豁免放行而非
+#   验证一致，引擎待修项。其余 21 个 L1+L2+L3 真一致。
 #
 # 输出: 每查询一行摘要（stdout + data/verify_file_all.txt）；逐查询明细
 #   data/verify_file_<Q>.txt（文件/指标双口径计数 + oracle 报告）。
