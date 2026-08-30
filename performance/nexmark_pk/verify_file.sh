@@ -148,7 +148,7 @@ for Q in "${QUERIES[@]}"; do
     fi
     if [ "$attempt" = "1" ]; then
       DIRTY=$("$PY" scripts/verify_file_lib.py dirty "$RULE_NAMES")
-      if [ -n "$DIRTY" ]; then
+      if [ -n "$DIRTY" ] && [ "$DIRTY" != "ok" ]; then
         echo "  ⚠ ${Q} 指标口径脏（${DIRTY}），重跑第 2 次" >&2
         continue
       fi

@@ -118,10 +118,14 @@ close_all 尾桶收口语义，q3 = join 索引与提交前沿竞态。**每个�
 
 基于同一 ground truth，两条互补路径覆盖两种形态：
 
-| 路径 | 命令 | 验证对象 |
-|---|---|---|
-| daemon+TCP | `./bench.sh <q> replay 30m --verify` | 生产形态（TCP 注入、多规则） |
-| 文件源 batch | `./verify_file.sh [query] [total]` | 文件源路径（`wfusion batch` 直读帧） |
+| 路径 | 命令 | 验证对象 | 深度 |
+|---|---|---|---|
+| 文件源 batch | `./verify_file.sh [query] [total]` | `wfusion batch` 直读帧 + 自动关机 flush | L1+L2+L3 |
+| daemon+TCP | `./verify_daemon.sh [query] [total]` | 生产形态：TCP 注入 + 常驻 + SIGTERM flush 收口 | L1+L2+L3 |
+| daemon+TCP（浅） | `./bench.sh <q> replay 30m --verify` | 同上，但 blackhole sink 只对拍 EMIT 计数 | 仅 L1 |
+
+**推荐**：`verify_file.sh`（batch，确定性最高）+ `verify_daemon.sh`（daemon，覆盖 TCP/常驻/flush
+收口路径）双跑；`bench.sh --verify` 用于性能跑批的顺带回归（只查计数）。
 
 ### verify_file.sh（文件源路径）
 
@@ -142,10 +146,26 @@ close_all 尾桶收口语义，q3 = join 索引与提交前沿竞态。**每个�
   真一致（历史 q3/q5/q7 FAIL 已修复：close_all 尾桶收口语义 + join 索引/提交前沿竞态），
   如实记录于 docs/ORACLE_VERIFY.md 与 docs/QUERY_VERIFY_LOGIC.md。
 
-### bench.sh --verify（daemon 路径）
+### verify_daemon.sh（daemon 路径，2026-08-30 新增）
 
 ```bash
-./bench.sh q9 replay 30m --verify    # 单查询 daemon 对拍
+./verify_daemon.sh all 1m      # 默认 all + 1M 快验
+./verify_daemon.sh q3 1m       # 单查询
+```
+
+- **注入/收口形态**：`wfusion daemon` TCP 监听 → `send-arrow` 推帧 → metrics 追平
+  （appended ≥ N 且 acked_lag == 0，所有被消费窗口消费完）→ SIGTERM flush 尾批收口落盘
+  `data/alerts/benchmark.ndjson` → 与 verify_file.sh 相同的 L1/L2/L3 三层对拍。
+- 覆盖 batch 路径跑不到的：TCP 注入 + 常驻进程 + 关机 flush 尾批收口（bench.sh `--verify`
+  因 blackhole sink 只对拍 L1 计数，本脚本补 L2/L3 深度）。
+- 逐查询单跑（同 verify_file.sh）；不注册哨兵窗（哨兵 alert 会污染落盘对拍，完成信号用
+  metrics 追平——bench.sh 同款兑底口径）。
+- **当前状态**：与 batch 路径一致（22/22 显示 PASS，q12 同款豁免，详见上）。
+
+### bench.sh --verify（daemon 路径，仅 L1）
+
+```bash
+./bench.sh q9 replay 30m --verify    # 单查询 daemon 对拍（只对拍 EMIT 计数）
 ```
 
 30M 全量多规则对拍（q6=872,913 / q20=196,517）已 4/4 轮精确。
