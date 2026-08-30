@@ -100,6 +100,7 @@ wait_port_free() {
     sleep 0.2
   done
   echo "    警告: 端口 $PORT 超时未释放" >&2
+  return 1
 }
 
 # SIGTERM → 轮询最多 300s → SIGKILL（与 bench.sh 对齐：stats/deferred 规则的
@@ -143,6 +144,13 @@ engine_acked_lag() { "$PY" "$LIB" acked-lag data/metrics.ndjson ""; }
 # 落到 benchmark.ndjson 污染 L2/L3 对拍（WildArray 无排除语法）；完成信号改用
 # metrics 追平（appended + acked_lag，bench.sh 的兑底口径，语义等价：规则追平）。
 start_daemon() {
+  # 防端口残留误连（review 2026-08-30）：上一查询 daemon 若未死透（kill_daemon
+  # 失败被忽略），nc -z 会立即成功但连的是**旧进程**（加载上一查询配置）→
+  # 数据错乱且对拍误报。启动前先确认端口已释放；等不到则拒绝启动。
+  if ! wait_port_free; then
+    echo "    错误: 端口 $PORT 未释放（残留 daemon 未退出），拒绝启动——检查并清理后重跑" >&2
+    return 1
+  fi
   rm -f data/metrics.ndjson data/wfusion.log data/daemon_file.log data/perf_sentinel.ndjson data/error.ndjson
   # 文件 sink append 不截断：每次启动必须清 benchmark.ndjson，否则跨查询/重跑残留累积
   rm -f data/alerts/benchmark.ndjson
@@ -223,8 +231,15 @@ for Q in "${QUERIES[@]}"; do
     fi
     kill "$CLIENT" 2>/dev/null; wait "$CLIENT" 2>/dev/null
     sleep 1
-    # SIGTERM flush：把规则尾部 close 输出收口落盘（metrics 导出完成 = kill 返回）
-    kill_daemon "$D"; wait_port_free
+    # SIGTERM flush：把规则尾部 close 输出收口落盘（metrics 导出完成 = kill 返回）。
+    # kill_daemon 失败（SIGKILL 都杀不死）→ 端口残留，如实报错走 FAIL 分支。
+    if ! kill_daemon "$D"; then
+      echo "$Q | FAIL | daemon=无法停止（残留进程占端口 $PORT）" >> "$SUMMARY"
+      echo "$Q | FAIL | daemon=无法停止（残留进程占端口 $PORT）"
+      PASS_ALL=0
+      continue 2
+    fi
+    wait_port_free
     if [ "$attempt" = "1" ]; then
       DIRTY=$("$PY" "$VFLIB" dirty "$RULE_NAMES")
       if [ -n "$DIRTY" ] && [ "$DIRTY" != "ok" ]; then
