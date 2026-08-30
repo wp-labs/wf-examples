@@ -110,9 +110,11 @@ oracle 侧只对**已求值 yield 字段**的 alert 产出明细行；以下规�
 
 ### 引擎待修项（L3 如实报 FAIL，属引擎缺陷非 oracle 误差）
 
-- **q3 / q5 / q7**：明细对拍暴露**引擎文件比 oracle 少行**（尾桶 close 未落盘，
-  q3 6060 vs 6051 等 flaky 波动）——`metrics.emitted_total` 含尾部但 sink 文件缺行，
-  L1 计数看不出的落盘缺口，L3 精确到缺几行。
+- ~~**q3 / q5 / q7**~~：明细对拍曾暴露**引擎文件比 oracle 少行**（q3 6060 vs
+  6051 等 flaky 波动）——2026-08-30 已修复：q7/q5 = close_all 尾桶收口语义
+  （窗口终点按窗起点算 + 水位对齐到桶边界；hop 用 slide 粒度 + 真 ceil），
+  q3 = join 索引与提交前沿竞态（frontier 回退不再领先索引内容 + eager gate
+  冷启动不 bail）。当前 22 查询全 PASS，L3 明细对拍 identical。
 
 ## 7. 使用
 

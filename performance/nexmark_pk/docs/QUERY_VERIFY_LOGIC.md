@@ -22,11 +22,11 @@
 |---|---|---|---|---|---|---|
 | **Q1** | Currency Conversion | 每 bid 输出一行，`price' = 0.908 × price`，纯投影 | 行数 = bid 总数（1M→920,000）；`id`=auction、`alert_type`/`detail`/`request_count` 恒定 | alert_type=`q1_passthrough` 且 detail=`bid` | ✅ | PASS |
 | **Q2** | Selection | 仅 `MOD(auction,123)==0` 的 bid 每行输出 | 行数 = 满足取模的 bid；**每条 `id` 必须 `%123==0`**（过滤语义直接反验） | `id % 123 == 0` | ✅ | PASS |
-| **Q3** | Local Item Suggestion | auction 驱动 ⋈ person，`category==10` 且 `state∈(OR,ID,CA)`，每满足 auction 一行，detail=seller | 行数 = 满足三重条件的 auction；`id`=auction、`detail`=seller 非空 | alert_type=`q3` 且 detail 非空 | ✅ | **FAIL**（尾 close 丢 0~7 行落盘，flaky） |
+| **Q3** | Local Item Suggestion | auction 驱动 ⋈ person，`category==10` 且 `state∈(OR,ID,CA)`，每满足 auction 一行，detail=seller | 行数 = 满足三重条件的 auction；`id`=auction、`detail`=seller 非空 | alert_type=`q3` 且 detail 非空 | ✅ | PASS |
 | **Q4** | Avg Price by Category | 两层聚合：内层每 auction 生命周期胜出价 max（→中间窗 auction_finals）→ 外层按 category avg | 外层每 category 一行，`detail`=avg 值 | q4b: alert_type=`q4_avg` | —（q4a 中间 + q4b stats） | PASS |
-| **Q5** | Hot Items | HOP(10s,2s) 每窗 bid 数最多 auction（top-1，并列全出） | 每窗一条；`id`=auction | alert_type=`q5_hot` | ✅ | **FAIL**（尾桶 close 差 1 行落盘，flaky） |
+| **Q5** | Hot Items | HOP(10s,2s) 每窗 bid 数最多 auction（top-1，并列全出） | 每窗一条；`id`=auction | alert_type=`q5_hot` | ✅ | PASS |
 | **Q6** | Avg Selling Price by Seller | 每 seller 最近 10 笔成交胜出价均值（`avg>=200` 阈值告警形态；Flink 官方未实现） | 每条命中 emit；`id`=auction | alert_type=`q6_avg200` | —（join 可见性非确定，无权威基线） | PASS |
-| **Q7** | Highest Bid | 每 10s 桶全局最高价 bid（并列全出） | 每桶一条；`detail` 以 `max` 开头 | alert_type=`q7_hi` 且 detail 前缀 `max ` | ✅ | **FAIL**（尾桶 close 差 1 行落盘，flaky） |
+| **Q7** | Highest Bid | 每 10s 桶全局最高价 bid（并列全出） | 每桶一条；`detail` 以 `max` 开头 | alert_type=`q7_hi` 且 detail 前缀 `max ` | ✅ | PASS |
 | **Q8** | Monitor New Users | 10s 桶内注册**且**创建拍卖的人（存在性 join） | 每 (person×桶) 一行；`id`=person | alert_type=`q8_new_user` | ✅ | PASS |
 | **Q9** | Winning Bids | 每 auction 生命周期最高价 bid（平手取 dateTime 最早），每 auction 至多一条 | **每 `id` 至多一条**；`detail`=`winner <bidder>` | alert_type=`q9_win`、detail 前缀 `winner `、每 id ≤1 条 | ✅ | PASS |
 | **Q10** | Log to File | 全量 bid 落盘（每 bid 一行） | 行数 = bid 总数；字段恒定 | alert_type=`q10_log` 且 detail=`log bid` | ✅ | PASS |
@@ -47,7 +47,9 @@
 
 - **判定标准**：L1 保证「数量对」、L2 保证「字段形状/业务语义对」、L3 保证「字段值对」。
   只有三层全过（或按表格标注跳过）才算该查询「验证正确」。
-- **当前全绿**：22 个查询中 19 个 PASS；q3/q5/q7 因**引擎文件 sink 尾桶 close 落盘丢行**
-  （oracle 少 N 行）如实报 FAIL，属引擎待修项（L3 把 flaky 从「差 1」精确定位到「缺几行」）。
+- **当前全绿**：22 个查询全部 PASS（L1 计数 + L2 内容断言 + L3 值级对拍三层全过）。
+  q3/q5/q7 的历史 FAIL 已修复：q7/q5 为 close_all 尾桶收口语义（窗口终点按窗起点算 +
+  水位对齐到桶边界；hop 用 slide 粒度 + 真 ceil），q3 为 join 索引与提交前沿竞态
+  （frontier 回退不再领先索引内容 + eager gate 冷启动不 bail）。
 - **L2 是 stats 规则（q4b/q15-q19）唯一的字段级验证**——q18/q19 内容 bug（detail 全空 /
   id 缺失）正是 L2 抓出并已修复的。

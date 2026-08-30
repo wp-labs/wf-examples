@@ -101,9 +101,10 @@ L2 Myers → L3 明细），退出码 0=一致 / 1=有差异。**oracle 的完�
 | `DIRTY` | 致命计数器非零 | 测量作废，重跑 |
 | ⚠ known-diff | 已知差异（如 q12 fixed+close 尾桶收口） | 不判失败 |
 
-**当前已知 FAIL**：q3（尾 close 差 0~7，flaky）、q5/q7（单规则 sharded 尾桶差 1）——引擎已知
-待修项，非规则逻辑错；其余 19/22 稳定 PASS。**每个查询「验证正确」的判定逻辑（正确语义 +
-断言什么 + 覆盖层 + 状态）见 [`docs/QUERY_VERIFY_LOGIC.md`](docs/QUERY_VERIFY_LOGIC.md)。**
+**当前已知 FAIL**：无——22 查询全 PASS（L1 计数 + L2 内容断言 + L3 值级对拍三层全过；
+q12 由 verify-nexmark 内置 known 列表处理不判失败）。历史 FAIL（q3/q5/q7）已修复：q7/q5 =
+close_all 尾桶收口语义，q3 = join 索引与提交前沿竞态。**每个查询「验证正确」的判定逻辑
+（正确语义 + 断言什么 + 覆盖层 + 状态）见 [`docs/QUERY_VERIFY_LOGIC.md`](docs/QUERY_VERIFY_LOGIC.md)。**
 
 **规模口径**：
 - **30M**：逐位对拍（权威）；**100M**：EMIT 与 30M 同比例侧证 + `[clean]`（oracle 工作集
@@ -135,8 +136,8 @@ L2 Myers → L3 明细），退出码 0=一致 / 1=有差异。**oracle 的完�
   → 循环前清残留进程 + 校验 emitted_total label 恰为当前 query 规则集合，脏则自动重跑一次。
 - **已知尾批丢失/竞态均已修复**（wp-reactor 2026-08-28~30）：on-each 关机尾批、q13 中间管道
   竞态、q6/q20 snapshot join 竞态、q8/q11/q7 多规则交互。
-- **当前状态**：19/22 稳定与 oracle 一致；**q3**（尾 close 差 0~7，flaky）、**q5/q7**（单规则
-  sharded 尾桶差 1）如实报 FAIL，属引擎已知待修项，非规则逻辑错。
+- **当前状态**：22/22 与 oracle 一致（L1 + L2 + L3 全过）；历史 q3/q5/q7 FAIL 已修复
+  （close_all 尾桶收口语义 + join 索引/提交前沿竞态），如实记录于 docs/ORACLE_VERIFY.md。
 
 ### bench.sh --verify（daemon 路径）
 
