@@ -2,9 +2,10 @@
 
 > 配套文档：
 > - `../README.md` —— 套件结构、bench.sh 用法、测量纪律
-> - `TEST_PLAN.md` —— 测试方案：EPS/RSS/CPU/正确性度量口径（哨兵机制）
 > - `BENCH_RESULTS.md` —— 基准实测结果归档（按跑批日期分节）
 > - `CAPABILITY_GAP_MATRIX.md` —— 22 查询逐条能力/语义判定（当前权威）
+>
+> 度量口径（EPS/RSS/CPU/正确性）已并入本文 §7（原 TEST_PLAN.md）。
 
 本文回答五个问题：**Nexmark 是什么？Q1~Q22 做什么测试？数据有什么要求？我们如何准备数据？正确的标准是什么？**
 
@@ -38,7 +39,7 @@ Flink OSS / VVR、Kafka Streams、Spark Streaming 等）。
 22 条查询覆盖 Flink 官方 NEXMark 测试集的全部查询（`qN.sql`，权威原文见
 `NEXMARK_AUTHORITATIVE_SEMANTICS.md`）。各查询的**官方意图 / 本地 `.wfl` 实现 / 能力档位**
 见 `CAPABILITY_GAP_MATRIX.md` §一（21 已有 / Q12 待补强 / Q6 特殊口径·Flink 官方未实现），
-执行器应用与语义偏差详见 `SEMANTIC_SUPPORT_MATRIX.md` / `SEMANTIC_ALIGNMENT.md`。
+执行器应用与语义偏差详见 `SEMANTIC_ALIGNMENT.md`（§4 对齐状态表 / §8 执行器矩阵）。
 
 **能力面覆盖**：on-each / 过滤 / snapshot·deferred·asof join / fixed·sliding·session·hop
 窗口 / distinct / conv top-N·top_ties / stats<>（count/sum/avg/min/max/distinct/last/top）/ `1d:fixed` 日历天桶。
@@ -103,6 +104,8 @@ NEXMark 标准数据的要求，本实现（`wfgen gen-nexmark`）全部满足�
 
 - 与 `gen-nexmark` 相同的 30s 桶序喂入——与引擎 daemon 收到的帧序一致，窗口过期
   语义对拍才成立（每规则独立 CepStateMachine + RuleExecutor）。
+- oracle 的完整定义（处理流程 / 计数·内容·字段级三档验证 / 排除与边界 / known 差异）
+  见 `ORACLE_VERIFY.md`。
 - 覆盖全部规则（含 q1 on-each / q11/q12/q14/q22 等早期模拟器未建模项）。
 - **已知差异**：Q12（fixed+close 尾桶收口，引擎实现面非确定，标 ⚠ 不判失败）；q21 已随
   数据侧 `channel_id` 对齐（官方 95% 输出量）由 verify 覆盖。其余规则与引擎 EMIT 精确相等
@@ -201,3 +204,92 @@ q5 30m 432MB < 512MB 不触发 ✅——这就是 30m 对拍只有 q17/q19/q20 �
   否则被驱逐破坏正确性。
 - 多连接（key 分片）仅在有状态负载需要键闭包时使用；引用内存数字必须标注注入方式与 DATA_VER。
 - macOS `ps rss` **高估**物理占用（含 swap 出/空 zone 页），`vmmap` 的 `Physical footprint` 更准。
+
+---
+
+## 7. 度量口径（原 TEST_PLAN.md）
+
+> 本文回答「bench 结果每一列是怎么测出来的、口径是什么、什么情况下不可信」。
+> 代码事实源：`../bench.sh`（驱动）、`../scripts/bench_lib.py`（度量工具库）、
+> `wfgen` 的 `cmd_frames`/`cmd_stream`/`cmd_perf_diag`（哨兵帧生成）、
+> wf-runtime `perf_diag.rs`（哨兵落盘）。改口径先改这里，再同步本文。
+
+### 7.0 口径一览
+
+| 指标 | 主口径 | 备用口径 | 说明 |
+|---|---|---|---|
+| **EPS** | 哨兵四元组 `Σn/(max_emit−min_start)` | metrics-append / TIMEOUT 兑底 | 引擎侧精确墙钟窗，无轮询粒度误差 |
+| **RSS_peak** | 采样峰值（100ms，全生命周期） | — | `ps rss`，macOS footprint 回退 |
+| **CPU avg/max** | 哨兵活跃窗内样本（核占数，可 >100%） | 无哨兵时 [T0,T2] / 全样本 | 100ms cputime 差分 |
+| **正确性** | `wfgen verify-nexmark` oracle 对拍 | — | 逐规则 EMIT 计数一致 + known-diff 清单 |
+
+**读数第一条**：先看结果行的 `eps_mode=`——`sentinel` = 精确口径；`metrics-append` /
+`⚠TIMEOUT` = 兑底值，只作量级参考。
+
+### 7.1 EPS 统计口径（主：哨兵四元组）
+
+链路：客户端推事件流末尾追加哨兵帧 `{round, n, start_ns}`（`start_ns`=该连接开始发送的
+墙钟 epoch ns，`n`=实际发送行数）→ daemon 以 `--perf-diag conf/perf-diag.toml` 启动，注册
+保留窗口 `__wf_sentinel`（门控全 false 零开销）→ 数据窗排空后补 `emit_ns`，四元组经 alert
+链落盘 `data/perf_sentinel.ndjson` → `bench_lib.py sentinel_tuple()` 聚合
+`Σn/(max_emit−min_start)`（多连接取 min_start/max_emit 覆盖整批）。
+
+- **关键性质**：start/emit 都是墙钟（与事件时间无关）；EPS = 引擎**消化速率**（整轮均值）；
+  replay **不限速**（`rate=3M/s` 只作用于 stream）；短跑可信（引擎写盘即完成信号，无 metrics
+  1s 轮询粒度误差）；哨兵窗口零性能影响。
+- **SENT_N 与哨兵 n**：单连接 = TOTAL_N；多连接 raw = TOTAL_N × CONNECTIONS；分片 =
+  TOTAL_N。哨兵 n 是客户端实际发送行数，Σn 天然 = SENT_N；`appended`（`append_total` 求和）作旁证。
+- **兑底口径**（哨兵缺失时）：① metrics-append：`engine_appended`（三输入流 `append_total` 求和）
+  ≥ TOTAL_N 且 `engine_acked_lag` = 0（含 q13 中间管道窗口 bid_mod/auction_finals）→
+  `EPS = APP/(T2−T0)`；② TIMEOUT：超过 `MAX_SEC`（replay：`TOTAL_N/100000 + 600`；stream：
+  `TOTAL_N/RATE×3 + 60`）→ 结果行打 `⚠TIMEOUT`。哨兵缺失最常见根因：daemon 未带
+  `--perf-diag`、引擎卡死、持续能力 < 目标速率。
+
+### 7.2 RSS_peak 口径
+
+`rss-sampler`（`bench_lib.py`）每 100ms 读 `ps -o rss=,cputime=`（macOS 拒读时回退
+`footprint`）。`RSS_peak` = 全部样本峰值。快查询的短暂峰值可能落在采样网格之间被低估
+（保守方向）。
+
+### 7.3 CPU avg/max 口径
+
+- 瞬时 CPU = cputime 差分 / 墙钟差分 × 100；单位是**核占数**（多核可 >100%）。
+- 只统计引擎活跃窗 `[sentinel start_ns − 0.5s, sentinel emit_ns + 0.5s]` 内样本：剔除 daemon
+  启动/等流/收尾空闲稀释。无哨兵退回 `[T0, T2]`，窗内无样本再回退全样本。
+- **基线前置**：采样器首 tick 只初始化基线，bench 在启动客户端前等首个差分
+  （`wait_sampler_baseline`）——否则亚秒级突发（q2/q8 ≈ 0.4s）在首个差分前烧完，CPU 恒报
+  0%（实测复现，确定性失败）。
+- 短跑（<2s 活跃窗）读数只宜作量级参考；全 0 样本时 max 报 `0` 而非 `n/a`（历史 bug 已修）。
+
+### 7.4 正确性验证口径（verify-nexmark）
+
+- **oracle = 真实 WFL 规则引擎**逐事件求值（非性能引擎）：规则按 yield-bind 依赖并查集分组，
+  每组一线程独立吃完整事件流（非分片，慢是预期的）。
+- 对拍：归一化两侧为 `规则名 计数` 文本行（Myers 对齐），git-diff 式逐规则报告；退出码
+  0=一致 / 1=有差异。`bench.sh --verify` 串接同一对拍。
+- **known-diff（对拍时已知，非回归）**：Q12 fixed+close 尾桶收口（10M oracle=102,400 vs
+  引擎=282,514）；30M 按 5% 容差；stats 规则 fixed 窗口（q4b/q15~q19）2026-08-27 起接入
+  oracle，session/sliding stats 仍不接入；all-10m verify 的 oracle 工作集 ~19GB，stats 规则
+  建议单查询 10m 对拍 + all 用 1m 端到端。
+- 引擎侧取 oracle 覆盖的规则，单查询验证时其它查询残留 EMIT 是历史噪音，不计入。
+
+### 7.5 测量纪律（执行版）
+
+1. **先看 `eps_mode=` 再读数字**：非 sentinel 的 EPS/CPU 只作量级参考。
+2. **预热轮**：stash 重建后首跑系统性偏低（曾三次复现），`WARMUP=1` 剔除。
+3. **A/B 必须不限速**：`RATE` 会把 EPS 封顶（限速 = 测供给不是引擎）。
+4. **同时段交错对比**：bench 机 EPS 与 RSS_peak 双峰相位强相关（同配置差 ±8%），结论按
+   RSS 相位配对；单轮数字只作量级参考。
+5. **引用 RSS 标注 `parse_buffer_bytes`**：默认 128MB 与 2GB 预算的 EPS/RSS 不可直接对等。
+6. **Linux 探测**：核数走 `nproc`、loadavg 走 `/proc/loadavg`；采样走 `ps`（权限被拒时
+   Linux 无 footprint 回退 → 样本为空，报 n/a）。
+
+### 7.6 复现命令
+
+```sh
+./bench.sh all replay 10m          # 22 查询全量吞吐 + RSS + CPU（哨兵 EPS 口径）
+./bench.sh all replay 10m --verify # 同上 + 每查询 oracle 对拍（~40min 量级）
+./bench.sh q2 replay 10m           # 单查询
+./diag.sh q5 10m                   # 性能墙定位（六档墙梯 + 每段 CPU/RSS）
+python3 scripts/extract_emitted.py data/metrics.ndjson  # 消费侧计数器
+```

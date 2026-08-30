@@ -16,45 +16,20 @@
 #     DATA_VER   帧缓存版本（默认 v5）
 #     SKIP_BIN_CHECK=1 / BIN_CHECK_STRICT=1   二进制新鲜度自检开关（同 bench.sh）
 #
-# 设计（2026-08-28）:
-# - **逐查询单跑**（每查询临时配置 rules = models/queries/<Q>.wfl）：多规则同跑存在
-#   规则间交互差异（实测 all 跑：q8 7565→1、q11 17081→118234），单规则保真。
-# - **引擎 EMIT 计数取 metrics.ndjson 的 emitted_total**（规则任务 join 后导出，
-#   权威口径，与 bench.sh --verify 一致）；data/alerts/benchmark.ndjson 是输出文件实测
-#   （用户要求的验证对象），两者交叉检查。
-# - **已知尾批丢失 —— 已修复（wp-reactor 2026-08-28）**：文件 sink 关机时最后
-#   未满 alert 批不落盘（q1 恒缺 2531/920000）。根因：on-each 规则（无 match 状态机、
-#   无 deferred）的 `flush()` 提前 return，从不调用 `flush_alerts()`，最后 <4096 条的
-#   未满批留在 pending builder 被丢弃。修复：`flush()` 对 on-each 规则也补
-#   flush_alerts + flush_pipes（wf-runtime/engine_task/rule_task.rs），回归测试
-#   `flush_on_each_rule_drains_partial_pending_batch`。修复后 q1/q10/q14/q21/q22
-#   文件计数 = 指标计数 = oracle，无缺额。
-# - **q13 中间管道消费竞态 —— 已修复（wp-reactor 2026-08-28）**：消费者（q13b）
-#   cancel 时生产者（q13a flush_pipes 广播）可能晚于首次 drain 后通道为空才投递；
-#   旧 `if rx.is_empty() break` 提前退出 → 尾部批次被丢。修复：push loop cancel 分支
-#   改为截止时间（1s）驱动的持续消费（wf-runtime/engine_task/mod.rs）。
-# - **引擎多规则正确性修复（wp-reactor 2026-08-29，3fda01c）**：多规则同跑模式
-#   （生产形态）的三个数量级异常已定位并修复：
-#     q8 7565→1：窗口 join 索引只按首个注册 join 的右字段建（set_join_key 幂等），
-#       q20 用 id 注册后 q8（seller）索引查询得「索引命中但空」假空 → 全 miss；
-#       修复 join 索引字段校验 + 扫描回退（join_lookup/asof_candidates 三路径）。
-#     q11 17081→118234 / q6 错乱：窗口分片注册是覆盖式单一 (keys) 配置，多规则
-#       不同 key 分片同一窗口互相覆盖 → 有状态规则状态切碎；修复冲突检测回退单 worker。
-#     q7 单 worker 54 vs 10：单 worker + conv 规则无 conv stage，内联 apply_conv
-#       按 close 批次聚合（≠桶）→ 每批 top1；修复单 worker 分支补 conv stage。
-# - **引擎快速重放非确定（剩余已知项，2026-08-29）**：以下查询如实报 FAIL，属引擎
-#   待修项，非规则逻辑错：
-#     q3  auction_seller 尾部 close 丢 0~7（flaky）
-#     q5/q7  单规则 sharded 尾桶 close 差 1（多规则单 worker 模式已正确：51/10）
-#     q6/q20  snapshot join 流式竞态：高负载下目标窗 append 提交滞后于 join 读取，
-#       丢 3~8%（flaky；单规则低负载时与 oracle 一致）
-#     q13  中间管道消费竞态残留（偶发缺 0~4%，已大幅缓解）
-#   其余查询（q1/q2/q4/q8/q9/q10/q11/q12/q14/q15/q16/q17/q18/q19/q21/q22）
-#   逐轮与 oracle 一致 ✅。
-# - **q12** 已知差异（fixed+close 收口，oracle 理想值）由 verify-nexmark 内置 known
-#   列表处理：报告 ⚠ 但不判失败。
-# - 致命计数器（append_failed / dropped_late / cursor_gap / drain_dropped_records /
-#   sink_dispatch_failed / channel_full）非零 → 该查询标记 [dirty]，验证作废。
+# 设计要点（历史修复记录已归档 git / docs/ORACLE_VERIFY.md）:
+# - **逐查询单跑**（每查询 rules = 该查询 .wfl）：多规则同跑存在规则间交互差异
+#   （实测 all 跑：q8 7565→1、q11 17081→118234），单规则保真。
+# - **双口径**：metrics.emitted_total（权威引擎计数）+ benchmark.ndjson 文件计数交叉；
+#   致命计数器（append_failed/dropped_late/cursor_gap/drain_dropped_records/
+#   sink_dispatch_failed/channel_full）非零 → [dirty] 验证作废。
+# - **度量/校验逻辑在 scripts/verify_file_lib.py**（dirty/counts/emitted/cross/content
+#   子命令）；脚本只做编排。
+# - **oracle 定义与边界**（三档验证层级/known 差异/排除规则）见 docs/ORACLE_VERIFY.md。
+# - **已修复**（wp-reactor 2026-08-28~30）：文件 sink 关机尾批丢失、q13 中间管道
+#   消费竞态、q8/q11/q7 多规则交互、q6/q20 snapshot join 竞态。
+# - **剩余已知项**：q3（尾 close 丢 0~7，flaky）、q5/q7（单规则 sharded 尾桶差 1）
+#   如实报 FAIL，属引擎待修项，非规则逻辑错；q12 known（fixed+close 收口）由
+#   verify-nexmark 内置列表处理（⚠ 不判失败）。
 #
 # 输出: 每查询一行摘要（stdout + data/verify_file_all.txt）；逐查询明细
 #   data/verify_file_<Q>.txt（文件/指标双口径计数 + oracle 报告）。
@@ -127,6 +102,14 @@ rm -f data/alerts/benchmark.ndjson data/metrics.ndjson data/error.ndjson
 rm -f data/verify_emit_*.txt data/verify_cnt_*.txt data/verify_file_*.txt data/verify_oracle_*.log data/verify_file_all.txt
 mkdir -p data/alerts
 
+# 防残留 wfusion 进程污染 metrics.ndjson（2026-08-30 q19 伪 FAIL 根因）：上个
+# 会话残留的多规则 daemon 惰性打开 monitor 文件 append，往当前 query 的 metrics
+# 写入外来 label（如 q2_mod_123 0）→ 权威口径误读。先清后跑（batch 为同步子
+# 进程，此刻无自进程在跑，安全；wfgen 是 oracle 不能杀）。
+pkill -9 -f "wfusion daemon" 2>/dev/null
+pkill -9 -f "wfusion batch" 2>/dev/null
+sleep 1
+
 SUMMARY="data/verify_file_all.txt"
 : > "$SUMMARY"
 PASS_ALL=1
@@ -147,100 +130,70 @@ for Q in "${QUERIES[@]}"; do
       -e "s|^rule_parallelism = .*|rule_parallelism = ${RULE_EFF}|" \
       "$BASE_CONF" > "$CONF"
 
-  rm -f data/alerts/benchmark.ndjson data/metrics.ndjson data/error.ndjson
-  if ! "$WFUSION" batch --config "$CONF" --work-dir . > data/wfusion_file.log 2>&1; then
-    echo "$Q  batch=FAIL(退出码非 0) —— data/wfusion_file.log 尾部:" >&2
-    tail -15 data/wfusion_file.log >&2
-    echo "$Q | batch=FAIL | 退出码非 0（见 data/wfusion_file.log）" >> "$SUMMARY"
-    PASS_ALL=0
-    continue
-  fi
+  # ---- batch + 指标口径脏检测（重跑兜底）----
+  # 2026-08-30 加固：all 模式偶发 q19 伪 FAIL——残留 wfusion 进程往当前 query 的
+  # metrics.ndjson 写入外来 label，权威口径误读。校验 emitted_total label 必须恰为
+  # 当前 query 的规则集合；脏则自动重跑一次（最多 2 次）。
+  RULE_NAMES=$(grep "^rule " "models/queries/${Q}.wfl" | awk '{print $2}' | sort -u)
+  BATCH_OK=0
+  for attempt in 1 2; do
+    rm -f data/alerts/benchmark.ndjson data/metrics.ndjson data/error.ndjson
+    if ! "$WFUSION" batch --config "$CONF" --work-dir . > data/wfusion_file.log 2>&1; then
+      echo "$Q  batch=FAIL(退出码非 0) —— data/wfusion_file.log 尾部:" >&2
+      tail -15 data/wfusion_file.log >&2
+      echo "$Q | batch=FAIL | 退出码非 0（见 data/wfusion_file.log）" >> "$SUMMARY"
+      PASS_ALL=0
+      continue 2
+    fi
+    if [ "$attempt" = "1" ]; then
+      DIRTY=$("$PY" scripts/verify_file_lib.py dirty "$RULE_NAMES")
+      if [ -n "$DIRTY" ]; then
+        echo "  ⚠ ${Q} 指标口径脏（${DIRTY}），重跑第 2 次" >&2
+        continue
+      fi
+    fi
+    BATCH_OK=1
+    break
+  done
+  [ "$BATCH_OK" = "1" ] || continue
 
   # ---- 口径 1：metrics.ndjson → EMIT 文件（权威引擎计数）+ 致命计数器 ----
   EMIT="data/verify_emit_${Q}.txt"
   CNT_FILE="data/verify_cnt_${Q}.txt"   # 注意：与明细文件 verify_file_<Q>.txt 不同名，防自读循环
-  FATAL=$("$PY" - "$EMIT" "$CNT_FILE" <<'PYEOF'
-import json, sys
-from collections import defaultdict
-emit_path, cnt_path = sys.argv[1], sys.argv[2]
-emitted = defaultdict(int)
-fatal = defaultdict(int)
-info = defaultdict(int)
-for line in open("data/metrics.ndjson"):
-    try:
-        o = json.loads(line)
-    except Exception:
-        continue
-    name = o.get("name"); label = o.get("label", "")
-    try:
-        val = int(float(o.get("value", 0) or 0))
-    except (TypeError, ValueError):
-        continue
-    if name == "emitted_total":
-        emitted[label] += val
-    elif name in ("append_failed_total", "dropped_late_total", "cursor_gap_total",
-                  "drain_dropped_records_total", "sink_dispatch_failed_total",
-                  "channel_full_total"):
-        fatal[name] += val
-    elif name in ("time_evicted_total", "memory_evicted_total"):
-        info[name] += val
-with open(emit_path, "w") as f:
-    for k in sorted(emitted):
-        f.write(f"EMIT {k} {emitted[k]}\n")
-# 输出文件（benchmark.ndjson）每规则计数
-file_cnt = defaultdict(int)
-try:
-    for line in open("data/alerts/benchmark.ndjson", errors="replace"):
-        try:
-            file_cnt[json.loads(line).get("__wfu_rule_name")] += 1
-        except Exception:
-            continue
-except FileNotFoundError:
-    pass
-with open(cnt_path, "w") as f:
-    for k in sorted(file_cnt):
-        f.write(f"{k} {file_cnt[k]}\n")
-bad = [f"{k}={v}" for k, v in sorted(fatal.items()) if v > 0]
-print(";".join(bad) if bad else "clean")
-PYEOF
-  )
+  FATAL=$("$PY" scripts/verify_file_lib.py counts "$EMIT" "$CNT_FILE")
 
-  # ---- 交叉检查：文件输出 vs metrics（已知尾批丢失 → ⚠ 警告不判失败）----
-  CROSS=""
-  while read -r rule n; do
-    [ -n "$rule" ] || continue
-    m=$("$PY" - "$rule" <<'PYEOF'
-import json, sys
-rule = sys.argv[1]
-s = 0
-for line in open("data/metrics.ndjson"):
-    try:
-        o = json.loads(line)
-        if o.get("name") == "emitted_total" and o.get("label") == rule:
-            s += int(float(o.get("value", 0) or 0))
-    except Exception:
-        continue
-print(s)
-PYEOF
-)
-    if [ "$m" -gt "$n" ]; then
-      gap=$(( m - n ))
-      pct=$(( gap * 100 / m ))
-      tag="⚠"
-      [ "$pct" -ge 1 ] && tag="⚠⚠"
-      CROSS="${CROSS}${CROSS:+; }${tag}${rule} 文件${n}/指标${m}（缺${gap}=${pct}%）"
-    elif [ "$m" -lt "$n" ]; then
-      CROSS="${CROSS}${CROSS:+; }⚠⚠${rule} 文件${n} > 指标${m}（异常，检查是否残留累积）"
-    fi
-  done < "$CNT_FILE"
+  # ---- 交叉检查：文件输出 vs metrics（尾批丢失 → ⚠ 警告不判失败）----
+  CROSS=$("$PY" scripts/verify_file_lib.py cross "$CNT_FILE")
 
-  # ---- oracle 对拍（engine-emit = metrics 口径；q12 known 由 verify-nexmark 处理）----
+  # ---- oracle 对拍（engine-emit = metrics 口径；q12 known 由 verify-nexmark 处理；
+  #      --detail-diff = 字段级明细对拍：oracle 的 yield 字段值 vs benchmark.ndjson）----
+  # q13 例外：side_input 是 provider 静态表（knowdb），oracle 不加载 knowdb →
+  # join 富化字段无法对拍，由 CHECKS 内容断言 + 计数对拍覆盖。
+  # q6 例外：join-then-key 的 join 可见性非确定（引擎 replay append/evict 时序
+  # 影响逐 bid 是否计入 avg，oracle 理想值）——计数一致但内容分布不同，
+  # 无权威基线（Flink 未实现），明细对拍排除。
   ORACLE_LOG="data/verify_oracle_${Q}.log"
-  "$WFGEN" verify-nexmark "$TOTAL_N" --query "$Q" --engine-emit "$EMIT" > "$ORACLE_LOG" 2>&1
+  DETAIL_DIFF="--detail-diff data/alerts/benchmark.ndjson"
+  if [ "$Q" = "q13" ] || [ "$Q" = "q6" ]; then
+    DETAIL_DIFF=""
+  fi
+  if [ -n "$DETAIL_DIFF" ]; then
+    "$WFGEN" verify-nexmark "$TOTAL_N" --query "$Q" --engine-emit "$EMIT" \
+      $DETAIL_DIFF > "$ORACLE_LOG" 2>&1
+  else
+    "$WFGEN" verify-nexmark "$TOTAL_N" --query "$Q" --engine-emit "$EMIT" > "$ORACLE_LOG" 2>&1
+  fi
   VRC=$?
+
+  # ---- 口径 2b：alert 内容断言（2026-08-30 新增：计数对拍之上的字段值校验）----
+  # 逐规则校验 benchmark.ndjson 行内容：通用（规则归属/字段齐全/request_count）
+  # + per-rule 强语义（如 q2 mod(id,123)==0、q9 每 auction 一条 winner）。
+  CONTENT=$("$PY" scripts/verify_file_lib.py content "$Q" "$RULE_NAMES")
+
   VERDICT="FAIL"
   [ "$VRC" = "0" ] && VERDICT="PASS"
   [ "$FATAL" != "clean" ] && VERDICT="DIRTY"
+  [ "$CONTENT" != "ok" ] && VERDICT="CONTENT-FAIL"
   [ "$VERDICT" != "PASS" ] && PASS_ALL=0
 
   LINE="$Q | $VERDICT | batch=OK | fatal=${FATAL}"
@@ -249,16 +202,23 @@ PYEOF
   else
     LINE="${LINE} | oracle=diff ❌（见 ${ORACLE_LOG}）"
   fi
+  if [ "$CONTENT" = "ok" ]; then
+    LINE="${LINE} | 内容断言 ✅"
+  else
+    LINE="${LINE} | 内容断言 ❌ (${CONTENT})"
+  fi
   [ -n "$CROSS" ] && LINE="${LINE} | ⚠尾批丢失: ${CROSS}"
   echo "$LINE" >> "$SUMMARY"
   echo "$LINE"
-  # 逐查询明细：EMIT 计数 + 文件计数 + oracle 报告
+  # 逐查询明细：EMIT 计数 + 文件计数 + 内容断言 + oracle 报告
   {
     echo "-- ${Q}（文件源 batch，${TOTAL} 数据）--"
     echo "== 指标口径（metrics.emitted_total，权威）=="
     cat "$EMIT"
     echo "== 输出文件口径（data/alerts/benchmark.ndjson）=="
     cat "$CNT_FILE"
+    echo "== alert 内容断言 =="
+    echo "$CONTENT"
     echo "== oracle 对拍（wfgen verify-nexmark --query $Q --engine-emit）=="
     cat "$ORACLE_LOG"
   } > "data/verify_file_${Q}.txt"
