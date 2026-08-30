@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# verify_daemon.sh — daemon（TCP 注入 + 哨兵 + SIGTERM flush）路径的正确性验证
+# verify_daemon.sh — daemon（TCP 注入 + SIGTERM flush）路径的正确性验证
 #
-# 与 verify_file.sh（batch 文件源）互补：同一份预编码帧经 TCP 注入、哨兵完成
-# 信号、常驻进程 SIGTERM flush 收口，输出落盘 data/alerts/benchmark.ndjson 后
-# 做同样的 **L1（metrics.emitted_total）+ L2（内容断言）+ L3（--detail-diff
-# 值级对拍）三层验证**。
+# 与 verify_file.sh（batch 文件源）互补：同一份预编码帧经 TCP 注入、metrics 追平
+# （appended ≥ N 且 acked_lag == 0）、常驻进程 SIGTERM flush 收口，输出落盘
+# data/alerts/benchmark.ndjson 后做同样的 **L1（metrics.emitted_total）+ L2（内容
+# 断言）+ L3（--detail-diff 值级对拍）三层验证**。
 #
-# 覆盖 batch 路径跑不到的注入/收口形态：TCP 注入 + 哨兵协议 + 常驻 +
-# 关机 flush 尾批收口（bench.sh --verify 因 blackhole sink 只对拍 L1 计数；
-# 本脚本改用 sinks_file 落盘 → L2/L3 同样深度）。
+# 覆盖 batch 路径跑不到的注入/收口形态：TCP 注入 + 常驻 + 关机 flush 尾批收口
+# （bench.sh --verify 因 blackhole sink 只对拍 L1 计数；本脚本改用 sinks_file
+# 落盘 → L2/L3 同样深度）。
 #
 # 用法:
 #   ./verify_daemon.sh [query=q1|..|q22|all] [total=1m|10m|30m|100m]
@@ -134,7 +134,6 @@ cleanup_daemons
 trap cleanup_daemons EXIT INT TERM
 
 # ---- 引擎进度口径（bench.sh 同款） ----
-sentinel_tuple() { "$PY" "$LIB" sentinel-tuple data/perf_sentinel.ndjson; }
 engine_appended() { "$PY" "$LIB" appended data/metrics.ndjson "auction_events,bid_events,person_events"; }
 engine_acked_lag() { "$PY" "$LIB" acked-lag data/metrics.ndjson ""; }
 
@@ -193,7 +192,7 @@ SUMMARY="data/verify_daemon_all.txt"
 : > "$SUMMARY"
 PASS_ALL=1
 BASE_CONF="conf/wfusion.toml"   # daemon 基线（TCP 源 + 哨兵；sinks 逐查询覆盖为 sinks_file）
-echo "== verify_daemon: query=$QUERY total=$TOTAL frames=$(basename "$FRAMES") 注入=daemon(TCP+sentinel+flush) oracle=wfgen verify-nexmark $TOTAL_N =="
+echo "== verify_daemon: query=$QUERY total=$TOTAL frames=$(basename "$FRAMES") 注入=daemon(TCP+flush) oracle=wfgen verify-nexmark $TOTAL_N =="
 
 # ---- 每查询：临时配置（sinks_file 落盘 + 单查询 rules）→ daemon 注入 → 收口 → 三层对拍 ----
 for Q in "${QUERIES[@]}"; do
@@ -207,17 +206,17 @@ for Q in "${QUERIES[@]}"; do
       -e "s|^rule_parallelism = .*|rule_parallelism = ${RULE_EFF}|" \
       "$BASE_CONF" > "$CONF"
 
-  # ---- daemon 注入 + 哨兵完成 + SIGTERM flush 收口（重跑兜底 2 次）----
+  # ---- daemon 注入 + 追平 + SIGTERM flush 收口（重跑兜底 2 次）----
   RULE_NAMES=$(grep "^rule " "models/queries/${Q}.wfl" | awk '{print $2}' | sort -u)
   BATCH_OK=0
   for attempt in 1 2; do
     D=$(start_daemon) || { echo "$Q | daemon=FAIL | 启动失败（见 data/daemon_file.log）" >> "$SUMMARY"; PASS_ALL=0; continue 2; }
-    # 单连接推完整帧文件 + 哨兵（n = 引擎应消化行数）
+    # 单连接推完整帧文件 + 哨兵帧（引擎无哨兵窗，帧被丢弃无害；与 bench.sh 客户端一致）
     "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT \
       --sentinel "$TOTAL_N" > /dev/null 2>&1 &
     CLIENT=$!
     if ! wait_daemon_drained; then
-      echo "  ⚠ ${Q} 哨兵/追平超时（${TOTAL_N} 行），重跑第 $(( attempt + 1 )) 次" >&2
+      echo "  ⚠ ${Q} 追平超时（${TOTAL_N} 行），重跑第 $(( attempt + 1 )) 次" >&2
       kill "$CLIENT" 2>/dev/null; wait "$CLIENT" 2>/dev/null
       kill_daemon "$D"; wait_port_free
       continue
@@ -236,7 +235,14 @@ for Q in "${QUERIES[@]}"; do
     BATCH_OK=1
     break
   done
-  [ "$BATCH_OK" = "1" ] || continue
+  # 两次尝试均失败（启动失败/追平超时/指标脏）：必须如实报 FAIL，不能静默跳过
+  # ——否则汇总可能显示"全部一致"但实际少了该查询（verify_file.sh 的 batch=FAIL 同款）。
+  if [ "$BATCH_OK" != "1" ]; then
+    echo "$Q | FAIL | daemon=两次尝试均失败（启动/追平超时/指标脏，见 data/daemon_file.log）" >> "$SUMMARY"
+    echo "$Q | FAIL | daemon=两次尝试均失败（启动/追平超时/指标脏）"
+    PASS_ALL=0
+    continue
+  fi
 
   # ---- 口径 1：metrics.ndjson → EMIT 文件（权威引擎计数）+ 致命计数器 ----
   EMIT="data/verify_daemon_emit_${Q}.txt"
@@ -284,7 +290,7 @@ for Q in "${QUERIES[@]}"; do
   echo "$LINE" >> "$SUMMARY"
   echo "$LINE"
   {
-    echo "-- ${Q}（daemon TCP 注入 + 哨兵 + SIGTERM flush，${TOTAL} 数据）--"
+    echo "-- ${Q}（daemon TCP 注入 + SIGTERM flush，${TOTAL} 数据）--"
     echo "== 指标口径（metrics.emitted_total，权威）=="
     cat "$EMIT"
     echo "== 输出文件口径（data/alerts/benchmark.ndjson）=="
