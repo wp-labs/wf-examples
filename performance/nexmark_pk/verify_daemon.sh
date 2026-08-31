@@ -206,11 +206,11 @@ for Q in "${QUERIES[@]}"; do
   CONF="/tmp/verify_daemon_${Q}.toml"
   # 并行度默认取 $BASE_CONF；env 覆盖（单次 sed 完成全部替换）
   PARSE_EFF="${PARSE:-$(sed -n 's/^parse_parallelism = *//p' "$BASE_CONF" | head -1)}"
-  RULE_EFF="${RULE:-$(sed -n 's/^rule_parallelism = *//p' "$BASE_CONF" | head -1)}"
+  RULE_EFF="${RULE:-$(sed -n 's/^rule_shards = *//p' "$BASE_CONF" | head -1)}"
   sed -e "s|^sinks = .*|sinks = \"topology/sinks_file\"|" \
       -e "s|^rules = .*|rules = \"models/queries/${Q}.wfl\"|" \
       -e "s|^parse_parallelism = .*|parse_parallelism = ${PARSE_EFF}|" \
-      -e "s|^rule_parallelism = .*|rule_parallelism = ${RULE_EFF}|" \
+      -e "s|^rule_shards = .*|rule_shards = ${RULE_EFF}|" \
       "$BASE_CONF" > "$CONF"
 
   # ---- daemon 注入 + 追平 + SIGTERM flush 收口（重跑兜底 2 次）----

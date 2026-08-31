@@ -211,7 +211,7 @@ window 记账含 parsed-event 足迹（e14ed6d）等演进后复测。EPS 用 se
 
 扩展性探针（各 2 轮，均在噪声内或更差）：
 
-- `parse/rule_parallelism` 10→16：129k，**无增益**——worker 数不是瓶颈；
+- `parse_parallelism` 10→16 / `rule_shards` 10→16：129k，**无增益**——worker 数不是瓶颈；
 - 双连接并发发送：137k（+3%），**单连接入流也不是瓶颈**；
 - `CHUNK=50000`：136k（+2-3%）；`CHUNK=全量`（一次性）：76k，显著更差（wfgen
   一次性发送路径慢，见 peak 口径考古）。
