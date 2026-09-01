@@ -159,6 +159,9 @@ fi
 if [ -z "$FAMILIES_LIST" ]; then
   [ -f "$DIAG_TOML" ] || { echo "错误: 墙梯配置 ${DIAG_TOML} 不存在" >&2; exit 1; }
   STAGE_NAMES=$(grep '^name = ' "$DIAG_TOML" | sed 's/name = "\(.*\)"/\1/' | tr '\n' ',' | sed 's/,$//')
+  # cut_append/cut_recv 档（decode/recv 前序档）: 普通流不 append → appended
+  # 期望扣掉（与 nexmark_pk/diag.sh 同款 awk；漏传会把 5/7 档误报 append 未追平）。
+  APPEND_CUT_STAGES=$(awk -F'"' '/^name = /{n=$2} /cut_append = true/{print n} /cut_recv = true/{print n}' "$DIAG_TOML" | sort -u | tr '\n' ',' | sed 's/,$//')
   STAGE_COUNT=$(echo "$STAGE_NAMES" | tr ',' '\n' | grep -c .)
   [ "$STAGE_COUNT" -ge 2 ] || { echo "错误: ${DIAG_TOML} 至少需 2 档才有墙梯（当前 ${STAGE_COUNT}）" >&2; exit 1; }
 fi
@@ -298,7 +301,7 @@ run_ladder() {
   # 输入走环境变量；stdout = 报告，退出码 0=健康 / 1=硬失败。
   QUERY="qradar" N="$N" CTX="$CTX" \
   RULES_COUNT="$RULES_N" \
-  STAGE_NAMES="$STAGE_NAMES" CORES="$CORES" \
+  STAGE_NAMES="$STAGE_NAMES" APPEND_CUT_STAGES="$APPEND_CUT_STAGES" CORES="$CORES" \
   SENT_PATH="data/perf_sentinel.ndjson" SAMPLES_PATH="$SAMPLES" \
   METRICS_PATH="data/metrics.ndjson" LOG_PATH="$LOG" \
   STREAMS="$STREAMS" FAM_COUNTS="$FAM_COUNTS" \
