@@ -398,7 +398,7 @@ run_ladder() {
   # 引擎打印的窗口内存口径（诊断模式默认 60% 物理内存 / WF_DIAG_MAX_TOTAL_BYTES 可调）
   # 先剥 ANSI 色码再截到结构字段 ` window_mem_cap=` 前，兼容无括号的来源（如 =0 关闭覆盖）。
   local MEM_CAP; MEM_CAP=$(sed 's/\x1b\[[0-9;]*m//g' "$LOG" | grep -o 'perf-diag 内存口径: max_total_bytes=.* window_mem_cap=' | head -1 | sed -e 's/^perf-diag 内存口径: //' -e 's/ window_mem_cap=$//')
-  local CTX; CTX="p=${PARSE_EFF} r=${RULE_EFF} frame_mb=$((MAX_FRAME_BYTES/1048576)) span=${SPAN_SEC}s lateness=$([ "$WINDOWS_EFF" = "$WINDOWS_SRC" ] && echo "${LATENESS_SEC}s" || echo "$(( SPAN_SEC + 60 ))s*") load=${LD:-n/a}${MEM_CAP:+ · ${MEM_CAP}} · $(date +%m-%d_%H:%M:%S)"
+  local CTX; CTX="frame_mb=$((MAX_FRAME_BYTES/1048576)) span=${SPAN_SEC}s lateness=$([ "$WINDOWS_EFF" = "$WINDOWS_SRC" ] && echo "${LATENESS_SEC}s" || echo "$(( SPAN_SEC + 60 ))s*") load=${LD:-n/a}${MEM_CAP:+ · ${MEM_CAP}} · $(date +%m-%d_%H:%M:%S)"
   [ "$MEMORY" = "1" ] && CTX="mem-diagnose · ${CTX}"
   # 分析：独立脚本 diag_analyze.py（哨兵四元组 × CPU/RSS 采样 × metrics 健康），
   # 输入走环境变量；stdout = 报告，退出码 0=健康 / 1=硬失败。

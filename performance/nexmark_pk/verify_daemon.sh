@@ -83,7 +83,7 @@ esac
 
 FRAMES="data/bench_${TOTAL}_${DATA_VER}.frames"
 if [ ! -s "$FRAMES" ]; then
-  echo "错误: 缺少预编码帧 $FRAMES（用 bench.sh <query> replay $TOTAL 生成，或先跑一次）" >&2
+  echo "错误: 缺少预编码帧 ${FRAMES}（用 bench.sh <query> replay $TOTAL 生成，或先跑一次）" >&2
   exit 1
 fi
 
