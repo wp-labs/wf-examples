@@ -197,10 +197,10 @@ write_conf() {
   # $1 = 启动加载的规则文件（家族档模式传子集文件；默认 conf 的 models/rules/*.wfl）
   local RULES_FILE="${1:-models/rules/*.wfl}"
   PARSE_EFF="${PARSE:-$(sed -n 's/^parse_parallelism = *//p' conf/wfusion.toml | head -1 | tr -d ' ')}"
-  RULE_EFF="${RULE:-$(sed -n 's/^rule_parallelism = *//p' conf/wfusion.toml | head -1 | tr -d ' ')}"
+  RULE_EFF="${RULE:-$(sed -n 's/^rule_shards = *//p' conf/wfusion.toml | head -1 | tr -d ' ')}"
   sed -e "s|^rules = .*|rules = \"${RULES_FILE}\"|" \
       -e "s|^parse_parallelism = .*|parse_parallelism = ${PARSE_EFF}|" \
-      -e "s|^rule_parallelism = .*|rule_parallelism = ${RULE_EFF}|" \
+      -e "s|^rule_shards = .*|rule_shards = ${RULE_EFF}|" \
       conf/wfusion.toml > "$CONF_TMP"
   if [ "$KEEP_RATE" != "1" ]; then
     # 限速会把每一档都封顶在 max_ingest_rate（150k）——墙梯六档全等，定位失效。

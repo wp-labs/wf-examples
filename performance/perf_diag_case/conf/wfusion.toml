@@ -7,10 +7,9 @@ windows = "models/schemas/windows.toml"
 
 [runtime]
 parse_parallelism = 2
-# rule_parallelism=1：21 条规则单 worker 串行处理全量事件——让"规则墙"在
-# N=1M 时成为瓶颈（并行 2 时引擎/客户端都 ~20M/s，规则成本被淹没在噪声里）。
-rule_parallelism = 1
-parse_buffer_bytes = 2147483648
+# rule_shards=1：21 条规则各单 worker 不分片（规则间仍并行跑在 tokio 上）——
+# 让"规则墙"在 N=1M 时成为瓶颈（并行 2 时引擎/客户端都 ~20M/s，规则成本被淹没在噪声里）。
+rule_shards = 1
 rule_exec_timeout = "30s"
 schemas = "models/schemas/*.wfs"
 rules = "models/rules/*.wfl"

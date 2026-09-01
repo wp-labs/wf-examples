@@ -9,12 +9,6 @@ windows = "models/schemas/windows.toml"
 #parse_parallelism = 10
 rule_shards=  10
 rule_exec_timeout = "30s"
-# 二分法实证(2026-08-17 §2.3):preread 预算槽位是第一道墙。P0-②(2026-08-17)
-# 记账单位从 get_array_memory_size(解码后 Arrow 内存,IPC 解码结构性高估 ~10×)
-# 改为 content_bytes(内容字节 ≈ wire):4GB 反而过度缓冲 → q1/q2 退化到 ~5.9M;
-# 2GB content ≈ 288 槽为甜点——实测 100m q1=7.58M、q2=7.23M(≈旧 4GB 记账
-# 口径),且 q2 RSS 减半(7.6 vs 14.8GB)。默认 256MB ≈ 36 槽 ≈ 旧默认行为。
-parse_buffer_bytes = 2147483648
 schemas = "models/schemas/*.wfs"
 rules = "models/rules/*.wfl"
 

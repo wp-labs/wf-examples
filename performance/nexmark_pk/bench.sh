@@ -370,10 +370,10 @@ write_conf() {
     RULES="data/mix_rules/*.wfl"
   fi
   PARSE_V_EFF="${PARSE:-$(sed -n 's/^parse_parallelism = *//p' conf/wfusion.toml | head -1)}"
-  RULE_V_EFF="${RULE:-$(sed -n 's/^rule_parallelism = *//p' conf/wfusion.toml | head -1)}"
+  RULE_V_EFF="${RULE:-$(sed -n 's/^rule_shards = *//p' conf/wfusion.toml | head -1)}"
   sed -e "s|^rules = .*|rules = \"${RULES}\"|" \
       -e "s|^parse_parallelism = .*|parse_parallelism = ${PARSE_V_EFF}|" \
-      -e "s|^rule_parallelism = .*|rule_parallelism = ${RULE_V_EFF}|" \
+      -e "s|^rule_shards = .*|rule_shards = ${RULE_V_EFF}|" \
       conf/wfusion.toml > /tmp/bench_conf.toml
   # 限速：MAX_INGEST_RATE 设置时在 [runtime] 注入 max_ingest_rate
   if [ -n "${MAX_INGEST_RATE:-}" ]; then

@@ -29,7 +29,7 @@
 ```
 perf_diag_case/
 ├── conf/
-│   ├── wfusion.toml        # 最小 daemon 配置（rule_parallelism=1：规则墙可见）
+│   ├── wfusion.toml        # 最小 daemon 配置（rule_shards=1：规则墙可见）
 │   └── perf-diag.toml      # 诊断档：floor → rules → full
 ├── models/
 │   ├── schemas/evt.wfs     # 1 流 schema（evt_events + network_alerts）

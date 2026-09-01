@@ -277,10 +277,10 @@ cleanup; trap cleanup EXIT INT TERM
 write_conf() {
   local Q="$1"
   PARSE_EFF="${PARSE:-$(sed -n 's/^parse_parallelism = *//p' conf/wfusion.toml | head -1 | tr -d ' ')}"
-  RULE_EFF="${RULE:-$(sed -n 's/^rule_parallelism = *//p' conf/wfusion.toml | head -1 | tr -d ' ')}"
+  RULE_EFF="${RULE:-$(sed -n 's/^rule_shards = *//p' conf/wfusion.toml | head -1 | tr -d ' ')}"
   sed -e "s|^rules = .*|rules = \"models/queries/$Q.wfl\"|" \
       -e "s|^parse_parallelism = .*|parse_parallelism = ${PARSE_EFF}|" \
-      -e "s|^rule_parallelism = .*|rule_parallelism = ${RULE_EFF}|" \
+      -e "s|^rule_shards = .*|rule_shards = ${RULE_EFF}|" \
       -e "s|^windows = .*|windows = \"${WINDOWS_EFF}\"|" \
       conf/wfusion.toml > "$CONF_TMP"
 }
