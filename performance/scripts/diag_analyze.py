@@ -33,6 +33,10 @@ STAGE_NAMES = [s for s in re.split(r"[,\s]+", os.environ.get("STAGE_NAMES", ""))
 APPEND_CUT_STAGES = [
     s for s in re.split(r"[,\s]+", os.environ.get("APPEND_CUT_STAGES", "")) if s
 ]
+# COLD=1：每档独立 daemon（冷状态）。叠加式增量对它有状态规则不成立——
+# 同数据重发时状态机功随档递减（热 emit 390k vs 冷 emit 124k, 2026-09-01 实验），
+# 冷模式增量 = 阶段间成本差，负增量是正常现象而非测量偏差。
+COLD_MODE = os.environ.get("COLD_MODE", "0") == "1"
 CORES = int(os.environ.get("CORES", 0) or 0)
 SENT_PATH = os.environ.get("SENT_PATH", "data/perf_sentinel.ndjson")
 SAMPLES_PATH = os.environ.get("SAMPLES_PATH", "")
@@ -148,7 +152,9 @@ else:
            "floor": "净管道(注入+解码+窗口)", "rules": "+规则求值",
            "emit": "+输出构建(close列式+builder+通道投递)", "full": "+序列化+sink写"}
     desc = ["%s=%s" % (s, sem[s]) for s in STAGE_NAMES if s in sem]
-    if desc:
+    if COLD_MODE:
+        print("（独立冷档：每档独立 daemon 冷状态；增量 = 阶段间成本差，非叠加式差分）")
+    elif desc:
         print("（叠加式墙梯：%s；每档增量 = 相对上一档的成本）" % " → ".join(desc))
     else:
         print("（叠加式墙梯：每档增量 = 相对上一档的成本；占全链 = 该增量 / 末档总成本）")
@@ -267,11 +273,14 @@ else:
     print("注: RSS 为档内峰值、随墙梯累积（同一份数据被发 %d 次），不是该段内存成本；RSS 逐档上涌 = 窗口堆积证据" % len(sent))
     neg = [r for r in rows if r["delta"] is not None and total_ns and r["delta"] / total_ns < -0.05]
     if neg:
-        print("⚠ 负增量档: %s —— 墙梯系统偏差大于该段真实成本，本次定位不可结论。" % ", ".join(r["name"] for r in neg))
-        if "warmup" in STAGE_NAMES:
-            print("  处理: 预热档已开依旧出现 → 增大 N；并同时段交错重跑取相位配对（后台负载波动）。")
+        if COLD_MODE:
+            print("ℹ 负增量档: %s —— 冷档为独立跑批，阶段间成本差非叠加式，属正常现象（不判不可信）" % ", ".join(r["name"] for r in neg))
         else:
-            print("  处理: 开预热档（去掉 WARMUP=0，默认即开）+ 增大 N。")
+            print("⚠ 负增量档: %s —— 墙梯系统偏差大于该段真实成本，本次定位不可结论。" % ", ".join(r["name"] for r in neg))
+            if "warmup" in STAGE_NAMES:
+                print("  处理: 预热档已开依旧出现 → 增大 N；并同时段交错重跑取相位配对（后台负载波动）。")
+            else:
+                print("  处理: 开预热档（去掉 WARMUP=0，默认即开）+ 增大 N。")
     for r in rows:
         if r["samples"] < 3:
             print("⚠ %s 档仅 %.3fs / %d 个样本：CPU/RSS 归属不可信，固定开销占比高（增大 N）" % (

@@ -26,6 +26,12 @@
 #                       （家族之间**非叠加**，增量一律相对 floor 计算），不含全量档。
 #                       可用前缀见 ./diag.sh --list-families
 #   STAGES=recv,decode,floor,rules,emit,full   自定义叠加式墙梯（默认用 conf/perf-diag-wall.toml 的六档）
+#   COLD=1              每档独立 daemon 冷启动（默认关）。有状态规则 + 同数据重发时，
+#                       叠加式墙梯的 emit/full 被状态饱和污染（2026-09-01 实验：同数据热
+#                       emit 390k vs 冷 emit 124k——状态机功随档递减，负增量是假象）。
+#                       冷模式每档一个全新 daemon（忽略 warmup——预热档会建实例污染冷
+#                       状态），哨兵按档序合成 round、样本/metrics 按档合并，报告增量 =
+#                       阶段间成本差（非叠加式），负增量不判不可信。
 #   KEEP_RATE=1         保留 conf/wfusion.toml 的 max_ingest_rate（默认**解除**：150k 限速
 #                       会把六档全封顶在 150k，墙梯失去区分度——README 测量纪律 §3）
 #   PARSE_PARALLELISM= / RULE_PARALLELISM=   并行度（默认取 conf/wfusion.toml）
@@ -172,11 +178,13 @@ echo "== diag: N=$(comma "$N") 档=${STAGE_NAMES:-${FAMILIES_LIST:-default}} cor
 
 # ---- daemon 生命周期（与 run.sh/bench.sh 同款纪律）----
 wait_port_free() {
+  local i
   for i in $(seq 1 50); do nc -z 127.0.0.1 "$PORT" 2>/dev/null || return 0; sleep 0.2; done
   echo "    警告: 端口 ${PORT} 超时未释放" >&2
 }
 kill_daemon() {
-  local P="$1"; [ -n "$P" ] || return 0
+  local P="$1" i
+  [ -n "$P" ] || return 0
   kill "$P" 2>/dev/null
   # 宽限 60s：close/stats 规则的 shutdown flush 需数秒~数十秒，提前 SIGKILL 会
   # 截断最终 metrics 导出（尾部 emitted 计数丢失）。
@@ -216,8 +224,8 @@ write_conf() {
 }
 
 start_daemon() {
-  local LOG="$1"
-  "$WFUSION" daemon --config "$CONF_TMP" --work-dir . --perf-diag "$DIAG_TOML" > "$LOG" 2>&1 &
+  local LOG="$1" TOML="${2:-$DIAG_TOML}" i
+  "$WFUSION" daemon --config "$CONF_TMP" --work-dir . --perf-diag "$TOML" > "$LOG" 2>&1 &
   DAEMON_PID=$!
   for i in $(seq 1 60); do
     if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
@@ -237,7 +245,9 @@ start_daemon() {
 # CPU%/RSS 采样（常驻进程，脚本在 bench_lib.py）：输出 "epoch_ns rss_mb cpu_pct"，
 # epoch_ns 与哨兵 start_ns/emit_ns 同域 → 分析器按档区间切分归属 CPU%/RSS。
 start_sampler() {
-  "$PY" "$LIB" diag-sampler "$1" "$SAMPLES" "$SAMPLE_MS" > /dev/null 2>&1 &
+  # $1 = daemon pid，$2 = 输出文件（默认 $SAMPLES；COLD 模式每档独立文件后合并）
+  local OUT="${2:-$SAMPLES}"
+  "$PY" "$LIB" diag-sampler "$1" "$OUT" "$SAMPLE_MS" > /dev/null 2>&1 &
   SAMPLER_PID=$!
 }
 
@@ -291,21 +301,117 @@ run_ladder() {
   sleep 3   # 让 metrics 最后一拍导出（report_interval 保持 conf 原值 1s）
   kill_daemon "$DAEMON_PID"; DAEMON_PID=""; wait_port_free
 
+  finalize_report "$OUT" "$LOG" "$RULES_FILE"
+  return "${PIPESTATUS[0]}"
+}
+
+# 报告生成（run_ladder / run_cold_ladder 共用）：LD/CTX 采集 + 分析器调用。
+finalize_report() {
+  local OUT="$1" LOG="$2" RULES_FILE="${3:-}"
   local LD; LD=$(sysctl -n vm.loadavg 2>/dev/null | awk '{printf "%.1f", $2}')
   local RULES_N; RULES_N=$(grep -c '^rule ' "${RULES_FILE:-$RULES_SRC}" 2>/dev/null || grep -c '^rule ' "$RULES_SRC")
   # 引擎打印的窗口内存口径（诊断模式默认 60% 物理内存 / WF_DIAG_MAX_TOTAL_BYTES 可调）
   # 先剥 ANSI 色码再截到结构字段 ` window_mem_cap=` 前，兼容无括号的来源（如 =0 关闭覆盖）。
   local MEM_CAP; MEM_CAP=$(sed 's/\x1b\[[0-9;]*m//g' "$LOG" | grep -o 'perf-diag 内存口径: max_total_bytes=.* window_mem_cap=' | head -1 | sed -e 's/^perf-diag 内存口径: //' -e 's/ window_mem_cap=$//')
+  local CM="0"; [ "$COLD" = "1" ] && CM="1"
   local CTX="p=${PARSE_EFF} r=${RULE_EFF} ingest=${RATE_CTX} rules=${RULES_N} load=${LD:-n/a}${MEM_CAP:+ · ${MEM_CAP}} · $(date +%m-%d_%H:%M:%S)"
+  [ "$COLD" = "1" ] && CTX="cold(每档独立daemon) · ${CTX}"
   # 分析：共享 diag_analyze.py（哨兵四元组 × CPU/RSS 采样 × metrics 健康），
   # 输入走环境变量；stdout = 报告，退出码 0=健康 / 1=硬失败。
-  QUERY="qradar" N="$N" CTX="$CTX" \
+  QUERY="qradar" N="$N" CTX="$CTX" COLD_MODE="$CM" \
   RULES_COUNT="$RULES_N" \
   STAGE_NAMES="$STAGE_NAMES" APPEND_CUT_STAGES="$APPEND_CUT_STAGES" CORES="$CORES" \
   SENT_PATH="data/perf_sentinel.ndjson" SAMPLES_PATH="$SAMPLES" \
   METRICS_PATH="data/metrics.ndjson" LOG_PATH="$LOG" \
   STREAMS="$STREAMS" FAM_COUNTS="$FAM_COUNTS" \
     "$PY" "$ANALYZER" | tee -a "$OUT"
+  return "${PIPESTATUS[0]}"
+}
+
+# ---- COLD=1：每档独立 daemon（冷状态）----
+# 有状态规则 + 同数据重发时，叠加式墙梯的 emit/full 被状态饱和污染（2026-09-01
+# 实验：同数据热 emit 390k vs 冷 emit 124k——状态机功随档递减，负增量是假象）。
+# 冷模式每档一个全新 daemon（忽略 warmup——预热档会建实例污染冷状态），哨兵按档序
+# 合成 round、样本/metrics 按档合并，复用同一分析器（COLD_MODE 降级负增量警告）。
+run_cold_ladder() {
+  local OUT="$1"
+  local LOG="data/diag_daemon.log"
+  # 冷模式忽略 warmup：过滤后重写 STAGE_NAMES（避免哨兵 round 与档序错位）
+  local STAGES_EFF=""
+  local st
+  for st in $(echo "$STAGE_NAMES" | tr ',' ' '); do
+    [ "$st" = "warmup" ] && continue
+    STAGES_EFF="${STAGES_EFF:+$STAGES_EFF,}$st"
+  done
+  STAGE_NAMES="$STAGES_EFF"
+  local MET_ALL="data/metrics_cold_all.ndjson"
+  local SENT_ALL="data/perf_sentinel_cold.ndjson"
+  : > data/perf_sentinel.ndjson
+  : > "$SENT_ALL"
+  : > "$SAMPLES"
+  : > data/metrics.ndjson
+  : > "$MET_ALL"
+  : > data/wfusion.log
+  local idx=0
+  for st in $(echo "$STAGE_NAMES" | tr ',' ' '); do
+    local ONE="data/perf-diag-cold-${st}.toml"
+    case "$st" in
+      recv)   CR=false; CO=false; CA=false; CRV=true;  CSW=false;;
+      decode) CR=false; CO=false; CA=true;  CRV=false; CSW=false;;
+      floor)  CR=true;  CO=true;  CA=false; CRV=false; CSW=false;;
+      rules)  CR=false; CO=true;  CA=false; CRV=false; CSW=false;;
+      emit)   CR=false; CO=false; CA=false; CRV=false; CSW=true;;
+      full)   CR=false; CO=false; CA=false; CRV=false; CSW=false;;
+      *) echo "bad stage '$st'（recv|decode|floor|rules|emit|full）" >&2; return 1;;
+    esac
+    { echo "# diag.sh COLD=1 单档（勿手改）"
+      printf '\n[[stages]]\nname = "%s"\ncut_rules = %s\ncut_output = %s\ncut_append = %s\ncut_recv = %s\ncut_sink_write = %s\nrules = ""\n' "$st" "$CR" "$CO" "$CA" "$CRV" "$CSW"
+    } > "$ONE"
+    local SENT="data/perf_sentinel.ndjson" SAMP="data/samples_${st}.txt" MET="data/metrics_${st}.ndjson"
+    : > "$SAMP"
+    echo "-- 档 ${st}（独立 daemon 冷状态）--"
+    write_conf
+    # 哨兵文件必须在 daemon 启动**前**清空（daemon 启动即写 stage{current=0}，
+    # 旧记录会让 wfgen 的 wait_for_stage 读到上一档的完成信号）。
+    : > "$SENT"
+    start_daemon "$LOG" "$ONE" || return 1
+    start_sampler "$DAEMON_PID" "$SAMP"
+    "$WFGEN" perf-diag --diag "$ONE" --frames "$FRAMES" --addr "127.0.0.1:$PORT" \
+      --n-list "$N" --rounds 1 --timeout-secs "$TIMEOUT_SECS" \
+      --sentinels "$SENT" --output "data/perf_diag_wall_${st}.txt" > /dev/null 2>&1
+    local RC=$?
+    [ "$RC" = 0 ] || echo "    ⚠ ${st}: wfgen perf-diag 退出码 ${RC}（按哨兵记录尽力分析）" >&2
+    kill "$SAMPLER_PID" 2>/dev/null; wait "$SAMPLER_PID" 2>/dev/null; SAMPLER_PID=""
+    sleep 3   # 让 metrics 最后一拍导出（report_interval 1s）
+    kill_daemon "$DAEMON_PID"; DAEMON_PID=""; wait_port_free
+    # 每档独立留档：metrics（daemon 覆写 data/metrics.ndjson → mv 走）、wfusion.log（逐规则相位用）
+    mv data/metrics.ndjson "$MET" 2>/dev/null || : > "$MET"
+    cat "$MET" >> "$MET_ALL"
+    cp data/wfusion.log "data/wfusion_${st}.log" 2>/dev/null || true
+    # 该档哨兵四元组（单档 round=0）→ 合成 round=档序
+    local T
+    T=$("$PY" - "$SENT" <<'PYEOF'
+import json, sys
+for line in open(sys.argv[1]):
+    try: o = json.loads(line)
+    except Exception: continue
+    if o.get("record_type") == "sentinel" and o.get("start_ns"):
+        print(o.get("n"), o.get("start_ns"), o.get("emit_ns")); break
+PYEOF
+)
+    if [ -z "$T" ]; then
+      echo "    ⚠ ${st}: 无哨兵记录（档未完成）" >&2
+    else
+      set -- $T
+      echo "{\"record_type\":\"sentinel\",\"round\":${idx},\"n\":$1,\"start_ns\":$2,\"emit_ns\":$3}" >> "$SENT_ALL"
+    fi
+    cat "$SAMP" >> "$SAMPLES"
+    idx=$(( idx + 1 ))
+  done
+  [ "$idx" -gt 0 ] || { echo "错误: 冷模式没有可跑档（STAGE_NAMES 全被过滤？）" >&2; return 1; }
+  mv "$MET_ALL" data/metrics.ndjson
+  mv "$SENT_ALL" data/perf_sentinel.ndjson
+  finalize_report "$OUT" "$LOG"
   return "${PIPESTATUS[0]}"
 }
 
@@ -327,6 +433,9 @@ if [ -n "$FAMILIES_LIST" ]; then
     echo "== 家族 ${fam}（独立 daemon，启动加载 data/diag_rules_${fam}.wfl）=="
     run_ladder "$OUT" "data/diag_rules_${fam}.wfl" || FAILED=1
   done
+elif [ "$COLD" = "1" ]; then
+  # 冷档模式：每档独立 daemon（有状态规则叠加式墙梯被状态饱和污染的修复口径）。
+  run_cold_ladder "$OUT" || FAILED=1
 else
   run_ladder "$OUT" || FAILED=1
 fi
