@@ -4,8 +4,10 @@ use "network.wfs"
 // → 实例持续存活为部分匹配，用于观察实例数/内存随输入的变化
 //
 // match<sip:60s>：实例 TTL = 60s（距最后事件）。
-// 输入停止后 watermark 冻结在最后事件时间，实例不会过期释放；
-// 输入恢复（trickle）推进 watermark 后，旧实例被驱逐。
+// 输入停止后事件 watermark 冻结，但规则任务的周期 timeout 扫描会把墙钟信用
+// （每次 ≤ 1s，随扫描累计）叠加到有效水位 —— idle 实例仍按 TTL 过期释放
+// （wp-reactor fix(wf-runtime): scan_timeouts 墙钟信用按扫描累计）。
+// 输入恢复（trickle）推进事件 watermark 后，其余旧实例照常被驱逐。
 
 rule instance_growth {
     events {

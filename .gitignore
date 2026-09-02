@@ -17,4 +17,6 @@ performance/qradar_pk/gen.log
 performance/nexmark_pk/__pycache__/
 
 # perf scripts bytecode
+__pycache__/
+*.pyc
 performance/scripts/__pycache__/
