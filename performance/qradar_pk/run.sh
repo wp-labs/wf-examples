@@ -194,36 +194,42 @@ engine_acked_lag() {
 
 # send-arrow 多连接注入（后台化），再等引擎消化（append 追平 + acked_lag 归零）。
 # CONNECTIONS>1：shard-frames 预分片（键闭包，同 key 同连接）→ send-arrow --shard-files
-# 纯 copy 零解码（分片文件按 N×CONNECTIONS×shard-keys 指纹缓存，换键不静默复用）。
+# 纯 copy 零解码。分片与帧同层缓存（指纹 N×CONNECTIONS×SHARD_KEYS + 帧 mtime 守卫）：
+# 全存在且不旧于帧 → 复用（纯 send）；缺 / 帧变更（重生成）→ 一次性拆分。
 # CONNECTIONS=1：单连接 raw-copy（无需分片，顺序天然保证键闭包）。
 # rate 参数：RATE_BYTES>0 时加 --rate-bytes（限速匀速注入）；否则不限速。
 RATE_ARG=""
 if [ "$RATE_BYTES" -gt 0 ]; then RATE_ARG="--rate-bytes $RATE_BYTES"; fi
 if [ "$CONNECTIONS" -gt 1 ]; then
-  echo "==> 3. shard-frames(${CONNECTIONS} 分片) + send-arrow --shard-files 注入（SHARD_KEYS=${SHARD_KEYS%%:*},...）"
+  echo "==> 3. send-arrow --shard-files 注入（${CONNECTIONS} 连接，SHARD_KEYS=${SHARD_KEYS%%:*},...）"
   SHARD_KEY_FP=$("$PY" "$LIB" md5 "$SHARD_KEYS")
   SHARD_PREFIX="data/shard_${N}_c${CONNECTIONS}_k${SHARD_KEY_FP}"
-  SHARD_FILES=""
+  MISSING=0
   i=0
   while [ "$i" -lt "$CONNECTIONS" ]; do
-    [ -s "${SHARD_PREFIX}.s${i}.frames" ] || { SHARD_FILES=""; break; }
-    SHARD_FILES="${SHARD_FILES:+$SHARD_FILES,}${SHARD_PREFIX}.s${i}.frames"
+    [ -s "${SHARD_PREFIX}.s${i}.frames" ] || { MISSING=1; break; }
     i=$(( i + 1 ))
   done
-  if [ -z "$SHARD_FILES" ]; then
-    echo "    预分片 → ${SHARD_PREFIX}.s0..s$(( CONNECTIONS - 1 )).frames"
+  if [ "$MISSING" = 0 ] && [ ! "$FRAMES" -nt "${SHARD_PREFIX}.s0.frames" ]; then
+    echo "    分片复用 → ${SHARD_PREFIX}.s0..s$(( CONNECTIONS - 1 )).frames"
+  else
+    echo "    预分片（缺/帧变更，一次性）→ ${SHARD_PREFIX}.s0..s$(( CONNECTIONS - 1 )).frames"
     "$WFGEN" shard-frames --input "$FRAMES" --shards "$CONNECTIONS" \
       --shard-keys "$SHARD_KEYS" --output-prefix "$SHARD_PREFIX" > /dev/null 2>&1 || {
       echo "ERROR: shard-frames 失败（检查 SHARD_KEYS 的 key 字段是否在对应流 schema）" >&2
       exit 1
     }
-    SHARD_FILES=""
-    i=0
-    while [ "$i" -lt "$CONNECTIONS" ]; do
-      SHARD_FILES="${SHARD_FILES:+$SHARD_FILES,}${SHARD_PREFIX}.s${i}.frames"
-      i=$(( i + 1 ))
-    done
   fi
+  SHARD_FILES=""
+  i=0
+  while [ "$i" -lt "$CONNECTIONS" ]; do
+    [ -s "${SHARD_PREFIX}.s${i}.frames" ] || {
+      echo "ERROR: 分片 ${SHARD_PREFIX}.s${i}.frames 缺失（shard-frames 未产出）" >&2
+      exit 1
+    }
+    SHARD_FILES="${SHARD_FILES:+$SHARD_FILES,}${SHARD_PREFIX}.s${i}.frames"
+    i=$(( i + 1 ))
+  done
   "$WFGEN" send-arrow --input "$FRAMES" --addr 127.0.0.1:$PORT \
     --shard-files "$SHARD_FILES" $RATE_ARG > /dev/null 2>&1 &
 else
