@@ -59,6 +59,12 @@ case "$N" in
   ''|*[!0-9]*) echo "用法: ./run.sh [事件数]（默认 200000；环境变量 CHUNK/RATE_MS/PLATEAU 可调）" >&2; exit 1;;
 esac
 METRICS=data/metrics.ndjson
+# 预编码 Arrow 帧文件（与 diag.sh 共享，确定性 seed=42 数据、同 N 可复现）——
+# 存在即复用（跳过生成+编码，见 step 2），缺帧才生成。注意：schema/scenario/
+# wfgen dump 变更后需删除该文件强制重生成（旧帧仍按旧 schema 编码）。
+# GEN_FRAMES=0 时缺帧直接报错（与 diag.sh 同语义，不静默生成）。
+GEN_FRAMES="${GEN_FRAMES:-1}"
+FRAMES="data/burst_${N}.frames"
 
 # 千分位显示（macOS bash 3.2 无 printf %'d）；纯逻辑在 bench_lib.py
 comma() { "$PY" "$LIB" comma "$1" 2>/dev/null || echo "$1"; }
@@ -86,7 +92,9 @@ RATE_BYTES="${RATE_BYTES:-0}"
 mkdir -p data
 # 用截断（: >）而非 rm 清理旧产物：与安全删除钩子解耦（钩子对不存在文件
 # fail-closed、对重复路径 fail-closed、轮内删除数超阈值会整体拦截）。
-for f in "$METRICS" data/default.ndjson data/error.ndjson data/burst.jsonl data/burst_*.frames data/wfusion.log data/daemon.log data/rss_peak_bytes.txt; do
+# 注意：**不**截断 data/burst_*.frames——确定性帧文件跨次复用（与 diag.sh 同款）；
+# 需重生成时显式删除（见 step 2 提示）。
+for f in "$METRICS" data/default.ndjson data/error.ndjson data/burst.jsonl data/wfusion.log data/daemon.log data/rss_peak_bytes.txt; do
   mkdir -p "$(dirname "$f")"; : > "$f" 2>/dev/null || true
 done
 
@@ -144,17 +152,25 @@ for i in $(seq 1 50); do
 done
 [ "$READY" = 1 ] || { echo "ERROR: TCP 源未就绪"; tail -20 data/daemon.log; exit 1; }
 
-echo "==> 2. 生成 $N 事件（源 IP 长尾 10100 + 泊松时间 12min，符合现实）"
-"$PY" scripts/gen_events.py "$N" > data/burst.jsonl
+if [ -s "$FRAMES" ]; then
+  echo "==> 2. 事件/帧复用：${FRAMES}（$(du -h "$FRAMES" 2>/dev/null | cut -f1)）"
+  echo "      （seed=42 确定性数据，跨次同 N 可复现；schema/scenario 变更需删除该文件强制重生成）"
+else
+  if [ "$GEN_FRAMES" != "1" ]; then
+    echo "错误: 缺帧 ${FRAMES} 且 GEN_FRAMES=0（不允许自动生成）" >&2
+    exit 1
+  fi
+  echo "==> 2. 生成 $N 事件（源 IP 长尾 10100 + 泊松时间 12min，符合现实；seed=42）"
+  "$PY" scripts/gen_events.py "$N" > data/burst.jsonl
 
-# 预编码成 Arrow frames（绕开 `wfgen send` JSONL 实时编码客户端墙）。
-# 必须在 step 0 的 daemon 运行期间 dump，且 send-arrow 回放到同一 daemon（schema 一致）。
-FRAMES=data/burst_${N}.frames
-echo "==> 2b. 预编码帧（dump-frames → ${FRAMES}）"
-"$WFGEN" dump-frames --scenario scenarios/throughput.wfg --input data/burst.jsonl \
-  --addr 127.0.0.1:$PORT --ws models/schemas/network.wfs --output "$FRAMES" \
-  --chunk 10000 --max-frame-bytes 8388608 --max-frame-rows 100000 > /dev/null 2>&1
-rm -f data/burst.jsonl
+  # 预编码成 Arrow frames（绕开 `wfgen send` JSONL 实时编码客户端墙）。
+  # 必须在 step 0 的 daemon 运行期间 dump，且 send-arrow 回放到同一 daemon（schema 一致）。
+  echo "==> 2b. 预编码帧（dump-frames → ${FRAMES}）"
+  "$WFGEN" dump-frames --scenario scenarios/throughput.wfg --input data/burst.jsonl \
+    --addr 127.0.0.1:$PORT --ws models/schemas/network.wfs --output "$FRAMES" \
+    --chunk 10000 --max-frame-bytes 8388608 --max-frame-rows 100000 > /dev/null 2>&1
+  rm -f data/burst.jsonl
+fi
 
 # 送达计数（metrics 中 rows_total 为每区间 delta，累加得总送达；逻辑在 bench_lib.py）
 received() {
