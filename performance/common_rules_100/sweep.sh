@@ -119,10 +119,10 @@ SWEEP_SECS=${SWEEP_SECS:-8}
 MAX_LINES=${MAX_LINES:-1000000}
 ALLOW_BIG=${ALLOW_BIG:-0}
 
-echo "== sweep: 100 条常见规则 × 限定 EPS（max_ingest_rate 引擎限速）资源统计 =="
-echo "    每档稳态窗 ${SWEEP_SECS}s（行数 = EPS × ${SWEEP_SECS}）"
-printf "%-7s %-9s %-9s %-16s %-9s %-9s %-8s %-8s %s\n" \
-  "档" "EPS目标" "实际EPS" "CPU% avg/p95/max" "RSS" "commit" "达成%" "耗时" "行数"
+echo "== sweep: 100 常见规则 × 限定 EPS（max_ingest_rate 引擎限速）资源统计 =="
+echo "    每档稳态窗 ${SWEEP_SECS}s（行数 = EPS × ${SWEEP_SECS}）；done% = 实际/目标，>=80% 记 ok（可服务），<80% 记 cap（能力封顶）"
+printf "%-6s %-8s %-8s %-15s %-6s %-7s %-7s %-7s %s\n" \
+  "tier" "target" "actual" "cpu%avg/p95/max" "rss" "commit" "done%" "wall" "lines"
 echo "---"
 : > "$REPORT"
 
@@ -191,7 +191,7 @@ for i in "${!EPS_LIST[@]}"; do
   # 达成率 = 实际消化速率 / 目标限速。≥80% = 目标限速可服务（引擎按速率稳态消化）；
   # <80% = 目标超出引擎能力（限速失效，实际 EPS 即引擎真实吞吐封顶值）。
   DONE_PCT=$(( ACT_EPS * 100 / EPS ))
-  if $PY -c "exit(0 if $ACT_EPS >= $EPS * 0.8 else 1)" 2>/dev/null; then FOLLOW="可服务"; else FOLLOW="能力封顶"; fi
+  if $PY -c "exit(0 if $ACT_EPS >= $EPS * 0.8 else 1)" 2>/dev/null; then FOLLOW="ok"; else FOLLOW="cap"; fi
 
   WS=$(( START_NS - 1000000000 )); WE="$END_NS"
   CPU_STATS=$("$PY" - "$RSS_SAMPLES" "$WS" "$WE" <<'EOF'
@@ -238,9 +238,9 @@ EOF
   TIER_END=$($PY -c 'import time; print(int(time.time()))')
   TIER_S=$(( TIER_END - TIER_START ))
 
-  printf "%-7s %-9s %-9s %-16s %-9s %-9s %-8s %-8s %s\n" \
+  printf "%-6s %-8s %-8s %-15s %-6s %-7s %-7s %-7s %s\n" \
     "$EPS_DISP" "$EPS" "$ACT_EPS" "$CPU_AVG/$CPU_P95/$CPU_MAX" "${PEAK_RSS}M" "${CMIT_MB}M" \
-    "${DONE_PCT}%($FOLLOW)" "${TIER_S}s" "$LINES"
+    "${DONE_PCT}%$FOLLOW" "${TIER_S}s" "$LINES"
   printf "%s %s %s %s/%s/%s %s %s %s %s %s %s\n" \
     "$EPS_DISP" "$EPS" "$ACT_EPS" "$CPU_AVG" "$CPU_P95" "$CPU_MAX" "$PEAK_RSS" "$CMIT_MB" \
     "$DONE_PCT" "$FOLLOW" "$TIER_S" "$LINES" >> "$REPORT"
