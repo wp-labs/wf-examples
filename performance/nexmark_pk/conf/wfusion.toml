@@ -1,4 +1,4 @@
-# eps_throughput — 吞吐压测（目标 EPS >= 10000）
+# nexmark_pk — NEXMark 基准 daemon
 # daemon 模式：TCP 全速输入 + 指标监控，测量引擎每秒处理事件数
 
 sources_dir = "topology/sources"

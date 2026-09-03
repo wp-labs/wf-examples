@@ -19,8 +19,7 @@ wfusion（warp-fusion + wp-reactor）的**可运行验证场景与性能基准**
 | [`core/remote_ctrl/`](core/remote_ctrl/README.md) | 远端规则仓库同步 + 规则版本切换 + admin_api 热重载（L1/L2/blocked）全链路 | `./run.sh` |
 | [`core/meta_disable/`](core/meta_disable/) | meta/spill 关闭路径冒烟 | `./smoke.sh` |
 | [`connectors/`](connectors/) | sink/source 连接器配置样例（blackhole/file/doris/syslog/tcp…） | 供 case `topology/` 引用 |
-| [`performance/eps_throughput/`](performance/eps_throughput/README.md) | 吞吐压测（目标 EPS ≥ 10000）——⚠ 页面数据为历史数据，待复测 | `./run.sh` |
-| [`performance/eps_throughput_obj/`](performance/eps_throughput_obj/README.md) | 20 规则 + object 字段高压回归（wp-reactor #18 object 大批次驱逐） | `./run.sh` / `./validate.sh` |
+| [`performance/eps_throughput_obj/`](performance/eps_throughput_obj/README.md) | 20 规则 + object 字段高压回归（wp-reactor #18 object 大批次驱逐；A/B 复现见 `validate.sh`） | `./run.sh` / `./validate.sh` |
 | [`performance/nexmark_pk/`](performance/nexmark_pk/README.md) | NEXMark Q1–Q22：吞吐 PK（bench）+ 性能墙定位（diag）+ 正确性对拍（verify） | `./bench.sh` `./diag.sh` `./verify_daemon.sh` |
 | [`performance/qradar_pk/`](performance/qradar_pk/README.md) | 376 规则高压吞吐 + IBM QRadar EP 对标（run/diag/sweep/规则集二分） | `./run.sh` `./diag.sh` `./sweep.sh` |
 | [`performance/perf_diag_case/`](performance/perf_diag_case/README.md) | perf-diag 诊断**机制**本身的独立验证（有区分度的墙梯） | `./verify.sh` |

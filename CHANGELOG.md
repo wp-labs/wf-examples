@@ -2,6 +2,18 @@
 
 All notable changes to the wf-examples performance / verification scenarios will be documented in this file.
 
+## [2026-09-03]
+
+### Removed
+
+- **`performance/eps_throughput`（吞吐压测冒烟 case）**：其规则集（6 条：global_throughput /
+  per_sip_instances / denied_probe / login_brute / traffic_sum / accu_tracker）与数据模式
+  （burst/sustain/distinct）均为 `eps_throughput_obj`（20 条规则超集，含同名前 6 条；peak/stream
+  × normal/flood/single 兼容旧模式）的真子集；吞吐权威口径已由 `nexmark_pk` / `qradar_pk` 取代，
+  且原 README 自标「历史数据待复测、早于批式向量化、低估当前引擎」。删除并归档于 git 历史——
+  吞吐/规则路径回归后续由 `eps_throughput_obj` 的 #18 门禁与 `qradar_pk` run.sh 承担；根 README
+  同步移除该条目。
+
 ## [2026-08-30]
 
 ### Added
