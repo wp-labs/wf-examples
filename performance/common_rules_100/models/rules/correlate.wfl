@@ -1,0 +1,129 @@
+// common_rules_100 — 常见 SOC 检测规则（由 scripts/gen_rules.py 生成，勿手改）
+// 100 条：auth 15 / scan 15 / c2+exfil 18 / dns 15 / proxy 12 / host+rich 18 / correlate 7
+
+use "network.wfs"
+rule corr_scan_conn_dns_query {
+    events {
+        c : conn_events
+        d : dns_events
+    }
+    match<sip:2m> {
+        on event { c | count >= 40; d | count >= 3; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "corr_scan_conn_dns_query",
+        detail = "corr_scan_conn_dns_query triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule corr_scan_denied_dns_nx {
+    events {
+        c : conn_events && c.action == "denied"
+        d : dns_events && d.query_type == "NX"
+    }
+    match<sip:2m> {
+        on event { c | count >= 30; d | count >= 6; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "corr_scan_denied_dns_nx",
+        detail = "corr_scan_denied_dns_nx triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule corr_longconn_dns_storm {
+    events {
+        c : conn_events && c.duration >= 300
+        d : dns_events
+    }
+    match<sip:2m> {
+        on event { c | count >= 12; d | count >= 20; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "corr_longconn_dns_storm",
+        detail = "corr_longconn_dns_storm triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule corr_blocked_any_query {
+    events {
+        c : conn_events && c.blocked == true
+        d : dns_events && d.query_type == "ANY"
+    }
+    match<sip:2m> {
+        on event { c | count >= 15; d | count >= 4; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "corr_blocked_any_query",
+        detail = "corr_blocked_any_query triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule corr_dga_egress_conn {
+    events {
+        c : conn_events
+        d : dns_events && d.resp_size == 0
+    }
+    match<sip:2m> {
+        on event { c | count >= 25; d | count >= 8; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "corr_dga_egress_conn",
+        detail = "corr_dga_egress_conn triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule corr_scan_aaaa_burst {
+    events {
+        c : conn_events
+        d : dns_events && d.query_type == "AAAA"
+    }
+    match<sip:2m> {
+        on event { c | count >= 50; d | count >= 6; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "corr_scan_aaaa_burst",
+        detail = "corr_scan_aaaa_burst triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule corr_tunnel_txt_conn {
+    events {
+        c : conn_events && c.duration >= 600
+        d : dns_events && d.query_type == "TXT"
+    }
+    match<sip:2m> {
+        on event { c | count >= 3; d | count >= 5; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "corr_tunnel_txt_conn",
+        detail = "corr_tunnel_txt_conn triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}

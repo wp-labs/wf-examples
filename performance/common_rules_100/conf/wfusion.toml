@@ -1,0 +1,21 @@
+# common_rules_100 — 100 条常见 SOC 检测规则性能 case
+# daemon 模式：TCP 实时输入 + 指标监控，测量"真实语义规则"负载下的吞吐/内存/告警
+
+sources_dir = "topology/sources"
+sinks = "topology/sinks"
+windows = "models/schemas/windows.toml"
+
+[runtime]
+rule_shards = 1
+rule_exec_timeout = "30s"
+schemas = "models/schemas/*.wfs"
+rules = "models/rules/*.wfl"
+
+[metrics]
+enabled = true
+report_interval = "1s"
+
+[logging]
+level = "info"
+format = "plain"
+file = "data/wfusion.log"

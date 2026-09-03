@@ -1,0 +1,309 @@
+// common_rules_100 — 常见 SOC 检测规则（由 scripts/gen_rules.py 生成，勿手改）
+// 100 条：auth 15 / scan 15 / c2+exfil 18 / dns 15 / proxy 12 / host+rich 18 / correlate 7
+
+use "network.wfs"
+rule c2_beacon_low_freq {
+    events {
+        c : conn_events && c.duration >= 300
+    }
+    match<sip:2m> {
+        on event { c | count >= 4; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c2_beacon_low_freq",
+        detail = "c2_beacon_low_freq triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c2_uncommon_port {
+    events {
+        c : conn_events && c.dport >= 50000
+    }
+    match<sip:2m> {
+        on event { c | count >= 3; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c2_uncommon_port",
+        detail = "c2_uncommon_port triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c2_long_conn_persist {
+    events {
+        c : conn_events && c.duration >= 600
+    }
+    match<sip:2m> {
+        on event { c | count >= 2; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c2_long_conn_persist",
+        detail = "c2_long_conn_persist triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c2_irregular_agent {
+    events {
+        c : conn_events && c.protocol == "tcp"
+    }
+    match<sip:2m> {
+        on event { c | count >= 120; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c2_irregular_agent",
+        detail = "c2_irregular_agent triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c2_dead_ports_src {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c.dport | distinct | count >= 6; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c2_dead_ports_src",
+        detail = "c2_dead_ports_src triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c2_ratio_imbalance {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c.bytes_in | sum >= 2000000000; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c2_ratio_imbalance",
+        detail = "c2_ratio_imbalance triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c2_tunnel_long_up {
+    events {
+        c : conn_events && c.duration >= 120
+    }
+    match<sip:2m> {
+        on event { c.bytes_out | sum >= 100000000; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c2_tunnel_long_up",
+        detail = "c2_tunnel_long_up triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c2_small_pkts_many {
+    events {
+        c : conn_events && c.bytes <= 128
+    }
+    match<sip:2m> {
+        on event { c | count >= 150; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c2_small_pkts_many",
+        detail = "c2_small_pkts_many triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c2_vlan_hop {
+    events {
+        c : conn_events && c.vlan != 10
+    }
+    match<sip:2m> {
+        on event { c | count >= 60; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c2_vlan_hop",
+        detail = "c2_vlan_hop triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule c2_night_beacon {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event <accu>{ c | count >= 25; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "c2_night_beacon",
+        detail = "c2_night_beacon triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule exfil_bytes_out_spike {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c.bytes_out | sum >= 100000000; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "exfil_bytes_out_spike",
+        detail = "exfil_bytes_out_spike triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule exfil_avg_out_high {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c.bytes_out | avg >= 40000; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "exfil_avg_out_high",
+        detail = "exfil_avg_out_high triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule exfil_bulk_up_per_conn {
+    events {
+        c : conn_events && c.bytes_out >= 5000000
+    }
+    match<sip:2m> {
+        on event { c | count >= 3; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "exfil_bulk_up_per_conn",
+        detail = "exfil_bulk_up_per_conn triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule exfil_dip_focus {
+    events {
+        c : conn_events && c.bytes_out >= 2000000
+    }
+    match<dip:2m> {
+        on event { c | count >= 5; }
+    } -> score(50.0)
+    entity(ip, c.dip)
+    yield network_alerts (
+        sip = c.dip,
+        alert_type = "exfil_dip_focus",
+        detail = "exfil_dip_focus triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule exfil_upload_ratio_high {
+    events {
+        c : conn_events && c.bytes_in == 0
+    }
+    match<sip:2m> {
+        on event { c.bytes_out | sum >= 10000000; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "exfil_upload_ratio_high",
+        detail = "exfil_upload_ratio_high triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule exfil_slow_drip {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event <accu>{ c | count >= 12; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "exfil_slow_drip",
+        detail = "exfil_slow_drip triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule exfil_many_destinations {
+    events {
+        c : conn_events && c.bytes_out >= 1000000
+    }
+    match<sip:2m> {
+        on event { c.dip | distinct | count >= 5; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "exfil_many_destinations",
+        detail = "exfil_many_destinations triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule exfil_archive_up {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c && startswith_any(c.app_id, "zip", "tar", "rar", "gz", "7z") | count >= 2; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "exfil_archive_up",
+        detail = "exfil_archive_up triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}

@@ -1,0 +1,309 @@
+// common_rules_100 — 常见 SOC 检测规则（由 scripts/gen_rules.py 生成，勿手改）
+// 100 条：auth 15 / scan 15 / c2+exfil 18 / dns 15 / proxy 12 / host+rich 18 / correlate 7
+
+use "network.wfs"
+rule fw_block_burst_sip {
+    events {
+        c : conn_events && c.blocked == true
+    }
+    match<sip:2m> {
+        on event { c | count >= 50; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "fw_block_burst_sip",
+        detail = "fw_block_burst_sip triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fw_block_dip_focus {
+    events {
+        c : conn_events && c.blocked == true
+    }
+    match<dip:2m> {
+        on event { c | count >= 15; }
+    } -> score(50.0)
+    entity(ip, c.dip)
+    yield network_alerts (
+        sip = c.dip,
+        alert_type = "fw_block_dip_focus",
+        detail = "fw_block_dip_focus triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule host_blocked_egress {
+    events {
+        c : conn_events && c.blocked == true
+    }
+    match<sip:2m> {
+        on event { c | count >= 80; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "host_blocked_egress",
+        detail = "host_blocked_egress triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule host_infected_survey {
+    events {
+        c : conn_events && c.protocol == "udp"
+    }
+    match<sip:2m> {
+        on event { c.dip | distinct | count >= 30; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "host_infected_survey",
+        detail = "host_infected_survey triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule host_sanctioned_geo {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c && startswith_any(c.geo_country, "RU", "KP", "IR") | count >= 3; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "host_sanctioned_geo",
+        detail = "host_sanctioned_geo triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule rich_geo_nested_match {
+    events {
+        c : conn_events && c.geo_country == "CN"
+    }
+    match<sip:2m> {
+        on event { c | count >= 200; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "rich_geo_nested_match",
+        detail = "rich_geo_nested_match triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule rich_float_packet_burst {
+    events {
+        c : conn_events && c.packet_rate >= 50000.0
+    }
+    match<sip:2m> {
+        on event { c | count >= 4; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "rich_float_packet_burst",
+        detail = "rich_float_packet_burst triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule host_icmp_flood {
+    events {
+        c : conn_events && c.protocol == "icmp"
+    }
+    match<sip:2m> {
+        on event { c | count >= 15; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "host_icmp_flood",
+        detail = "host_icmp_flood triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule rich_string_proto_match {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c && startswith(c.protocol, "tc") && indexof(c.protocol, "p") >= 0 | count >= 8; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "rich_string_proto_match",
+        detail = "rich_string_proto_match triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule rich_app_id_ioc {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c && startswith_any(c.app_id, "tor", "p2p", "proxy") | count >= 2; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "rich_app_id_ioc",
+        detail = "rich_app_id_ioc triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule rich_vlan_cross {
+    events {
+        c : conn_events && c.vlan == 999
+    }
+    match<sip:2m> {
+        on event { c | count >= 15; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "rich_vlan_cross",
+        detail = "rich_vlan_cross triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule host_sip_outlier_volume {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c | count >= 5000; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "host_sip_outlier_volume",
+        detail = "host_sip_outlier_volume triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule host_flow_seq_gap {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event <accu>{ c | count >= 50; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "host_flow_seq_gap",
+        detail = "host_flow_seq_gap triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule host_long_duration {
+    events {
+        c : conn_events && c.duration >= 60
+    }
+    match<sip:2m> {
+        on event { c | count >= 6; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "host_long_duration",
+        detail = "host_long_duration triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule rich_small_ports_in {
+    events {
+        c : conn_events && c.dport <= 1024
+    }
+    match<dip:2m> {
+        on event { c | count >= 300; }
+    } -> score(50.0)
+    entity(ip, c.dip)
+    yield network_alerts (
+        sip = c.dip,
+        alert_type = "rich_small_ports_in",
+        detail = "rich_small_ports_in triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule host_large_pkt_burst {
+    events {
+        c : conn_events && c.bytes >= 200000
+    }
+    match<sip:2m> {
+        on event { c | count >= 4; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "host_large_pkt_burst",
+        detail = "host_large_pkt_burst triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule fw_src_geo_block {
+    events {
+        c : conn_events && c.action == "denied"
+    }
+    match<sip:2m> {
+        on event <accu>{ c | count >= 120; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "fw_src_geo_block",
+        detail = "fw_src_geo_block triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule host_many_protocols {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c.protocol | distinct | count >= 6; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "host_many_protocols",
+        detail = "host_many_protocols triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}

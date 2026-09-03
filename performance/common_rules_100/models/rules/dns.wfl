@@ -1,0 +1,258 @@
+// common_rules_100 — 常见 SOC 检测规则（由 scripts/gen_rules.py 生成，勿手改）
+// 100 条：auth 15 / scan 15 / c2+exfil 18 / dns 15 / proxy 12 / host+rich 18 / correlate 7
+
+use "network.wfs"
+rule dns_dga_long_domain {
+    events {
+        d : dns_events
+    }
+    match<sip:2m> {
+        on event { d && length(d.domain) >= 25 | count >= 5; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_dga_long_domain",
+        detail = "dns_dga_long_domain triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_dga_highfreq_bot {
+    events {
+        d : dns_events && d.resp_size == 0
+    }
+    match<sip:2m> {
+        on event { d | count >= 20; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_dga_highfreq_bot",
+        detail = "dns_dga_highfreq_bot triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_any_query {
+    events {
+        d : dns_events && d.query_type == "ANY"
+    }
+    match<sip:2m> {
+        on event { d | count >= 5; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_any_query",
+        detail = "dns_any_query triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_tunnel_txt_big {
+    events {
+        d : dns_events && d.query_type == "TXT"
+    }
+    match<sip:2m> {
+        on event { d | count >= 8; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_tunnel_txt_big",
+        detail = "dns_tunnel_txt_big triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_txt_resp_large {
+    events {
+        d : dns_events && d.resp_size >= 4000
+    }
+    match<sip:2m> {
+        on event { d | count >= 3; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_txt_resp_large",
+        detail = "dns_txt_resp_large triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_nx_domain_storm {
+    events {
+        d : dns_events && d.query_type == "NX"
+    }
+    match<sip:2m> {
+        on event { d | count >= 15; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_nx_domain_storm",
+        detail = "dns_nx_domain_storm triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_cname_chain {
+    events {
+        d : dns_events && d.query_type == "CNAME"
+    }
+    match<sip:2m> {
+        on event { d | count >= 20; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_cname_chain",
+        detail = "dns_cname_chain triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_susp_tld_top {
+    events {
+        d : dns_events
+    }
+    match<sip:2m> {
+        on event { d && endswith(d.domain, ".top") | count >= 5; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_susp_tld_top",
+        detail = "dns_susp_tld_top triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_high_entropy_labels {
+    events {
+        d : dns_events && d.num_answers >= 5
+    }
+    match<sip:2m> {
+        on event { d | count >= 10; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_high_entropy_labels",
+        detail = "dns_high_entropy_labels triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_rare_query_src {
+    events {
+        d : dns_events
+    }
+    match<sip:2m> {
+        on event { d | count >= 1500; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_rare_query_src",
+        detail = "dns_rare_query_src triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_domain_single_client {
+    events {
+        d : dns_events
+    }
+    match<domain:2m> {
+        on event { d | count >= 60; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_domain_single_client",
+        detail = "dns_domain_single_client triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_domain_many_clients {
+    events {
+        d : dns_events
+    }
+    match<domain:2m> {
+        on event { d.sip | distinct | count >= 10; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_domain_many_clients",
+        detail = "dns_domain_many_clients triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_big_answers_spike {
+    events {
+        d : dns_events && d.num_answers >= 20
+    }
+    match<sip:2m> {
+        on event { d | count >= 2; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_big_answers_spike",
+        detail = "dns_big_answers_spike triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_aaaa_burst {
+    events {
+        d : dns_events && d.query_type == "AAAA"
+    }
+    match<sip:2m> {
+        on event { d | count >= 120; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_aaaa_burst",
+        detail = "dns_aaaa_burst triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule dns_slow_scan_domains {
+    events {
+        d : dns_events
+    }
+    match<sip:2m> {
+        on event <accu>{ d | count >= 20; }
+    } -> score(50.0)
+    entity(ip, d.sip)
+    yield network_alerts (
+        sip = d.sip,
+        alert_type = "dns_slow_scan_domains",
+        detail = "dns_slow_scan_domains triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}

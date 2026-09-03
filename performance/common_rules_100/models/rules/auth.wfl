@@ -1,0 +1,258 @@
+// common_rules_100 — 常见 SOC 检测规则（由 scripts/gen_rules.py 生成，勿手改）
+// 100 条：auth 15 / scan 15 / c2+exfil 18 / dns 15 / proxy 12 / host+rich 18 / correlate 7
+
+use "network.wfs"
+rule auth_brute_user_10 {
+    events {
+        a : auth_events
+    }
+    match<user:2m> {
+        on event { a | count >= 10; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_brute_user_10",
+        detail = "auth_brute_user_10 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_brute_user_30 {
+    events {
+        a : auth_events
+    }
+    match<user:2m> {
+        on event { a | count >= 30; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_brute_user_30",
+        detail = "auth_brute_user_30 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_brute_src_fail_20 {
+    events {
+        a : auth_events
+    }
+    match<source_ip:2m> {
+        on event { a | count >= 20; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_brute_src_fail_20",
+        detail = "auth_brute_src_fail_20 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_brute_src_users_8 {
+    events {
+        a : auth_events && a.result == "failed"
+    }
+    match<source_ip:2m> {
+        on event { a.user | distinct | count >= 8; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_brute_src_users_8",
+        detail = "auth_brute_src_users_8 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_brute_attempts_spike {
+    events {
+        a : auth_events && a.attempts >= 5
+    }
+    match<source_ip:2m> {
+        on event { a | count >= 6; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_brute_attempts_spike",
+        detail = "auth_brute_attempts_spike triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_high_risk_fail_3 {
+    events {
+        a : auth_events && a.risk >= 0.85
+    }
+    match<user:2m> {
+        on event { a | count >= 3; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_high_risk_fail_3",
+        detail = "auth_high_risk_fail_3 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_geo_mismatch_fail {
+    events {
+        a : auth_events && a.risk >= 0.9
+    }
+    match<source_ip:2m> {
+        on event { a | count >= 50; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_geo_mismatch_fail",
+        detail = "auth_geo_mismatch_fail triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_bad_agent_fail_5 {
+    events {
+        a : auth_events
+    }
+    match<source_ip:2m> {
+        on event { a && startswith_any(a.agent, "powershell", "curl", "sqlmap") | count >= 5; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_bad_agent_fail_5",
+        detail = "auth_bad_agent_fail_5 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_shared_acct_success_8 {
+    events {
+        a : auth_events && a.result == "success"
+    }
+    match<user:2m> {
+        on event { a | count >= 8; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_shared_acct_success_8",
+        detail = "auth_shared_acct_success_8 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_hourly_login_high {
+    events {
+        a : auth_events && a.result == "success"
+    }
+    match<source_ip:2m> {
+        on event { a | count >= 2000; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_hourly_login_high",
+        detail = "auth_hourly_login_high triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_admin_acct_login {
+    events {
+        a : auth_events
+    }
+    match<user:2m> {
+        on event { a && startswith_any(a.user, "root", "admin", "administrator") | count >= 1; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_admin_acct_login",
+        detail = "auth_admin_acct_login triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_admin_acct_burst {
+    events {
+        a : auth_events
+    }
+    match<user:2m> {
+        on event { a && startswith_any(a.user, "root", "administrator") | count >= 12; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_admin_acct_burst",
+        detail = "auth_admin_acct_burst triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_service_acct_anom {
+    events {
+        a : auth_events
+    }
+    match<user:2m> {
+        on event { a && startswith_any(a.user, "svc_backup", "svc_ci", "svc_monitor") | count >= 3; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_service_acct_anom",
+        detail = "auth_service_acct_anom triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_fail_geo_focus {
+    events {
+        a : auth_events && a.result == "failed"
+    }
+    match<source_ip:2m> {
+        on event <accu>{ a | count >= 40; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_fail_geo_focus",
+        detail = "auth_fail_geo_focus triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule auth_dc_login_outlier {
+    events {
+        a : auth_events && a.result == "success"
+    }
+    match<source_ip:2m> {
+        on event { a | count >= 200; }
+    } -> score(50.0)
+    entity(ip, a.source_ip)
+    yield network_alerts (
+        sip = a.source_ip,
+        alert_type = "auth_dc_login_outlier",
+        detail = "auth_dc_login_outlier triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}

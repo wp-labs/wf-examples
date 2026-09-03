@@ -1,0 +1,258 @@
+// common_rules_100 — 常见 SOC 检测规则（由 scripts/gen_rules.py 生成，勿手改）
+// 100 条：auth 15 / scan 15 / c2+exfil 18 / dns 15 / proxy 12 / host+rich 18 / correlate 7
+
+use "network.wfs"
+rule port_scan_dport_spread {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c.dport | distinct | count >= 50; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "port_scan_dport_spread",
+        detail = "port_scan_dport_spread triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule port_scan_dport_dense {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c.dport | distinct | count >= 120; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "port_scan_dport_dense",
+        detail = "port_scan_dport_dense triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule port_scan_dip_spread {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c.dip | distinct | count >= 30; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "port_scan_dip_spread",
+        detail = "port_scan_dip_spread triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule port_scan_conn_flood {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c | count >= 200; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "port_scan_conn_flood",
+        detail = "port_scan_conn_flood triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule port_scan_denied_flood {
+    events {
+        c : conn_events && c.action == "denied"
+    }
+    match<sip:2m> {
+        on event { c | count >= 100; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "port_scan_denied_flood",
+        detail = "port_scan_denied_flood triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule port_scan_syn_short {
+    events {
+        c : conn_events && c.duration <= 1
+    }
+    match<sip:2m> {
+        on event { c | count >= 80; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "port_scan_syn_short",
+        detail = "port_scan_syn_short triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule port_scan_high_ports {
+    events {
+        c : conn_events && c.dport >= 4444
+    }
+    match<sip:2m> {
+        on event { c.dport | distinct | count >= 25; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "port_scan_high_ports",
+        detail = "port_scan_high_ports triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule lateral_mysql_3306 {
+    events {
+        c : conn_events && c.dport == 3306
+    }
+    match<sip:2m> {
+        on event { c | count >= 15; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "lateral_mysql_3306",
+        detail = "lateral_mysql_3306 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule lateral_smb_spike {
+    events {
+        c : conn_events && c.dport == 445
+    }
+    match<sip:2m> {
+        on event { c | count >= 20; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "lateral_smb_spike",
+        detail = "lateral_smb_spike triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule lateral_rdp_attempts {
+    events {
+        c : conn_events && c.dport == 3389
+    }
+    match<sip:2m> {
+        on event { c | count >= 15; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "lateral_rdp_attempts",
+        detail = "lateral_rdp_attempts triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule lateral_ssh_spread {
+    events {
+        c : conn_events && c.dport == 22
+    }
+    match<sip:2m> {
+        on event { c.dip | distinct | count >= 10; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "lateral_ssh_spread",
+        detail = "lateral_ssh_spread triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule internal_probe_many_dips {
+    events {
+        c : conn_events && c.action == "denied"
+    }
+    match<dip:2m> {
+        on event { c.sip | distinct | count >= 15; }
+    } -> score(50.0)
+    entity(ip, c.dip)
+    yield network_alerts (
+        sip = c.dip,
+        alert_type = "internal_probe_many_dips",
+        detail = "internal_probe_many_dips triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule scan_then_lateral {
+    events {
+        c : conn_events && c.duration <= 2
+    }
+    match<sip:2m> {
+        on event { c | count >= 150; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "scan_then_lateral",
+        detail = "scan_then_lateral triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule slow_port_walk {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event <accu>{ c | count >= 60; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "slow_port_walk",
+        detail = "slow_port_walk triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule full_port_sweep_src {
+    events {
+        c : conn_events
+    }
+    match<sip:2m> {
+        on event { c | count >= 400; }
+    } -> score(50.0)
+    entity(ip, c.sip)
+    yield network_alerts (
+        sip = c.sip,
+        alert_type = "full_port_sweep_src",
+        detail = "full_port_sweep_src triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}

@@ -21,6 +21,7 @@ wfusion（warp-fusion + wp-reactor）的**可运行验证场景与性能基准**
 | [`connectors/`](connectors/) | sink/source 连接器配置样例（blackhole/file/doris/syslog/tcp…） | 供 case `topology/` 引用 |
 | [`performance/nexmark_pk/`](performance/nexmark_pk/README.md) | NEXMark Q1–Q22：吞吐 PK（bench）+ 性能墙定位（diag）+ 正确性对拍（verify） | `./bench.sh` `./diag.sh` `./verify_daemon.sh` |
 | [`performance/qradar_pk/`](performance/qradar_pk/README.md) | 376 规则高压吞吐 + IBM QRadar EP 对标（run/diag/sweep/规则集二分；run.sh 内置 #18 object 驱逐门禁） | `./run.sh` `./diag.sh` `./sweep.sh` |
+| [`performance/common_rules_100/`](performance/common_rules_100/README.md) | 100 条常见 SOC 检测规则（爆破/扫描/C2/DGA/Web 攻击…）真实语义负载性能 case | `./run.sh` |
 | [`performance/perf_diag_case/`](performance/perf_diag_case/README.md) | perf-diag 诊断**机制**本身的独立验证（有区分度的墙梯） | `./verify.sh` |
 | [`performance/memory_stability/`](performance/memory_stability/README.md) | 长时间运行内存稳定性：idle 实例按 TTL 释放 + allocator 口径泄漏检测 | `./run.sh [smoke|demo|leak]` |
 | [`performance/scripts/`](performance/scripts/) | 共享 python 库：`bench_lib.py`（度量/注入）、`diag_analyze.py`（墙表/墙判定）、`diag_mem_analyze.py`、`rule_phase_profile.py` | 被各 case 的 shell 脚本调用 |

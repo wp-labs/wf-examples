@@ -4,6 +4,15 @@ All notable changes to the wf-examples performance / verification scenarios will
 
 ## [2026-09-03]
 
+### Added
+
+- **`performance/common_rules_100` — 100 条常见 SOC 检测规则性能 case**：真实语义规则负载
+  （非 qradar 的合成网格）——爆破/扫描/横移/外传/C2/DGA/Web 攻击/被控主机 8 类主题 100 条
+  （`scripts/gen_rules.py` 从语义规格表生成 7 个文件：auth 15/scan 15/c2_exfil 18/dns 15/
+  proxy 12/host_rich 18/correlate 7），`scripts/gen_events.py`（seed=42）正常底噪 + 攻击会话
+  触发对齐。实测（200k 事件，mac mini M4 24G）：**EPS 132k、RSS 314MB、emitted 30.3 万、
+  70/100 规则触发、驱逐 0**。
+
 ### Removed
 
 - **`performance/eps_throughput`（吞吐压测冒烟 case）**：规则集（6 条：global_throughput /

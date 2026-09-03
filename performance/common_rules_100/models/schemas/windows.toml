@@ -1,0 +1,38 @@
+[window_defaults]
+evict_interval = "30s"
+max_window_bytes = "256MB"
+max_total_bytes = "4GB"
+evict_policy = "time_first"
+watermark = "1s"
+# 事件时间跨 30 分钟、正常低速率：allowed_lateness 小 → 老窗口行随 watermark
+# 推进过期，窗口内存稳态（memory_stability 教训：lateness 大 + 事件时间冻结
+# 会让窗口行滞留、commit 只增不减）。
+allowed_lateness = "30s"
+late_policy = "drop"
+
+# conn 带 object（conn_info）+ 富类型：#18 内容记账下 200k 深内容数百 MB。
+[window.conn_events]
+mode = "local"
+max_window_bytes = "1GB"
+over_cap = "5m"
+
+[window.auth_events]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "5m"
+
+[window.dns_events]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "5m"
+
+[window.proxy_events]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "5m"
+
+# 输出窗口（over=0，blackhole）
+[window.network_alerts]
+mode = "local"
+max_window_bytes = "16MB"
+over_cap = "0s"

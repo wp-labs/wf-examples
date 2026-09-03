@@ -1,0 +1,207 @@
+// common_rules_100 — 常见 SOC 检测规则（由 scripts/gen_rules.py 生成，勿手改）
+// 100 条：auth 15 / scan 15 / c2+exfil 18 / dns 15 / proxy 12 / host+rich 18 / correlate 7
+
+use "network.wfs"
+rule web_brute_login_post {
+    events {
+        p : proxy_events && p.method == "POST"
+    }
+    match<sip:2m> {
+        on event { p | count >= 30; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "web_brute_login_post",
+        detail = "web_brute_login_post triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule web_scan_status_5xx {
+    events {
+        p : proxy_events && p.status >= 500
+    }
+    match<sip:2m> {
+        on event { p | count >= 20; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "web_scan_status_5xx",
+        detail = "web_scan_status_5xx triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule web_scan_status_404 {
+    events {
+        p : proxy_events && p.status == 404
+    }
+    match<sip:2m> {
+        on event { p | count >= 60; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "web_scan_status_404",
+        detail = "web_scan_status_404 triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule web_sqli_fuzz {
+    events {
+        p : proxy_events
+    }
+    match<sip:2m> {
+        on event { p && indexof(p.url, "union") >= 0 | count >= 10; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "web_sqli_fuzz",
+        detail = "web_sqli_fuzz triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule web_bad_ua_crawl {
+    events {
+        p : proxy_events
+    }
+    match<sip:2m> {
+        on event { p && startswith_any(p.user_agent, "sqlmap", "nikto", "curl") | count >= 8; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "web_bad_ua_crawl",
+        detail = "web_bad_ua_crawl triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule web_path_traversal {
+    events {
+        p : proxy_events
+    }
+    match<sip:2m> {
+        on event { p && indexof(p.url, "%2e%2e") >= 0 | count >= 3; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "web_path_traversal",
+        detail = "web_path_traversal triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule web_upload_large {
+    events {
+        p : proxy_events && p.method == "POST"
+    }
+    match<sip:2m> {
+        on event { p.bytes | sum >= 500000000; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "web_upload_large",
+        detail = "web_upload_large triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule web_single_host_focus {
+    events {
+        p : proxy_events && p.status >= 400
+    }
+    match<host:2m> {
+        on event { p | count >= 40; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "web_single_host_focus",
+        detail = "web_single_host_focus triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule web_download_bulk {
+    events {
+        p : proxy_events && p.method == "GET"
+    }
+    match<sip:2m> {
+        on event { p.bytes | sum >= 1000000000; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "web_download_bulk",
+        detail = "web_download_bulk triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule web_rare_method {
+    events {
+        p : proxy_events
+    }
+    match<sip:2m> {
+        on event { p && startswith_any(p.method, "PUT", "DELETE", "PATCH") | count >= 3; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "web_rare_method",
+        detail = "web_rare_method triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule web_slow_scrape {
+    events {
+        p : proxy_events
+    }
+    match<sip:2m> {
+        on event <accu>{ p | count >= 80; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "web_slow_scrape",
+        detail = "web_slow_scrape triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}
+
+rule web_proxy_to_internal {
+    events {
+        p : proxy_events && p.action == "block"
+    }
+    match<sip:2m> {
+        on event { p | count >= 200; }
+    } -> score(50.0)
+    entity(ip, p.sip)
+    yield network_alerts (
+        sip = p.sip,
+        alert_type = "web_proxy_to_internal",
+        detail = "web_proxy_to_internal triggered",
+        request_count = 1
+    )
+    limits { max_memory = "512MB"; max_instances = 100000; on_exceed = throttle; }
+}

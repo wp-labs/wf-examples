@@ -1,0 +1,89 @@
+// common_rules_100 — 100 条常见 SOC 检测规则 schema（4 源）
+// 源：网络连接 / 登录认证 / DNS / HTTP 代理。窗口 over=2m（规则 match 窗口同）。
+
+window conn_events {
+    stream_tag = "conn_events"
+    time = event_time
+    over = 2m
+    fields {
+        sip: ip
+        dip: ip
+        dport: digit
+        sport: digit
+        bytes: digit
+        bytes_in: digit
+        bytes_out: digit
+        protocol: chars
+        action: chars      // allowed / denied / reset
+        duration: digit    // 秒
+        packet_rate: float
+        blocked: bool
+        geo_country: chars
+        vlan: digit
+        app_id: chars
+        tags: array/chars
+        conn_info: object  // {geo:{country,city}, vlan, is_tor}——#18 object 记账
+        event_time: time
+    }
+}
+
+window auth_events {
+    stream_tag = "auth_events"
+    time = event_time
+    over = 2m
+    fields {
+        source_ip: ip
+        dest_ip: ip
+        user: chars
+        result: chars      // success / failed
+        attempts: digit
+        agent: chars
+        risk: float
+        geo_country: chars
+        event_time: time
+    }
+}
+
+window dns_events {
+    stream_tag = "dns_events"
+    time = event_time
+    over = 2m
+    fields {
+        sip: ip
+        domain: chars
+        query_type: chars  // A / AAAA / TXT / ANY / CNAME / NX
+        resp_size: digit
+        num_answers: digit
+        event_time: time
+    }
+}
+
+window proxy_events {
+    stream_tag = "proxy_events"
+    time = event_time
+    over = 2m
+    fields {
+        sip: ip
+        url: chars
+        host: chars
+        method: chars      // GET / POST / PUT
+        status: digit      // http 状态码
+        user_agent: chars
+        bytes: digit
+        action: chars      // allow / block
+        event_time: time
+    }
+}
+
+window network_alerts {
+    over = 0s
+    fields {
+        sip: ip
+        dip: ip
+        user: chars
+        alert_type: chars
+        detail: chars
+        request_count: digit
+        event_time: time
+    }
+}
