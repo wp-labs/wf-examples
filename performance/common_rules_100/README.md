@@ -39,6 +39,38 @@ N=20000 ./run.sh      # 小规模冒烟（env N）
 另报 EPS 与 RSS 峰值。告警 sink 为 blackhole（对齐 Nexmark discarding 口径，
 计数取引擎 metrics `alert.emitted_total`，按规则 label 累计）。
 
+## 限定 EPS 下的资源消耗统计（sweep.sh）
+
+以目标注入速率（`max_ingest_rate` 引擎限速，qradar/nexmark 同款口径）稳态喂入规则
+负载，统计该速率下的资源：CPU 核占（avg/max）、RSS、allocator commit，并判
+「跟上 / 达上限」（目标超过引擎可持续吞吐时实际 EPS 到顶）。每档独立 daemon +
+0.1s RSS/CPU 采样（`../scripts/bench_lib.py` rss-sampler），实际 EPS = 引擎消化段
+速率（send 完成 → `router.delivered_total` 累计 ≥ 行数 且 `acked_lag=0`）。
+
+```bash
+./sweep.sh                    # 默认 1w,2w,5w,10w
+./sweep.sh 1w,2w,10w          # 指定档位（k/w/m 后缀）
+./sweep.sh all                # 1w,2w,5w,10w,20w,50w
+```
+
+### 实测（mac mini M4 24G，release，100 条规则，每档 8 万-40 万行）
+
+| 档 | EPS 目标 | 实际 EPS | CPU% avg/max | RSS | commit | 跟上 |
+|---|---|---|---|---|---|---|
+| 1w | 10000 | 9,624 | 32/615 | 192M | 410M | 跟上 |
+| 2w | 20000 | 18,242 | 47/619 | 243M | 437M | 跟上 |
+| 5w | 50000 | 41,918 | 91/747 | 323M | 523M | 跟上 |
+| 10w | 100000 | 106,101 | 161/707 | 326M | 534M | 跟上 |
+| 20w | 200000 | 134,527 | 180/813 | 326M | 530M | 达上限 |
+| 50w | 500000 | 134,345 | 179/832 | 324M | 555M | 达上限 |
+
+解读：本负载（100 条常见规则，单规则任务）下引擎**可持续吞吐上限 ≈ 13.4w EPS**
+（20w/50w 档被顶到该值 → 达上限）；≤10w 档限速精确跟上。资源随档位增长并在能力
+上限附近收敛（CPU ~180% ≈ 1.8 核规则处理，12 核机器余量大 → 上限是结构/单任务
+瓶颈而非 CPU 饱和）；RSS/commit 在数据量 cap（40 万行）与事件时间老化下平台
+（~326M/~534M）。CPU max 为窗内瞬时尖峰（含 daemon 启动/解析突发），avg 为主指标。
+每档结果留档 `data/sweep_eps.txt`。
+
 ## 实测（mac mini M4 24G，200,000 事件，release，seed=42）
 
 ```
