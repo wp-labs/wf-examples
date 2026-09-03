@@ -75,9 +75,19 @@ CHUNK=1000 RATE_MS=50 ./run.sh 200000  # 受控持续入流速率（~20k/s）
 > peak 的 EPS 是 wfgen 发送墙钟假象（SEND 2.7s vs 引擎排空尾 1s，不代表引擎
 > 容量），flood 是极端基数内存压力，均不反映真实部署，保留只会误导。
 
-门禁：#18 驱逐告警 = 0，且 metrics `emitted_total` ≥ 10000。告警 sink 为 **blackhole**
-（对齐 Flink Nexmark discarding sink 口径，只测处理吞吐不落盘），门禁计数取引擎侧
-metrics 发射计数（`emitted_total` / `emitted_detail` 按规则明细），不依赖落盘文件。
+**回归门禁（wp-reactor#18）**：wp-reactor 引擎仓 issue #18 = object 大批次（本场景 conn_events
+含嵌套 object 字段）曾因窗口内存**有损驱逐**被静默丢弃（close 路径输出归零，无报错、`[clean]`
+照常——极易误判成正确）；修复 = 内容记账（引擎 commit `228f441`）。run.sh 每次跑批内置守护：
+
+- **判据**：`in memory eviction` 告警 = 0 且 `emitted_total` ≥ 10000（object 未被驱逐 + 规则仍正常发射）。
+- **计数口径**：告警 sink 为 **blackhole**（对齐 Flink Nexmark discarding sink，只测处理吞吐不落盘），
+  计数取引擎侧 metrics——`emitted_total`（全量发射，权威）与 `emitted_detail`（按规则明细的**抽样**指标，
+  仅供排查，不等于触发规则全集），不依赖落盘文件。
+- **读数示例**：`驱逐告警 = 0` + `规则发射总量 emitted_total = 2184549` + `明细抽样 = 12 次 / 5 条规则`——
+  前两行是判据，第三行是抽样参考。
+- 常见失败：驱逐 > 0 → 窗口 cap（`models/schemas/windows.toml` 的 `max_window_bytes`/`max_total_bytes`）
+  与数据量不匹配，见下「窗口记账演进」节；驱逐 = 0 但 emitted < 10000 → 检查 wfusion.log / 二进制
+  是否含 wp-reactor#18 修复（`228f441`）。
 
 ## 性能墙定位：diag.sh
 

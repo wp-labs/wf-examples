@@ -3,8 +3,8 @@
 #
 # 测量"真实语义规则"负载（爆破/扫描/外传/C2/DGA/Web 攻击/被控主机）下：
 #   1. 吞吐 EPS（事件注入 + 引擎消化口径）
-#   2. 规则触发（emitted_total / emitted_detail 采样规则数）
-#   3. #18 门禁：内存驱逐告警 = 0
+#   2. 规则触发（emitted_total 按规则 label 累计 + 触发规则数）
+#   3. #18 门禁（wp-reactor#18）：内存驱逐告警 = 0（object 大批次未被丢）
 #   4. RSS 平台期峰值（送达后采样）
 #
 # 用法:
@@ -145,12 +145,18 @@ done
 RSS_MB=$(( RSS_PEAK * 1024 / 1048576 ))
 
 echo ""
-echo "==> 结果：EPS=$EPS  RSS_peak=${RSS_MB}MB  emitted_total=$(emitted)  驱逐告警=$(evict)"
+EV=$(evict)
 EM=$(emitted)
-RULE_HIT=$(emit_rules)
-echo "    emitted_detail 采样规则: $RULE_HIT"
-[ "$EM" -ge 1000 ] || { echo "FAIL: emitted_total=$EM < 1000（规则未触发，检查数据/规则）" >&2; tail -15 data/wfusion.log >&2; exit 1; }
-[ "$(evict)" = "0" ] || { echo "FAIL: 内存驱逐告警 $(evict)（object 大批次被丢）" >&2; exit 1; }
-echo "OK: 规则正常触发（emitted_total=$EM ≥ 1000），无内存驱逐"
-[ "$EPS" -ge 10000 ] && echo "OK: 吞吐达标（EPS=$EPS ≥ 10000）" || echo "注: EPS=$EPS < 10000（小规模/本机负载）"
+RULE_TOTAL=$(grep -c '^rule ' models/rules/*.wfl | awk -F: '{s+=$NF} END{print s}')
+RULE_HIT=$(emit_rules)   # 输出 "N: 规则1,规则2,..."（N = 触发规则数）
+RULE_N=${RULE_HIT%%:*}
+echo "==> 结果与回归门禁（wp-reactor#18：object 大批次不被窗口内存驱逐）"
+echo "    EPS = $EPS events/sec（引擎消化口径）   RSS_peak = ${RSS_MB}MB（送达后 8s 平台期峰值）"
+echo "    规则发射 emitted_total = ${EM}（引擎侧全量告警计数，按规则 label 累计）"
+echo "    触发规则 = ${RULE_N}/${RULE_TOTAL}（emitted_total>0 的规则；列表见 data/metrics.ndjson 排查）"
+echo "    内存驱逐告警 = ${EV}（窗口有损驱逐次数；0 = object 未被丢）"
+[ "${EM}" -ge 1000 ] || { echo "FAIL: 规则未触发（emitted_total=${EM} < 1000），检查数据/规则" >&2; tail -15 data/wfusion.log >&2; exit 1; }
+[ "${EV}" = "0" ] || { echo "FAIL: 回归失败 — 内存驱逐告警 ${EV} 次（object 大批次被窗口内存驱逐丢弃，wp-reactor#18）" >&2; exit 1; }
+echo "OK: 回归通过 — 驱逐=0 且规则正常触发（emitted_total=${EM} ≥ 1000）"
+[ "${EPS}" -ge 10000 ] && echo "OK: 吞吐达标（EPS=${EPS} ≥ 10000）" || echo "注: EPS=${EPS} < 10000（小规模/本机负载）"
 echo "==> 完成。"

@@ -35,9 +35,10 @@ Web 攻击/被控主机），由 `scripts/gen_rules.py` 从语义规格表生成
 N=20000 ./run.sh      # 小规模冒烟（env N）
 ```
 
-门禁：`alert.emitted_total ≥ 1000`（规则真实触发）且内存驱逐告警 = 0（#18）；
-另报 EPS 与 RSS 峰值。告警 sink 为 blackhole（对齐 Nexmark discarding 口径，
-计数取引擎 metrics `alert.emitted_total`，按规则 label 累计）。
+**回归门禁（wp-reactor#18）**：object 大批次被窗口内存有损驱逐时会被静默丢弃（无报错、`[clean]`
+照常）——run.sh 守护驱逐告警 = 0 且规则真实触发：`alert.emitted_total ≥ 1000`（全量告警计数，按规则
+label 累计）。另报 EPS / RSS 峰值 / 触发规则数。告警 sink 为 blackhole（对齐 Nexmark discarding
+口径），计数取引擎 metrics，不依赖落盘文件。
 
 ## 限定 EPS 下的资源消耗统计（sweep.sh）
 
