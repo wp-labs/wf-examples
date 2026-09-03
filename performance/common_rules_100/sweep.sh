@@ -180,7 +180,9 @@ for i in "${!EPS_LIST[@]}"; do
   ACK0_W=$($PY -c 'import time; print(time.time())')
   sleep 2
   END_NS=$($PY -c 'import time; print(time.time_ns())')
+  # wait 消费 job 状态：否则 bash 在脚本继续时打印 “pid Terminated” 通知污染输出
   kill "$SAMPLER_PID" 2>/dev/null || true
+  wait "$SAMPLER_PID" 2>/dev/null || true
 
   # 实际 EPS = 纯引擎消化段速率（send 完成 → acked_lag=0），平台期不计入
   DIGEST_W=$($PY -c "print(max($ACK0_W - $DIGEST_START_W, 0.05))")
