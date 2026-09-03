@@ -278,25 +278,31 @@ echo "==> 4. 送达后平台期采样 ${PLATEAU}s（RSS 峰值 + 告警落盘）
 sleep "$PLATEAU"
 
 # ---- #18 回归门禁 ----
+# wp-reactor#18（引擎仓 issue）：object 大批次曾因窗口内存有损驱逐被静默丢弃（close 路径输出归零），
+# 修复 = 内容记账（228f441）。本段守护该回归：驱逐=0 且规则仍正常发射才算通过。
 # 口径：告警 sink 为 blackhole（对齐 Flink Nexmark discarding sink，只测处理吞吐），
 # 故计数取 metrics 的 emitted_total / emitted_detail（引擎侧发射计数，不依赖落盘）。
 echo ""
-echo "==> #18 回归检查（object 大批次是否被窗口内存驱逐丢弃）"
+echo "==> 回归门禁 wp-reactor#18：object 大批次未被窗口内存驱逐（object=conn 等含嵌套字段的大行）"
 EVICT=$(grep -c "in memory eviction" data/wfusion.log 2>/dev/null || true)
 ALERT_SUMMARY=$("$PY" "$LIB" alert-summary "$METRICS")
 EMITTED=$(echo "$ALERT_SUMMARY" | grep -o 'emitted=[0-9]*' | cut -d= -f2)
-echo "    内存驱逐告警: $EVICT"
-echo "    告警(metrics): $ALERT_SUMMARY"
+CONN_RULES=$(echo "$ALERT_SUMMARY" | grep -o 'conn_rules=[0-9]*' | cut -d= -f2)
+RULES_SEEN=$(echo "$ALERT_SUMMARY" | grep -o 'rules_seen=[0-9]*' | cut -d= -f2)
+echo "    驱逐告警 = ${EVICT}（窗口内存驱逐次数；0 = object 未被丢）"
+echo "    规则发射总量 emitted_total = ${EMITTED}（引擎侧全量告警发射计数）"
+echo "    明细抽样 emitted_detail = ${CONN_RULES} 次 / ${RULES_SEEN} 条规则（抽样指标，非全量，仅供排查参考）"
 
 if [ "${EVICT:-0}" -eq 0 ]; then
   if [ "${EMITTED:-0}" -ge 10000 ]; then
-    echo "OK: #18 回归通过 — object 大批次未被驱逐，规则正常发射告警（emitted=${EMITTED}）"
+    echo "OK: 回归通过 — 驱逐=0 且规则正常发射告警（emitted=${EMITTED} ≥ 10000），object 大批次未被丢弃"
   else
-    echo "FAIL: #18 回归失败 — eviction=0 但 emitted=${EMITTED:-0}（<10000）"
-    echo "    （object 大批次可能被窗口内存驱逐丢弃，检查 wfusion.log 与二进制是否含 wp-reactor#18 修复）"
+    echo "FAIL: 回归失败 — 驱逐=0 但 emitted=${EMITTED:-0}（<10000），规则未发射"
+    echo "    可能：object 大批次仍被窗口内存驱逐丢弃（查 data/wfusion.log）；或二进制不含 wp-reactor#18 修复（228f441）"
   fi
 else
-  echo "FAIL: #18 回归失败 — eviction=${EVICT}（object 大批次被窗口内存驱逐丢弃，检查 max_window_bytes）"
+  echo "FAIL: 回归失败 — 驱逐告警 ${EVICT} 次（object 大批次被窗口内存驱逐丢弃）"
+  echo "    检查 models/schemas/windows.toml 的 max_window_bytes / max_total_bytes 是否与数据量匹配（README「窗口记账演进」节）"
 fi
 
 echo ""
