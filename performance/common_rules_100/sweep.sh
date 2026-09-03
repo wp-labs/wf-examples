@@ -112,8 +112,8 @@ EPS_LIST=()
 for t in "${TARGETS[@]}"; do EPS_LIST+=("$(to_eps "$t")"); done
 
 echo "== sweep: 100 条常见规则 × 限定 EPS（max_ingest_rate 引擎限速）资源统计 =="
-printf "%-7s %-9s %-9s %-14s %-9s %-9s %-7s %s\n" \
-  "档" "EPS目标" "实际EPS" "CPU% avg/max" "RSS" "commit" "跟上" "行数"
+printf "%-7s %-9s %-9s %-16s %-9s %-9s %-7s %s\n" \
+  "档" "EPS目标" "实际EPS" "CPU% avg/p95/max" "RSS" "commit" "跟上" "行数"
 echo "---"
 : > "$REPORT"
 
@@ -148,6 +148,9 @@ for i in "${!EPS_LIST[@]}"; do
   for k in $(seq 1 40); do [ -s "$RSS_SAMPLES" ] && break; sleep 0.1; done
 
   START_NS=$($PY -c 'import time; print(time.time_ns())')
+  # 全速分块注入（chunk 只做传输拆分避免巨帧阻塞解码；不 pacing）——目标 EPS
+  # 由 daemon 端 max_ingest_rate 精确限速（引擎按速率平滑消费，qradar/nexmark
+  # replay 同口径）。CPU max 含块到达/启动瞬态，稳态看 avg/p95。
   "$WFGEN" send --scenario scenarios/common.wfg --input data/sweep.jsonl \
     --addr 127.0.0.1:$PORT --ws models/schemas/network.wfs \
     --chunk 20000 > /dev/null 2>&1
@@ -173,32 +176,33 @@ for i in "${!EPS_LIST[@]}"; do
   if $PY -c "exit(0 if $ACT_EPS >= $EPS * 0.8 else 1)" 2>/dev/null; then FOLLOW="跟上"; else FOLLOW="达上限"; fi
 
   WS=$(( START_NS - 1000000000 )); WE="$END_NS"
-  CPU_AVG=$("$PY" - "$RSS_SAMPLES" "$WS" "$WE" <<'EOF'
+  CPU_STATS=$("$PY" - "$RSS_SAMPLES" "$WS" "$WE" <<'EOF'
+# 窗内 CPU 统计：avg / p95 / max。注入是分块突发（chunk 块到达瞬间解码+窗口+
+# emit 并行冲高），max 含突发瞬态；p95 是稳态瞬时上界（avg 偏低、max 偏高）
 import sys
-s = n = 0
+vals = []
 for line in open(sys.argv[1]):
     p = line.split()
     if len(p) >= 3:
         try:
             if int(p[0]) < int(sys.argv[2]) or int(p[0]) > int(sys.argv[3]): continue
-            s += float(p[2]); n += 1
+            vals.append(float(p[2]))
         except ValueError: pass
-print(int(s / n) if n else "n/a")
+if not vals:
+    print("n/a n/a n/a")
+elif len(vals) == 1:
+    print(f"{int(vals[0])} {int(vals[0])} {int(vals[0])}")
+else:
+    vals.sort()
+    n = len(vals)
+    p95 = vals[min(n - 1, int(n * 0.95))]
+    avg = sum(vals) / n
+    print(f"{int(avg)} {int(p95)} {int(vals[-1])}")
 EOF
 )
-  CPU_MAX=$("$PY" - "$RSS_SAMPLES" "$WS" "$WE" <<'EOF'
-import sys
-mx = n = 0
-for line in open(sys.argv[1]):
-    p = line.split()
-    if len(p) >= 3:
-        try:
-            if int(p[0]) < int(sys.argv[2]) or int(p[0]) > int(sys.argv[3]): continue
-            mx = max(mx, float(p[2])); n += 1
-        except ValueError: pass
-print(int(mx) if n else "n/a")
-EOF
-)
+  CPU_AVG=$(echo "$CPU_STATS" | awk '{print $1}')
+  CPU_P95=$(echo "$CPU_STATS" | awk '{print $2}')
+  CPU_MAX=$(echo "$CPU_STATS" | awk '{print $3}')
   PEAK_RSS=$("$PY" - "$RSS_SAMPLES" <<'EOF'
 import sys
 mx = 0
@@ -213,11 +217,11 @@ EOF
   CMIT=$(read_latest alloc current_commit_bytes); [ "${CMIT:-0}" -gt 0 ] 2>/dev/null || CMIT=0
   CMIT_MB=$(( CMIT / 1048576 ))
 
-  printf "%-7s %-9s %-9s %-14s %-9s %-9s %-7s %s\n" \
-    "$EPS_DISP" "$EPS" "$ACT_EPS" "$CPU_AVG/$CPU_MAX" "${PEAK_RSS}M" "${CMIT_MB}M" \
+  printf "%-7s %-9s %-9s %-16s %-9s %-9s %-7s %s\n" \
+    "$EPS_DISP" "$EPS" "$ACT_EPS" "$CPU_AVG/$CPU_P95/$CPU_MAX" "${PEAK_RSS}M" "${CMIT_MB}M" \
     "$FOLLOW" "$LINES"
-  printf "%s %s %s %s/%s %s %s %s %s\n" \
-    "$EPS_DISP" "$EPS" "$ACT_EPS" "$CPU_AVG" "$CPU_MAX" "$PEAK_RSS" "$CMIT_MB" \
+  printf "%s %s %s %s/%s/%s %s %s %s %s\n" \
+    "$EPS_DISP" "$EPS" "$ACT_EPS" "$CPU_AVG" "$CPU_P95" "$CPU_MAX" "$PEAK_RSS" "$CMIT_MB" \
     "$FOLLOW" "$LINES" >> "$REPORT"
 
   kill "$DAEMON_PID" 2>/dev/null || true
