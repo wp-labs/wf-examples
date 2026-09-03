@@ -112,14 +112,15 @@ EPS_LIST=()
 for t in "${TARGETS[@]}"; do EPS_LIST+=("$(to_eps "$t")"); done
 
 echo "== sweep: 100 条常见规则 × 限定 EPS（max_ingest_rate 引擎限速）资源统计 =="
-printf "%-7s %-9s %-9s %-16s %-9s %-9s %-7s %s\n" \
-  "档" "EPS目标" "实际EPS" "CPU% avg/p95/max" "RSS" "commit" "跟上" "行数"
+printf "%-7s %-9s %-9s %-16s %-9s %-9s %-7s %-8s %s\n" \
+  "档" "EPS目标" "实际EPS" "CPU% avg/p95/max" "RSS" "commit" "跟上" "耗时" "行数"
 echo "---"
 : > "$REPORT"
 
 for i in "${!EPS_LIST[@]}"; do
   EPS="${EPS_LIST[$i]}"
   EPS_DISP="${TARGETS[$i]}"
+  TIER_START=$($PY -c 'import time; print(int(time.time()))')
   # 每档行数 = min(EPS×8, 40 万)：低档 ≥8s 稳态窗，高档数据量有界
   N_LINES=$(( EPS * 8 )); [ "$N_LINES" -gt 400000 ] && N_LINES=400000
   N_LINES=$(( (N_LINES / 1000) * 1000 )); [ "$N_LINES" -lt 1000 ] && N_LINES=1000
@@ -217,12 +218,15 @@ EOF
   CMIT=$(read_latest alloc current_commit_bytes); [ "${CMIT:-0}" -gt 0 ] 2>/dev/null || CMIT=0
   CMIT_MB=$(( CMIT / 1048576 ))
 
-  printf "%-7s %-9s %-9s %-16s %-9s %-9s %-7s %s\n" \
+  TIER_END=$($PY -c 'import time; print(int(time.time()))')
+  TIER_S=$(( TIER_END - TIER_START ))
+
+  printf "%-7s %-9s %-9s %-16s %-9s %-9s %-7s %-8s %s\n" \
     "$EPS_DISP" "$EPS" "$ACT_EPS" "$CPU_AVG/$CPU_P95/$CPU_MAX" "${PEAK_RSS}M" "${CMIT_MB}M" \
-    "$FOLLOW" "$LINES"
-  printf "%s %s %s %s/%s/%s %s %s %s %s\n" \
+    "$FOLLOW" "${TIER_S}s" "$LINES"
+  printf "%s %s %s %s/%s/%s %s %s %s %s %s\n" \
     "$EPS_DISP" "$EPS" "$ACT_EPS" "$CPU_AVG" "$CPU_P95" "$CPU_MAX" "$PEAK_RSS" "$CMIT_MB" \
-    "$FOLLOW" "$LINES" >> "$REPORT"
+    "$FOLLOW" "$TIER_S" "$LINES" >> "$REPORT"
 
   kill "$DAEMON_PID" 2>/dev/null || true
   wait "$DAEMON_PID" 2>/dev/null || true
