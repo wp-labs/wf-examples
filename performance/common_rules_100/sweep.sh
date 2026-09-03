@@ -10,7 +10,8 @@
 #   ./sweep.sh                    # 默认档位 1w,2w,5w,10w
 #   ./sweep.sh 1w,2w,10w          # 指定档位（k/w/m 后缀）
 #   ./sweep.sh all                # 预设 1w,2w,5w,10w,20w,50w
-# 环境: WFUSION/WFGEN；PROFILE=release|debug
+# 环境: WFUSION/WFGEN；PROFILE=release|debug；SWEEP_SECS=每档稳态窗(默认8s)；
+#       MAX_LINES/ALLOW_BIG=1=放行超 100 万行档（>10w 档数据文件大/gen 慢）
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
@@ -111,7 +112,14 @@ mkdir -p data
 EPS_LIST=()
 for t in "${TARGETS[@]}"; do EPS_LIST+=("$(to_eps "$t")"); done
 
+# 每档稳态测量时长（秒）：行数 = 目标 EPS × SWEEP_SECS → 各档稳态窗等长，
+# 资源采样样本数一致可比。>10w 档需 ~百万行 jsonl（gen 慢/文件大），超上限报错提示。
+SWEEP_SECS=${SWEEP_SECS:-8}
+MAX_LINES=${MAX_LINES:-1000000}
+ALLOW_BIG=${ALLOW_BIG:-0}
+
 echo "== sweep: 100 条常见规则 × 限定 EPS（max_ingest_rate 引擎限速）资源统计 =="
+echo "    每档稳态窗 ${SWEEP_SECS}s（行数 = EPS × ${SWEEP_SECS}）"
 printf "%-7s %-9s %-9s %-16s %-9s %-9s %-7s %-8s %s\n" \
   "档" "EPS目标" "实际EPS" "CPU% avg/p95/max" "RSS" "commit" "跟上" "耗时" "行数"
 echo "---"
@@ -121,9 +129,13 @@ for i in "${!EPS_LIST[@]}"; do
   EPS="${EPS_LIST[$i]}"
   EPS_DISP="${TARGETS[$i]}"
   TIER_START=$($PY -c 'import time; print(int(time.time()))')
-  # 每档行数 = min(EPS×8, 40 万)：低档 ≥8s 稳态窗，高档数据量有界
-  N_LINES=$(( EPS * 8 )); [ "$N_LINES" -gt 400000 ] && N_LINES=400000
-  N_LINES=$(( (N_LINES / 1000) * 1000 )); [ "$N_LINES" -lt 1000 ] && N_LINES=1000
+  # 行数 = EPS × SWEEP_SECS（稳态窗等长）；超 MAX_LINES 需 ALLOW_BIG=1 显式放行
+  N_LINES=$(( EPS * SWEEP_SECS ))
+  if [ "$N_LINES" -gt "$MAX_LINES" ] && [ "$ALLOW_BIG" != "1" ]; then
+    echo "档 ${EPS_DISP}：需 ${N_LINES} 行（EPS×${SWEEP_SECS}s）> MAX_LINES=${MAX_LINES}；"
+    echo "  确认后 ALLOW_BIG=1 放行（或调小 SWEEP_SECS / 去掉该档）"
+    continue
+  fi
 
   rm -f "$METRICS" data/*.ndjson data/wfusion.log data/daemon.log data/sweep.jsonl data/sweep.toml
   "$PY" scripts/gen_events.py "$N_LINES" > data/sweep.jsonl
@@ -141,7 +153,7 @@ for i in "${!EPS_LIST[@]}"; do
     if nc -z 127.0.0.1 "$PORT" 2>/dev/null; then READY=1; break; fi
     sleep 0.2
   done
-  [ "$READY" = 1 ] || { echo "档 $EPS_DISP：daemon 未就绪"; tail -5 data/daemon.log; kill $DAEMON_PID 2>/dev/null || true; continue; }
+  [ "$READY" = 1 ] || { echo "档 ${EPS_DISP}：daemon 未就绪"; tail -5 data/daemon.log; kill $DAEMON_PID 2>/dev/null || true; continue; }
 
   : > "$RSS_SAMPLES"
   "$PY" "$LIB" rss-sampler "$DAEMON_PID" "$RSS_SAMPLES" 0.1 > /dev/null 2>&1 &

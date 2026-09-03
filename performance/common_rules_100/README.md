@@ -42,35 +42,43 @@ N=20000 ./run.sh      # 小规模冒烟（env N）
 ## 限定 EPS 下的资源消耗统计（sweep.sh）
 
 以目标注入速率（`max_ingest_rate` 引擎限速，qradar/nexmark 同款口径）稳态喂入规则
-负载，统计该速率下的资源：CPU 核占（avg/max）、RSS、allocator commit，并判
+负载，统计该速率下的资源：CPU 核占（avg/p95/max）、RSS、allocator commit，并判
 「跟上 / 达上限」（目标超过引擎可持续吞吐时实际 EPS 到顶）。每档独立 daemon +
-0.1s RSS/CPU 采样（`../scripts/bench_lib.py` rss-sampler），实际 EPS = 引擎消化段
-速率（send 完成 → `router.delivered_total` 累计 ≥ 行数 且 `acked_lag=0`）。
+0.1s RSS/CPU 采样（`../scripts/bench_lib.py` rss-sampler）。
+
+**控时间而非控数据量**：每档稳态测量窗固定 `SWEEP_SECS`（默认 8s），行数 =
+目标 EPS × SWEEP_SECS——各档窗口等长、采样样本数一致可比（>10w 档行数达
+百万级、jsonl 大，默认 MAX_LINES=100 万拦截，`ALLOW_BIG=1` 放行）。注入 =
+全速分块 send（chunk 只做传输拆分），目标 EPS 由 daemon 端限速精确平滑消费；
+实际 EPS = 引擎消化段速率（send 完成 → `router.delivered_total` 累计 ≥ 行数 且
+`acked_lag=0`）。
 
 ```bash
-./sweep.sh                    # 默认 1w,2w,5w,10w
+./sweep.sh                    # 默认 1w,2w,5w,10w（每档稳态 8s）
 ./sweep.sh 1w,2w,10w          # 指定档位（k/w/m 后缀）
 ./sweep.sh all                # 1w,2w,5w,10w,20w,50w
+SWEEP_SECS=15 ./sweep.sh 1w,5w   # 更长的稳态窗（更稳的 avg/p95）
 ```
 
-### 实测（mac mini M4 24G，release，100 条规则，每档 8 万-40 万行，注入=全速分块 + 引擎 max_ingest_rate 限速）
+### 实测（mac mini M4 24G，release，100 条规则，每档稳态窗 8s = 行数 EPS×8）
 
-| 档 | EPS 目标 | 实际 EPS | CPU% avg/p95/max | RSS | commit | 跟上 |
-|---|---|---|---|---|---|---|
-| 1w | 10000 | 10,606 | 37/120/563 | 189M | 390M | 跟上 |
-| 2w | 20000 | 18,309 | 48/372/565 | 238M | 443M | 跟上 |
-| 5w | 50000 | 41,898 | 89/522/668 | 317M | 561M | 跟上 |
-| 10w | 100000 | 105,598 | 159/639/786 | 322M | 535M | 跟上 |
-| 20w | 200000 | 133,874 | 178/705/831 | 319M | 529M | 达上限 |
-| 50w | 500000 | 134,900 | 174/738/774 | 320M | 525M | 达上限 |
+| 档 | EPS 目标 | 实际 EPS | CPU% avg/p95/max | RSS | commit | 跟上 | 档耗时 |
+|---|---|---|---|---|---|---|---|
+| 1w | 10000 | 10,637 | 38/115/593 | 184M | 373M | 跟上 | 12s |
+| 2w | 20000 | 18,246 | 49/390/586 | 240M | 442M | 跟上 | 16s |
+| 5w | 50000 | 41,950 | 87/513/722 | 332M | 561M | 跟上 | 21s |
+| 10w | 100000 | 80,195 | 149/632/744 | 417M | 596M | 跟上 | 26s |
+| 20w | 200000 | —（需 160 万行 > MAX_LINES=100 万，ALLOW_BIG=1 放行） |
 
-解读：本负载（100 条常见规则，单规则任务）下引擎**可持续吞吐上限 ≈ 13.4w EPS**
-（20w/50w 档被顶到该值 → 达上限）；≤10w 档限速精确跟上（96-106%）。CPU avg
-随档位升至 ~180%（≈1.8 核规则处理，12 核余量大 → 上限是结构/单任务瓶颈而非
-CPU 饱和）；p95/max 高于 avg 是**注入块到达瞬间**（每块 2 万行全速到 → 解码/窗口/
-emit parallel=8 瞬时并行）的瞬态，max 另含启动/首块——稳态资源看 avg，p95 为
-稳态最坏瞬时参考。RSS/commit 在数据量 cap（40 万行）+ 事件时间老化下平台
-（~320M/~535M）。每档结果留档 `data/sweep_eps.txt`。
+（>10w 档需显式 `ALLOW_BIG=1`：行数=EPS×8s 达百万级，jsonl 大、gen 慢）
+
+解读：本负载（100 条常见规则，单规则任务）下引擎**可持续吞吐随数据规模回落**：
+40 万行档实测能力 ≈13.4w，80 万行档 ≈10w（窗口 417M 后单位成本上升）——测
+上限请用小行数档（如 `./sweep.sh 20w 50w` 时把 SWEEP_SECS 调小或用 ALLOW_BIG）；
+≤5w 档限速精确跟上（96-106%）。CPU avg 随档位升至 ~150%（12 核余量大 →
+瓶颈是结构/单规则任务而非 CPU 饱和）；p95/max 高于 avg 是**注入块到达瞬间**的
+瞬态（每块 2 万行全速到 → 解码/窗口/emit parallel=8 瞬时并行），稳态看 avg。
+每档结果留档 `data/sweep_eps.txt`（含档耗时列）。
 
 ## 实测（mac mini M4 24G，200,000 事件，release，seed=42）
 
