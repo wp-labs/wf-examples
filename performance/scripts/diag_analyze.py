@@ -252,9 +252,9 @@ else:
             print("     → 下一步：优先查规则段内是「等待窗口/join」还是「同步串行」（CPU 采样看栈）；"
                   "供给侧（注入/预算）只在 RSS 平稳时才是首选嫌疑")
         else:
-            print("   └ 等墙细分：RSS 平稳（%.0fMB → %.0fMB）→ 等的是供给侧（注入/TCP/parse_buffer_bytes 预算槽位）"
+            print("   └ 等墙细分：RSS 平稳（%.0fMB → %.0fMB）→ 等的是供给侧（注入/TCP/解码）"
                   % (rss_first or 0, rss_last or 0))
-            print("     → 下一步：查 parse_buffer_bytes、连接数、读盘速度；profiler 采到的是等待栈不是热点")
+            print("     → 下一步：查连接数、读盘速度；profiler 采到的是等待栈不是热点")
     # 各段贡献排行（按增量绝对值，噪声段折叠）
     print("各段贡献（增量绝对值排序）：")
     for r in walls:

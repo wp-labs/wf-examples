@@ -459,8 +459,8 @@ correctness_summary() {
 }
 
 # 轮末报告：单行结果（stdout + 结果文件）+ correctness 附录（结果文件）。
-# 上下文字段（p/r/帧大小/时间戳）写进结果行——事后可追溯口径，防 1MiB/8MiB、
-# 并行度混淆（曾因口径混杂误判 ±8%）。
+# 上下文字段（帧大小/负载/时间戳/分片键）写进结果行——事后可追溯口径，防 1MiB/8MiB、
+# 连接数混淆（曾因口径混杂误判 ±8%）。
 report_result() {
   local Q="$1" FEED="$2" OUT="$3" BODY="$4"
   # loadavg（1-min）随结果记录：本机是常载开发机（Zed/VM/WorkBuddy 等后台 ~6-7），
@@ -473,7 +473,7 @@ report_result() {
   else
     LD=$(sysctl -n vm.loadavg 2>/dev/null | awk '{printf "%.1f", $2}')
   fi
-  local CTX="p=${PARSE_V_EFF} r=${RULE_V_EFF} c=${CONNECTIONS}${SHARD_KEYS:+" s=${SHARD_KEYS%%:*}"} frame_mb=$((MAX_FRAME_BYTES/1048576)) load=${LD:-n/a} · $(date +%m-%d_%H:%M:%S)"
+  local CTX="frame_mb=$((MAX_FRAME_BYTES/1048576)) load=${LD:-n/a}${SHARD_KEYS:+" s=${SHARD_KEYS%%:*}"} · $(date +%m-%d_%H:%M:%S)"
   { echo "$BODY · $CTX"; echo "-- correctness --"; correctness_summary; } >> "$OUT"
   # SUMMARY 行回显到 stdout（EMIT 行只进文件）
   local SUM
@@ -657,7 +657,7 @@ run_replay_one() {
   : > "$OUT"   # 预清空，防追加残留上一轮
   local TO=""; [ "$TIMEOUT" = 1 ] && TO=" ⚠TIMEOUT(哨兵超时,EPS=metrics-append 兑底)"
   report_result "$Q" replay "$OUT" \
-    "$Q/replay: EPS=$(comma "$EPS") · RSS_peak=$(comma "$PEAK")MB · CPU ${CPU_AVG}%avg/${CPU_MAX}%max · evict=$EV · appended=$(comma "$APP")/$(comma "$SENT_N") · eps_mode=${EPS_MODE}${SCOUNT:+" · conns=$SCOUNT"}$TO"
+    "$Q/replay: EPS=$(comma "$EPS") · RSS_peak=$(comma "$PEAK")MB · CPU ${CPU_AVG}%avg/${CPU_MAX}%max · evict=$EV · eps_mode=${EPS_MODE}${SCOUNT:+" · conns=$SCOUNT"}$TO"
 }
 
 # ---- feed=stream：wfgen stream 实时生成（事件时间推进） ----
@@ -745,7 +745,7 @@ run_stream_one() {
   : > "$OUT"
   local TO=""; [ "$TIMEOUT" = 1 ] && TO=" ⚠TIMEOUT(哨兵超时,EPS=metrics-append 兑底)"
   report_result "$Q" stream "$OUT" \
-    "$Q/stream: EPS=$(comma "$EPS") · RSS_peak=$(comma "$PEAK")MB · CPU ${CPU_AVG}%avg/${CPU_MAX}%max · evict=$EV · appended=$(comma "$APP")/$(comma "$TOTAL_N") · target_rate=$(comma "$RATE") · eps_mode=${EPS_MODE}${SCOUNT:+" · conns=$SCOUNT"}$TO"
+    "$Q/stream: EPS=$(comma "$EPS") · RSS_peak=$(comma "$PEAK")MB · CPU ${CPU_AVG}%avg/${CPU_MAX}%max · evict=$EV · target_rate=$(comma "$RATE") · eps_mode=${EPS_MODE}${SCOUNT:+" · conns=$SCOUNT"}$TO"
 }
 
 # ---- 预热轮（WARMUP=1）：stash 重建后首跑系统性偏低（曾三次复现），须剔除 ----
