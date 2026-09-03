@@ -51,6 +51,11 @@
 #                       `perf-diag 内存口径` 打印实际值，报告口径行自动带上）
 #   SAMPLE_MS=100       CPU%/RSS 采样周期（档时长短时决定 CPU 归属可信度）
 #   TIMEOUT_SECS=       单次等待超时（默认 N/50000+120）
+#   GATE=conf/perf-gate.toml   L4 性能门禁（wfgen perf-diag --gate）：墙梯测量后自动
+#                        断言（绝对兜底 + 相对防回归），任一 FAIL → 本脚本退出码 1
+#                        （防"语义对但整集被拖垮"的规则静默退化）
+#   RECORD_BASELINE=path  留存本次墙表为相对回归基线（与 GATE 互斥：先 --record-baseline
+#                        校准，再另跑 GATE 做门禁）
 #   FORCE=1             跳过「跨度超窗口 over」的安全拦截
 #
 # 输出:
@@ -82,6 +87,8 @@ LATENESS_FIX="${LATENESS_FIX:-1}"
 SAMPLE_MS="${SAMPLE_MS:-100}"
 GEN_FRAMES="${GEN_FRAMES:-0}"
 FORCE="${FORCE:-0}"
+GATE="${GATE:-}"                       # L4 门禁配置（conf/perf-gate.toml）
+RECORD_BASELINE="${RECORD_BASELINE:-}"  # 留存基线墙表（相对回归参照）
 PARSE="${PARSE_PARALLELISM:-}"
 RULE="${RULE_PARALLELISM:-}"
 WINDOWS_SRC="models/schemas/windows.toml"
@@ -102,6 +109,15 @@ if [ -z "$WFUSION" ]; then WFUSION="$(command -v wfusion 2>/dev/null || true)"; 
 if [ -z "$WFGEN" ]; then WFGEN="$(command -v wfgen 2>/dev/null || true)"; fi
 if [ -z "$WFUSION" ] || [ -z "$WFGEN" ]; then
   echo "错误: 找不到 wfusion/wfgen（设置 REPO/WFUSION/WFGEN 或加入 PATH）" >&2; exit 1
+fi
+
+# L4 门禁需 wfgen 带 --gate/--record-baseline（warp-fusion 0.5.6+）；旧二进制会以
+# 未知参数报错、把门禁误读成测量失败。GATE/RECORD_BASELINE 未启用时不检查。
+if [ -n "$GATE" ] || [ -n "$RECORD_BASELINE" ]; then
+  if ! "$WFGEN" perf-diag --help 2>&1 | grep -q -- '--gate'; then
+    echo "错误: 当前 wfgen 不支持 perf 门禁（缺 --gate/--record-baseline）→ 需 \"$WFGEN\"（cd $REPO && cargo build --release -p wfgen）" >&2
+    exit 1
+  fi
 fi
 
 # ---- 二进制新鲜度自检（M2, 2026-08-26）----
@@ -383,11 +399,24 @@ run_ladder() {
   start_dirty_sampler "$DAEMON_PID"
 
   echo "  -- $Q · N=$(comma "$N") · 档=${STAGE_NAMES} · timeout=${T}s --"
-  "$WFGEN" perf-diag --diag "$DIAG_TOML" --frames "$FRAMES" --addr "127.0.0.1:$PORT" \
+  # wfgen perf-diag：墙梯测量 + （可选）L4 门禁。捕获 stdout 判定门禁 verdict——
+  # 退出码 1 可能是门禁 FAIL（合法拦截）也可能是测量失败（超时/哨兵异常），
+  # 两者分开报，不能把门禁 FAIL 误标成"测量退化"。
+  local WOUT
+  WOUT="$( "$WFGEN" perf-diag --diag "$DIAG_TOML" --frames "$FRAMES" --addr "127.0.0.1:$PORT" \
     --n-list "$N" --rounds 1 --timeout-secs "$T" \
-    --sentinels data/perf_sentinel.ndjson --output data/perf_diag_wall.txt
+    --sentinels data/perf_sentinel.ndjson --output data/perf_diag_wall.txt \
+    ${GATE:+--gate "$GATE"} ${RECORD_BASELINE:+--record-baseline "$RECORD_BASELINE"} )"
   local RC=$?
-  [ "$RC" = 0 ] || echo "    ⚠ wfgen perf-diag 退出码 ${RC}（报告按已落盘哨兵记录尽力分析）" >&2
+  [ -n "$WOUT" ] && printf '%s\n' "$WOUT"
+  local GATE_FAIL=0
+  if [ -n "$GATE" ] && printf '%s' "$WOUT" | grep -q '门禁判定: FAIL'; then GATE_FAIL=1; fi
+  if [ "$RC" != 0 ] && [ "$GATE_FAIL" != 1 ]; then
+    echo "    ⚠ wfgen perf-diag 退出码 ${RC}（报告按已落盘哨兵记录尽力分析）" >&2
+  fi
+  if [ "$GATE_FAIL" = 1 ]; then
+    echo "    ⚠ L4 门禁 FAIL（${GATE}）：墙梯断言未过（见上方 门禁判定 明细）→ 本次墙梯判 FAIL" >&2
+  fi
 
   kill "$SAMPLER_PID" 2>/dev/null; wait "$SAMPLER_PID" 2>/dev/null; SAMPLER_PID=""
   [ -n "$DIRTY_PID" ] && { kill "$DIRTY_PID" 2>/dev/null; wait "$DIRTY_PID" 2>/dev/null; DIRTY_PID=""; }
@@ -409,7 +438,10 @@ run_ladder() {
   METRICS_PATH="data/metrics.ndjson" LOG_PATH="$LOG" \
   STREAMS="auction_events,bid_events,person_events" FAM_COUNTS="" \
     "$PY" "$ANALYZER" | tee -a "$OUT"
-  return "${PIPESTATUS[0]}"
+  local ARC="${PIPESTATUS[0]}"
+  # 门禁 FAIL 是硬失败（与测量健康无关）：墙梯数字可能全健康，但断言没过 → 仍要 FAIL。
+  [ "$GATE_FAIL" = 1 ] && return 1
+  return "$ARC"
 }
 
 # ---- 主流程 ----

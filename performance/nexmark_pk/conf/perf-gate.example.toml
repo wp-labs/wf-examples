@@ -1,0 +1,28 @@
+# nexmark_pk L4 性能门禁示例（wfgen perf-diag --gate conf/perf-gate.toml）
+#
+# 用法（diag.sh 内置支持）：
+#   # 1) 首次校准：留存本机同 n-list 基线墙表
+#   RECORD_BASELINE=data/perf_wall.q1.baseline.txt ./diag.sh q1 10m
+#   # 2) 门禁：墙梯测量后自动断言，任一 FAIL → 退出码 1
+#   GATE=conf/perf-gate.toml ./diag.sh q1 10m
+#
+# 阈值语义（warp-fusion docs/useage/ai_native_rule_dev_loop.md §2.5）：
+#   [absolute]  绝对兜底（机器校准硬上限）——先跑一次实测再填，别拍脑袋
+#   [relative]  相对防回归——与基线墙表同 (档,N) 比 EPS 回退（跨机器稳健）
+#
+# 注意：
+#   - rule_count = 被测查询的规则数（grep -c '^rule ' models/queries/<q>.wfl），
+#     只影响 per_rule_ns_max 的摊薄口径；rules_eps_min/relative 不需要它
+#   - 门禁取每档最大 N 行；基线与门禁必须同 total（同 n-list），否则报缺档提示重录
+#   - 本文件是**示例**：值须按机器/查询实测填，勿直接用于 CI
+
+rule_count = 1                 # 例：q1 单规则。q4 等家族文件请按实际规则数填
+
+[absolute]                     # 绝对兜底（可选段落，至少 [absolute] 或 [relative] 之一）
+rules_eps_min = 1000000        # 整集 rules 档 EPS 下限（例：q1 10m 实测 ~1.1M → 设 1M）
+# per_rule_ns_max = 200        # 单规则成本 = (1e9/eps_rules − 1e9/eps_floor)/rule_count
+
+# [relative]
+# baseline = "data/perf_wall.q1.baseline.txt"   # 首次用 RECORD_BASELINE= 留存
+# max_regression_pct = 20.0
+# stages = ["rules", "full"]   # 缺省 = ["rules"]

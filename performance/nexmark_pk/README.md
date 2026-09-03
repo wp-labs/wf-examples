@@ -194,6 +194,22 @@ GEN_FRAMES=1 ./diag.sh q1 10m      # 帧缺失时自动生成（与 bench.sh 共
 **墙判定**（主墙 = 增量最大段，附**基线占比**「墙前基线占全链多少」；CPU 占核比 >50% = 忙墙
 → 下一步 CPU 采样定位热点；<15% = 等/供给墙，RSS 逐档上涌 → 窗口/join 容量，平稳 → 供给侧）。
 
+### 性能门禁（L4）：墙梯后自动断言，防静默退化
+
+diag.sh 内置 wfgen perf 门禁（`docs/useage/ai_native_rule_dev_loop.md` §2.5）：
+
+```bash
+# 1) 首次校准：留存本机同 total 基线墙表（本机/规则集变更后重录）
+RECORD_BASELINE=data/perf_wall.q1.baseline.txt ./diag.sh q1 10m
+# 2) 门禁：墙梯测量后自动断言（绝对兜底 + 相对防回归），任一 FAIL → 退出码 1
+GATE=conf/perf-gate.toml ./diag.sh q1 10m
+```
+
+`GATE` 指向 conf/perf-gate.toml（模板见 `conf/perf-gate.example.toml`，阈值按机器实测填）：
+绝对断言用 `rules_eps_min`（整集下限）或 `per_rule_ns_max`（单规则成本，需 `rule_count`）；
+相对断言用 `baseline` + `max_regression_pct`（跨机器稳健）。门禁取每档最大 N 行，基线须同
+`total` 录制。两个 env 互斥（先录后门，见 wfgen 报错）。
+
 ### 诊断纪律（违反会得出假结论）
 
 1. **预热档默认开，别关**：首档独自承担窗口冷分配/page fault，实测不预热时 floor 反而慢于
@@ -216,6 +232,7 @@ verify_daemon.sh         # 正确性验证（daemon TCP 注入 → benchmark.ndj
 conf/wfusion.toml        # daemon 配置（parse/rule 并行度等）
 conf/perf-diag.toml      # 诊断模式·无档（bench.sh：哨兵精确 EPS 口径）
 conf/perf-diag-wall.toml # 诊断模式·三档墙梯（diag.sh）
+conf/perf-gate.example.toml  # L4 门禁配置模板（diag.sh GATE= 引用，按机器填阈值）
 models/queries/qN.wfl    # 查询定义（唯一权威来源，每文件一组同族规则）
 models/schemas/          # 事件 schema（nexmark.wfs）+ windows.toml + knowdb.toml（q13 侧输入表）
 topology/                # source/sink 拓扑（send-arrow 源、blackhole 汇；sinks_file/ 为验证落盘用）
