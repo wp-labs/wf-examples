@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# qradar_pk — 450 规则高压吞吐 + QRadar EP 对标（目标 EPS >= 10000）
+# rule_scale_test — 376 规则高压吞吐 + QRadar EP 对标（目标 EPS >= 10000）
 #
-# 450 条规则（scripts/gen_rules.py 生成，对标 QRadar EP 451 规则规格）覆盖主要引擎路径：
+# 376 条规则（scripts/gen_rules.py 生成，对标 QRadar EP 451 规则规格）覆盖主要引擎路径：
 # count/sum/avg/min/max/distinct/accu/guard（bool/float/object 嵌套/array/字符串/数学函数）/
 # close/多事件/序列/pipeline，多 key × 阈值网格，6 类事件源。
 #
 # 验证（wp-reactor#19 共享解析后）：
-#   1. 高规则量下吞吐（450 规则 EPS 应与 20 规则相当，因事件解析已共享）
+#   1. 高规则量下吞吐（376 规则 EPS 应与 20 规则相当，因事件解析已共享）
 #   2. #18 门禁（object 大批次不被窗口内存驱逐）
 #
 # 唯一模式：单连接流式持续 + sip 复用（1000 池，正常流量长尾）——贴近真实部署
@@ -85,7 +85,7 @@ PLATEAU="${PLATEAU:-8}"
 CONNECTIONS="${CONNECTIONS:-4}"
 SHARD_KEYS="${SHARD_KEYS:-conn_events:sip,dns_events:sip,proxy_events:sip,firewall_events:sip,auth_events:source_ip,file_events:user}"
 # RATE_BYTES：send-arrow 持续注入速率（bytes/秒），默认 0=不限速（nexmark 用）。
-# 对 qradar 测速务必设 >0（持续注入，禁用 burst——burst 会窗口积压失真，见 TEST_PLAN §3.4）。
+# 对 rule_scale_test 测速务必设 >0（持续注入，禁用 burst——burst 会窗口积压失真，见 TEST_PLAN §3.4）。
 # 注入速率 ≈ 目标EPS × 每事件字节(~244B)。脚本输出「注入墙钟 vs 全墙钟」判断引擎是否跟上。
 RATE_BYTES="${RATE_BYTES:-0}"
 

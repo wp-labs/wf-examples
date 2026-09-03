@@ -1,4 +1,4 @@
-# qradar_pk — 376 规则高压吞吐 + QRadar EP 对标
+# rule_scale_test — 合成大规则集规模测试（376 规则高压吞吐 + QRadar EP 认证规格对标）
 
 > 性能结论与诚实边界见 `PK_REPORT_MAC.md`（16 核 M3 Max 口径）与 `PK_REPORT_LINUX.md`
 > （Linux 8 核对等口径），2026-08-17。
@@ -131,7 +131,7 @@ FAMILIES=c,dist,close,pipe ./diag.sh 200000   # 规则家族档（哪一族贵�
 > `chain` 并不贵（+0.23µs，强 action 绑定过滤触发率低）——早期「所有 match 家族等成本 /
 > 规则数无关 / chain 每规则最贵」的结论是 reload Blocked 污染测成全量墙的假象，已废弃。
 
-### 诊断纪律（qradar_pk 特有，违反会得出假结论）
+### 诊断纪律（rule_scale_test 特有，违反会得出假结论）
 
 1. **必须解除 `max_ingest_rate`**（diag.sh 默认解除，`KEEP_RATE=1` 可保留）：150k 限速会把
    三档**全部封顶在 150k**，墙梯彻底失去区分度（测量纪律 §3 的同一条）。
@@ -186,10 +186,10 @@ window 记账含 parsed-event 足迹（e14ed6d）等演进后复测。EPS 用 se
   1GB 触发 38 条有损驱逐；4GB 后驱逐 0（nexmark 经验：窗口 cap 须与数据量匹配，
   bid 窗口 15GB）——`models/schemas/windows.toml` 已更新；
 - **`parse_buffer_bytes=2GB`（content 记账）、`instances=4`、p/r=10 沿用 nexmark
-  调优值**；qradar 为规则计算密集（450 规则求值是瓶颈），供给参数非杠杆
+  调优值**；rule_scale_test 为规则计算密集（450 规则求值是瓶颈），供给参数非杠杆
   （README 旧记录：双连接仅 +3%）——单连接 1M 已测稳态；
 - **CHUNK=10000 最优**（162.4 vs 156.0k @ 100000）：与 nexmark 100k 帧甜点不同，
-  qradar 的批边界开销占比低、规则求值主导。
+  rule_scale_test 的批边界开销占比低、规则求值主导。
 
 - 告警发射量（metrics `emitted_total` 求和，1M 末轮 10.2-10.4M ≈ **1000 万+ 条**），
   其中 conn_rules 族 ~120k；**约 371/450 规则实际触发**（200k 时 293 条；其余

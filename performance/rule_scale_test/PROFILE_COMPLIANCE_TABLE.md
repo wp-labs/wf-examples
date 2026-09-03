@@ -28,7 +28,7 @@
 
 > 判定图例：✅ 对得上官方 ｜ ⚠️ 方向对齐但有偏差/缩量 ｜ ❌ 自编/未建模
 
-| # | 参数 | 官方值（IBM cert methodology） | 我们 qradar_pk 的建模 | 判定 | 说明 |
+| # | 参数 | 官方值（IBM cert methodology） | 我们 rule_scale_test 的建模 | 判定 | 说明 |
 |---|---|---|---|---|---|
 | 1 | Custom Rules + Building Blocks | **451** | 450 条合成 WFL 规则（gen_rules.py） | ✅ 规模对标 | 450 ≈ 451 **同量级**，但仅数量对标；逐条语义无对应 |
 | 2 | Unique log sources（日志源/设备） | 50,000 | 无此概念 | ❌ 未建模 | 我们的分类是 6 类事件窗口，非「日志源」 |
@@ -102,7 +102,7 @@
 
 ## 4. 一句话总结（对外可贴）
 
-> wfusion 的 qradar_pk 是一个**合成压测场景**：450 条自研有状态规则对标 QRadar EP 认证
+> wfusion 的 rule_scale_test 是一个**合成压测场景**：450 条自研有状态规则对标 QRadar EP 认证
 > **451 条规则规模**，数据信封方向对齐官方画像（250k 源 IP / 80k EPS 方法论），用于验证引擎在
 > 真实 SIEM 量级负载下的吞吐与有界内存。**它不是、也不声称是 QRadar EP 认证规则集**——IBM 的
 > 451 条规则体为专有内容，从未公开。检测语义正确性若要对外举证，应改用 **Sigma 规则 / MITRE ATT&CK**

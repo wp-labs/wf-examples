@@ -9,11 +9,11 @@ data
 *.log.*
 core/meta_disable/data
 
-# qradar_pk benchmark run artifacts
-performance/qradar_pk/ab_results/
-performance/qradar_pk/data/
-performance/qradar_pk/topology_1/
-performance/qradar_pk/gen.log
+# rule_scale_test benchmark run artifacts
+performance/rule_scale_test/ab_results/
+performance/rule_scale_test/data/
+performance/rule_scale_test/topology_1/
+performance/rule_scale_test/gen.log
 performance/nexmark_pk/__pycache__/
 
 # perf scripts bytecode

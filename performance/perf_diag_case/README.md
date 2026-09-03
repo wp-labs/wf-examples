@@ -1,7 +1,7 @@
 # perf_diag_case — 性能诊断机制（perf-diag）独立验证 case
 
 > 目的：**验证诊断模式机制的正确性**（同时提供有区分度的墙梯）。机制设计见
-> `wp-reactor/docs/design/perf-diag-mode-design.md`。独立于 nexmark_pk/qradar_pk，
+> `wp-reactor/docs/design/perf-diag-mode-design.md`。独立于 nexmark_pk/rule_scale_test，
 > 不与基准数据混在一起。
 
 ## 验证什么（机制五要素）

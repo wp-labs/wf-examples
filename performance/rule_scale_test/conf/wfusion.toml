@@ -1,4 +1,4 @@
-# qradar_pk — 规则高压吞吐（对标 QRadar EP）
+# rule_scale_test — 规则高压吞吐（对标 QRadar EP）
 # daemon 模式：TCP 全速输入 + 指标监控，测量引擎每秒处理事件数
 
 sources_dir = "topology/sources"
@@ -10,7 +10,7 @@ rule_shards = 1
 rule_exec_timeout = "30s"
 schemas = "models/schemas/*.wfs"
 rules = "models/rules/*.wfl"
-# 入流限速 = 规则稳态吞吐（~150k）。450 规则是瓶颈，不限速时入流 > 规则
+# 入流限速 = 规则稳态吞吐（~150k）。376 规则是瓶颈，不限速时入流 > 规则
 # → 窗口积压涨到 max_window_bytes 后丢数据（#18 门禁失败）；限到规则吞吐后
 # 规则追平、窗口时间老化生效（配合 gen_events 300µs/事件，窗口稳态 ~1GB），
 # 任意 N 无损可跑。

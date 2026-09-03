@@ -110,7 +110,7 @@
 
   <h1>wfusion vs IBM QRadar EP — 450 规则高压吞吐性能报告</h1>
   <div class="meta">
-    测试日期 <b>2026-08-17</b>（<b>wfusion 0.3.1</b> / wp-reactor 1.0.2，P0-② content 记账 2GB）· 对标 QRadar EP 认证负载（<b>80k EPS @ 451 规则</b>）· 场景 qradar_pk（450 条有状态规则 / 6 类事件源 / 1000 sip 键）·
+    测试日期 <b>2026-08-17</b>（<b>wfusion 0.3.1</b> / wp-reactor 1.0.2，P0-② content 记账 2GB）· 对标 QRadar EP 认证负载（<b>80k EPS @ 451 规则</b>）· 场景 rule_scale_test（450 条有状态规则 / 6 类事件源 / 1000 sip 键）·
     硬件 Apple M3 Max（16 核 / 64GB，有效并行 6-9 核）
   </div>
 
@@ -167,7 +167,7 @@
     <div class="chart-sub">wfusion 单进程 6-9 核 vs QRadar 虚拟版 56-80 核 / 物理版 16-20 核</div>
     <svg viewBox="0 0 960 260" role="img" aria-label="每核效率对比柱状图" style="width:100%;height:auto">
       <line x1="60" y1="220" x2="940" y2="220" stroke="var(--baseline)"/>
-      <!-- log scale 1k->10k: wfusion 17-27k; qradar 1.0-1.4k; physical 1.0k -->
+      <!-- log scale 1k->10k: wfusion 17-27k; QRadar 1.0-1.4k; physical 1.0k -->
       <rect x="130" y="20" width="90" height="200" rx="4" fill="var(--series-1)"/>
       <text x="175" y="12" text-anchor="middle" fill="var(--text-primary)" font-size="13" font-weight="600">17-27k</text>
       <text x="175" y="245" text-anchor="middle" fill="var(--text-secondary)" font-size="12">wfusion（6-9 核）</text>
@@ -189,7 +189,7 @@
   <table>
     <thead><tr><th>参数</th><th class="num">值</th><th>依据</th></tr></thead>
     <tbody>
-      <tr><td>parse_buffer_bytes</td><td class="num">2GB（content 记账）</td><td>nexmark P0-② 甜点；qradar 供给充足非瓶颈</td></tr>
+      <tr><td>parse_buffer_bytes</td><td class="num">2GB（content 记账）</td><td>nexmark P0-② 甜点；rule_scale_test 供给充足非瓶颈</td></tr>
       <tr><td>parse / rule_parallelism</td><td class="num">10 / 10</td><td>nexmark 调优值</td></tr>
       <tr><td>instances（W-RDP）</td><td class="num">4</td><td>nexmark 经验（单连接下不生效，多连接才有效）</td></tr>
       <tr><td>conn_events max_window_bytes</td><td class="num">4GB（原 1GB）</td><td>1M 长跑窗口深内容 ~2.5GB+，1GB 触发 38 条有损驱逐；4GB 后驱逐 0</td></tr>

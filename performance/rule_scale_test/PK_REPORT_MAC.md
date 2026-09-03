@@ -2,7 +2,7 @@
 
 > 测试日期：2026-08-17（**wfusion 0.3.1** / wp-reactor 1.0.2，P0-② content 记账 2GB 之后）
 > 对标：IBM QRadar Event Processor 认证负载（**80k EPS @ 451 条规则**）
-> 场景：`wf-examples/performance/qradar_pk`（450 条有状态规则 / 6 类事件源 / 1000 sip 键）
+> 场景：`wf-examples/performance/rule_scale_test`（450 条有状态规则 / 6 类事件源 / 1000 sip 键）
 
 ---
 
@@ -38,12 +38,12 @@
 
 | 参数 | 值 | 依据 |
 |---|---|---|
-| `parse_buffer_bytes` | **2GB**（content 记账） | nexmark P0-② 甜点；qradar 供给充足非瓶颈 |
+| `parse_buffer_bytes` | **2GB**（content 记账） | nexmark P0-② 甜点；rule_scale_test 供给充足非瓶颈 |
 | `parse_parallelism` / `rule_parallelism` | 10 / 10 | nexmark 调优值 |
 | `instances`（W-RDP） | 4 | nexmark 经验（单连接下不生效，多连接才有效） |
 | conn_events `max_window_bytes` | **4GB**（原 1GB） | 1M 长跑下窗口深内容 ~2.5GB+，1GB 触发 38 条有损驱逐；4GB 后驱逐 0（nexmark 窗口 cap 与数据量匹配经验） |
 | `max_total_bytes` | 8GB（原 2GB） | 同上 |
-| CHUNK（批） | **10000** 最优 | 162.4 vs 156.0k @ 100000——qradar 规则求值主导，批大小非杠杆 |
+| CHUNK（批） | **10000** 最优 | 162.4 vs 156.0k @ 100000——rule_scale_test 规则求值主导，批大小非杠杆 |
 
 ---
 

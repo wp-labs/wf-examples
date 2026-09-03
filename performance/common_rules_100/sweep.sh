@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # common_rules_100 — 限定 EPS 下的资源消耗统计（速率档位扫描）
 #
-# 用 daemon 端 max_ingest_rate 把引擎消化速率限定为目标 EPS（qradar/nexmark
+# 用 daemon 端 max_ingest_rate 把引擎消化速率限定为目标 EPS（rule_scale_test/nexmark
 # MAX_INGEST_RATE 同款口径），注入端全速 send → 引擎按目标速率稳态消化；
 # 统计该速率下的 CPU（核占数 avg/max）/ RSS 峰值 / allocator commit /
 # e2e 延迟 p50/p99，并判「达成率 %(可服务/能力封顶)」——目标超过引擎可持续吞吐时
@@ -163,7 +163,7 @@ for i in "${!EPS_LIST[@]}"; do
 
   START_NS=$($PY -c 'import time; print(time.time_ns())')
   # 全速分块注入（chunk 只做传输拆分避免巨帧阻塞解码；不 pacing）——目标 EPS
-  # 由 daemon 端 max_ingest_rate 精确限速（引擎按速率平滑消费，qradar/nexmark
+  # 由 daemon 端 max_ingest_rate 精确限速（引擎按速率平滑消费，rule_scale_test/nexmark
   # replay 同口径）。CPU max 含块到达/启动瞬态，稳态看 avg/p95。
   "$WFGEN" send --scenario scenarios/common.wfg --input data/sweep.jsonl \
     --addr 127.0.0.1:$PORT --ws models/schemas/network.wfs \

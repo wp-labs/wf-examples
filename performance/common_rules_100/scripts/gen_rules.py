@@ -14,7 +14,7 @@
   ent   实体字段（entity(ip, <ent>)；yield sip=<ent>）
   fire  T=数据会话可触发 / H=高阈值·上下文（负载与真实语义占位）
 
-语法只使用 qradar_pk/throughput.wfl 已验证形态（count/guard/distinct/sum/avg/
+语法只使用 rule_scale_test/throughput.wfl 已验证形态（count/guard/distinct/sum/avg/
 accu/close/multi/函数谓词）。
 
 用法: python3 scripts/gen_rules.py            # 重写 models/rules/*.wfl

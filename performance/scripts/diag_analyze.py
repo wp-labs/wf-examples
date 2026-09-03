@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""nexmark_pk / qradar_pk diag.sh 的性能墙分析器。
+"""nexmark_pk / rule_scale_test diag.sh 的性能墙分析器。
 
 输入全部走环境变量（参数多，位置参数易错）；输出打印到 stdout（墙表/墙判定/健康
 校验），退出码 0=健康 / 1=存在硬失败（append 未追平、dropped_late 非零等）。
 
 环境变量:
   QUERY        查询名（报告标题用）
+  CASE_NAME    性能 case 目录名（nexmark_pk / rule_scale_test，报告标题首字段）
   RULES_COUNT  规则数（报告标题用）
   N            本档数据量（整数）
   CTX          口径上下文行（并行度/限速/负载/时间戳）
@@ -26,6 +27,7 @@ import re
 import sys
 
 QUERY = os.environ.get("QUERY", "")
+CASE_NAME = os.environ.get("CASE_NAME", "")
 RULES_COUNT = os.environ.get("RULES_COUNT", "")
 N_REQ = int(os.environ["N"])
 CTX = os.environ.get("CTX", "")
@@ -134,7 +136,7 @@ def iter_metrics():
 # 墙表
 # ---------------------------------------------------------------------------
 family_mode = any(s.startswith("fam_") for s in STAGE_NAMES)
-who = "qradar_pk" if (QUERY or "").startswith("qradar") else "nexmark_pk"
+who = CASE_NAME if CASE_NAME else "nexmark_pk"
 head = ["档", "EPS", "耗时", "ns/事件", "增量ns", "占全链", "CPU%avg/max", "CPU核·s", "RSS_peak", "DIRTY_peak", "样本"]
 fmt = "%-9s %13s %9s %11s %10s %8s %14s %8s %11s %11s %6s"
 print("")

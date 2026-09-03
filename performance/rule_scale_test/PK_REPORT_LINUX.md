@@ -2,7 +2,7 @@
 
 > 测试日期：2026-08-17（**wfusion 0.3.1** / wp-reactor 1.0.2，P0-② content 记账）
 > 对标：IBM QRadar Event Processor 认证负载（**80k EPS @ 451 条规则**）
-> 场景：`wf-examples/performance/qradar_pk`（450 条有状态规则 / 6 类事件源 / 1000 sip 键）
+> 场景：`wf-examples/performance/rule_scale_test`（450 条有状态规则 / 6 类事件源 / 1000 sip 键）
 > **本报告为 Linux 8 核云主机复测**——8 vCPU 单进程跑 450 条有状态规则，验证规则求值
 > 在低核数云主机上的能力，与 Mac 报告（16 核 M3 Max）口径分开引用。
 
@@ -62,7 +62,7 @@ Mac 报告一致：450 规则求值吞吐不是瓶颈。
    QRadar 虚拟版 ~1.0-1.4k EPS/核，**高 ~10-14×**；
 3. **vs Mac（156k 中位）≈ 0.71×**：450 规则是规则求值（CPU-bound）瓶颈，云主机
    8 核 + EPYC 单核弱于 M3 性能核；幅度远小于 nexmark 简单查询的 1/3——规则求值
-   吃满多核，简单查询吃单核/带宽，qradar 的 CPU-bound 形态在云主机上损失更小；
+   吃满多核，简单查询吃单核/带宽，rule_scale_test 的 CPU-bound 形态在云主机上损失更小；
    （200k 突发 0.66× → 1M 稳态 0.71×，稳态口径略优于突发。）
 
 ---

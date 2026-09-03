@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""nexmark_pk / qradar_pk 基准与诊断脚本共享的度量工具库。
+"""nexmark_pk / rule_scale_test 基准与诊断脚本共享的度量工具库。
 
 两个 shell 脚本（bench.sh / diag.sh）曾把这些逻辑用 heredoc 内嵌在 bash 里——
 无法单独测试、改一行要重跑整个基准。现抽成独立文件，shell 只负责流程编排。
@@ -144,7 +144,7 @@ def sentinel_tuple(sent_path):
 
 
 def received(metrics_path, label="ingress"):
-    """送达计数：rows_total 每区间 delta 累加（qradar 口径，source 侧接收行数）。"""
+    """送达计数：rows_total 每区间 delta 累加（rule_scale_test 口径，source 侧接收行数）。"""
     total = 0
     try:
         for o in _iter_metrics(metrics_path):

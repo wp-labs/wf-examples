@@ -1,4 +1,4 @@
-# qradar_pk 性能测试方案（TEST PLAN）
+# rule_scale_test 性能测试方案（TEST PLAN）
 
 > 目标：让本场景的吞吐/内存数字**可复现、可追溯、有人认同**——数据形态符合真实 SIEM 部署、
 > 规则对标 QRadar EP 认证、测量口径诚实透明。
@@ -161,7 +161,7 @@ send-arrow 是**唯一能绕过客户端编码墙、测到引擎真实处理能�
 |---|---|---|
 | N=200K | 基线 RSS / 窗口内存 | RSS 平台期稳定、无驱逐 |
 | N 翻倍（400K） | 内存是否有界 | 事件时间跨度固定（12min），窗口内容 ≈ over×速率而非 ∝ N |
-| qradar 3M/10M（大 N） | 任意 N 不卡死 / 不驱逐 | 依赖窗口背压修复（见下文遗留） |
+| rule_scale_test 3M/10M（大 N） | 任意 N 不卡死 / 不驱逐 | 依赖窗口背压修复（见下文遗留） |
 
 ### 4.4 公平对标
 
@@ -177,7 +177,7 @@ send-arrow 是**唯一能绕过客户端编码墙、测到引擎真实处理能�
 - **数据**：`gen_events.py <N>`，seed=42 确定性，同输入可复现。
 - **帧预编码**：`wfgen dump-frames`（同 daemon 内），`send-arrow` 回放同一 daemon（schema 一致性是 send-arrow 可用的前提）。
 - **负载纪律**：本机常载（loadavg 波动），A/B 必须**同 load 块配对**；EPS 读数带 load 噪声。
-- **计时信号**：qradar 无 `append_total`（nexmark 用），引擎消化完成用 **emitted_total 累计停滞** 判定。
+- **计时信号**：rule_scale_test 无 `append_total`（nexmark 用），引擎消化完成用 **emitted_total 累计停滞** 判定。
 
 ---
 

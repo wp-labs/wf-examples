@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 持续注入拐点扫描：450规则 单IP 300万，多档注入速率测引擎跟上情况
+# 持续注入拐点扫描：376规则 单IP 300万，多档注入速率测引擎跟上情况
 set -u
 cd "$(dirname "$0")"
 
@@ -38,7 +38,7 @@ EOF
 sed -e 's|rules = "models/rules/\*.wfl"|rules = "/tmp/sw_rules.wfl"|' -e '/max_ingest_rate/d' conf/wfusion.toml > "$CONF"
 pkill -9 -f "wfusion daemon" 2>/dev/null; sleep 1
 echo "== gen+dump ${N} (once, reuse across sweeps) =="
-QRADAR_SINGLE_IP=10.0.0.1 "$PY" scripts/gen_events.py "$N" > data/burst.jsonl 2>/dev/null
+GEN_SINGLE_IP=10.0.0.1 "$PY" scripts/gen_events.py "$N" > data/burst.jsonl 2>/dev/null
 "$WF" daemon --config "$CONF" --work-dir . > /tmp/qd_sw.log 2>&1 &
 D0=$!
 for i in $(seq 1 40); do nc -z 127.0.0.1 "$PORT" 2>/dev/null && break; sleep 0.2; done

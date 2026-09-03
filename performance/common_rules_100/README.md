@@ -1,7 +1,7 @@
 # common_rules_100 — 100 条常见 SOC 检测规则 · 性能 case
 
 在**贴近现实语义**的规则集（非阈值网格合成集）下测量引擎吞吐/内存/告警触发。
-qradar_pk（376 条合成网格）回答"大规则集合压力"，本 case 回答**"100 条常见检测
+rule_scale_test（376 条合成网格）回答"大规则集合压力"，本 case 回答**"100 条常见检测
 规则"的现实负载**：每一条规则都有真实检测语义（爆破/扫描/横移/外传/C2/DGA/
 Web 攻击/被控主机），由 `scripts/gen_rules.py` 从语义规格表生成。
 
@@ -17,7 +17,7 @@ Web 攻击/被控主机），由 `scripts/gen_rules.py` 从语义规格表生成
 | `host_rich.wfl` | 18 | 防火墙/主机（blocked 爆发、被控主机外联、制裁地 geo、udp/icmp 探测）+ 富类型 guard（float/字符串/函数/vlan/app_id/长连接） |
 | `correlate.wfl` | 7 | conn+dns 跨源关联（扫描↔异常解析、DGA↔外连、被拒↔ANY 查询等） |
 
-语法只使用 qradar_pk 已验证形态（count / guard / distinct / sum·avg / accu /
+语法只使用 rule_scale_test 已验证形态（count / guard / distinct / sum·avg / accu /
 跨源计数关联 / `startswith_any`·`indexof`·`endswith`·`length` 函数谓词）。
 
 ## 事件数据
@@ -41,7 +41,7 @@ N=20000 ./run.sh      # 小规模冒烟（env N）
 
 ## 限定 EPS 下的资源消耗统计（sweep.sh）
 
-以目标注入速率（`max_ingest_rate` 引擎限速，qradar/nexmark 同款口径）稳态喂入规则
+以目标注入速率（`max_ingest_rate` 引擎限速，rule_scale_test/nexmark 同款口径）稳态喂入规则
 负载，统计该速率下的资源：CPU 核占（avg/p95/max）、RSS、allocator commit，并判
 「跟上 / 达上限」（目标超过引擎可持续吞吐时实际 EPS 到顶）。每档独立 daemon +
 0.1s RSS/CPU 采样（`../scripts/bench_lib.py` rss-sampler）。

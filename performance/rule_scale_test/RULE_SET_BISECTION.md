@@ -1,6 +1,6 @@
-# qradar_pk 规则集成本二分分析（2026-08-23）
+# rule_scale_test 规则集成本二分分析（2026-08-23）
 
-> 背景：当前引擎（wp-reactor `feat/columnar-execution`）下 qradar 1M 稳态 EPS ~35k，
+> 背景：当前引擎（wp-reactor `feat/columnar-execution`）下 rule_scale_test 1M 稳态 EPS ~35k，
 > 对比 2026-08-17 基线 150-162k（**-4.3×**，负载特定回归——同机 nexmark q1 30m 9.42M
 > 正常）。本文用**规则集二分**（PERF_BISECTION_METHOD 方法论在规则维度的应用）定位
 > 影响性能的规则子集，并用 stats<> 对照实验反证了一个直觉假设。
@@ -73,14 +73,14 @@
 - stats group-by 在**高键数 churn**（1000+ sip × 2m 桶）下每事件哈希表键查找/插入
   ≈ **1.3µs/事件**，≈ 20× CEP 单规则成本；
 - stats 的优势区是 **低键数 × 大窗口 × 批量收口**（nexmark Q15-18：全局单实例 /
-  4 channel / 100 auction × 1d 桶）——qradar 的高基数短窗恰在劣势区；
+  4 channel / 100 auction × 1d 桶）——rule_scale_test 的高基数短窗恰在劣势区；
 - 语义上 stats 也表达不了阈值规则：`stats` 的 `where` 只过滤**输入行**（度量级），
   无聚合后输出过滤（`yield ... where` / 规则级 `where stat.value(...)` 均解析失败）；
   `match<sip:2m>` 滑动窗口 vs stats `fixed/session` 固定桶。
 
 ## 6. 对回归排查的指向
 
-- **不是 stats-vs-CEP 选型问题**——qradar 的 count 规则形态 CEP 已是最优表达。
+- **不是 stats-vs-CEP 选型问题**——rule_scale_test 的 count 规则形态 CEP 已是最优表达。
 - 问题在 **CEP 单规则求值路径**（实例查找/计数/guard 富类型访问）在当前引擎变慢
   （08-17 单事件 ~90µs → 当前 ~368µs，5× 量级，且 q1 等轻查询不受影响）。
 

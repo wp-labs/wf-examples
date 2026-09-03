@@ -1,6 +1,6 @@
 # Sigma → wfusion WFL 语义映射对照骨架
 
-> 用途：这是 `qradar_pk` 的「**检测语义正确性**」验证骨架。它用公开标准
+> 用途：这是 `rule_scale_test` 的「**检测语义正确性**」验证骨架。它用公开标准
 > **SigmaHQ/sigma（MITRE ATT&CK 映射）+ Atomic Red Team** 做逐条可举证的检测语义覆盖，
 > **不**声称包含或对标 IBM QRadar EP 451 条专有规则（见 `PROFILE_COMPLIANCE_TABLE.md`）。
 >
@@ -34,7 +34,7 @@ ATT&CK 是分类骨架，Sigma 是规则体，二者通过 `attack.tXXXX` 标签
 ## 1. 映射方法论
 
 ```
-qradar_pk 事件窗口   ──→   Sigma logsource 类别   ──→   ATT&CK 技术子集   ──→   wfusion WFL 表达
+rule_scale_test 事件窗口   ──→   Sigma logsource 类别   ──→   ATT&CK 技术子集   ──→   wfusion WFL 表达
 (conn/auth/dns/                (network/web/windows…)         (attack.tXXXX)          (CEP / Window / Join)
  proxy/firewall/file)
 ```
@@ -183,7 +183,7 @@ tags: [attack.execution, attack.t1059, attack.t1059.001]
 
 ## 5. 对外表述红绿灯
 
-- ✅ **可声称**：「qradar_pk 用 SigmaHQ/sigma（ATT&CK v19 映射）+ Atomic Red Team
+- ✅ **可声称**：「rule_scale_test 用 SigmaHQ/sigma（ATT&CK v19 映射）+ Atomic Red Team
   做检测语义正确性验证，覆盖 N 条 ATT&CK 技术」。
 - ✅ **可声称**：「性能规模对标 QRadar EP 451 条规则量（451 vs 450）」。
 - ❌ **不可声称**：「包含 / 复现 / 对标 QRadar EP 451 条规则语义」——规则体专有封闭。

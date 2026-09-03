@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""生成 450 规则综合压测输入事件（jsonl，供 wfgen send / dump-frames 发送）。
+"""生成综合压测输入事件（jsonl，供 wfgen send / dump-frames 发送）。
 
 用法: gen_events.py <count>
 
@@ -27,8 +27,8 @@ rnd = random.Random(42)
 BASE_NS = 1767225600000000000  # 2026-01-01T00:00:00Z
 
 # ---- 源 IP 长尾参数（对齐现实；UNIQUE_IPS 是可调的实例基数旋钮）----
-SINGLE_IP = os.environ.get("QRADAR_SINGLE_IP", "")   # env 覆盖：非空则强制所有事件用该单 IP
-FLAT = os.environ.get("QRADAR_FLAT", "")   # env: 非空则 object 字段扁平化(测 obj/decode 墙)
+SINGLE_IP = os.environ.get("GEN_SINGLE_IP", "")   # env 覆盖：非空则强制所有事件用该单 IP
+FLAT = os.environ.get("GEN_FLAT", "")   # env: 非空则 object 字段扁平化(测 obj/decode 墙)
 UNIQUE_IPS = 1000     # 长尾正常内部 IP（SINGLE_IP 为空时生效）
 HOT_IPS = 40          # 热点正常 IP（高频、正常流量）
 ATTACK_IPS = 30       # 固定异常源（denied/syn/login_fail/大dns 集中）

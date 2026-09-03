@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""nexmark_pk / qradar_pk diag.sh 的内存墙分析器（MEMORY=1 模式）。
+"""nexmark_pk / rule_scale_test diag.sh 的内存墙分析器（MEMORY=1 模式）。
 
 与 diag_analyze.py 共用数据源（哨兵 EPS、CPU/RSS 采样、metrics.ndjson），
 但报告重心从「吞吐墙」切到「内存墙」：
@@ -16,6 +16,7 @@
 
 环境变量（与 diag_analyze.py 相同）:
   QUERY        查询名（报告标题用）
+  CASE_NAME    性能 case 目录名（nexmark_pk / rule_scale_test，报告标题首字段）
   RULES_COUNT  规则数
   N            本档数据量（整数）
   CTX          口径上下文行
@@ -34,6 +35,7 @@ import re
 import sys
 
 QUERY = os.environ.get("QUERY", "")
+CASE_NAME = os.environ.get("CASE_NAME", "")
 RULES_COUNT = os.environ.get("RULES_COUNT", "")
 N_REQ = int(os.environ["N"])
 CTX = os.environ.get("CTX", "")
@@ -185,7 +187,7 @@ def P(name, label=""):
 # ---------------------------------------------------------------------------
 # 墙表（内存视角：RSS 峰值增量）
 # ---------------------------------------------------------------------------
-who = "qradar_pk" if (QUERY or "").startswith("qradar") else "nexmark_pk"
+who = CASE_NAME if CASE_NAME else "nexmark_pk"
 print("")
 title = "== %s 内存墙定位 · %s" % (who, QUERY or "?")
 title += " · N=%s" % format(N_REQ, ",")

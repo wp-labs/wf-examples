@@ -7,7 +7,7 @@ All notable changes to the wf-examples performance / verification scenarios will
 ### Added
 
 - **`performance/common_rules_100` — 100 条常见 SOC 检测规则性能 case**：真实语义规则负载
-  （非 qradar 的合成网格）——爆破/扫描/横移/外传/C2/DGA/Web 攻击/被控主机 8 类主题 100 条
+  （非 rule_scale_test 的合成网格）——爆破/扫描/横移/外传/C2/DGA/Web 攻击/被控主机 8 类主题 100 条
   （`scripts/gen_rules.py` 从语义规格表生成 7 个文件：auth 15/scan 15/c2_exfil 18/dns 15/
   proxy 12/host_rich 18/correlate 7），`scripts/gen_events.py`（seed=42）正常底噪 + 攻击会话
   触发对齐。实测（200k 事件，mac mini M4 24G）：**EPS 132k、RSS 314MB、emitted 30.3 万、
@@ -18,22 +18,27 @@ All notable changes to the wf-examples performance / verification scenarios will
 - **`performance/eps_throughput`（吞吐压测冒烟 case）**：规则集（6 条：global_throughput /
   per_sip_instances / denied_probe / login_brute / traffic_sum / accu_tracker）与数据模式
   （burst/sustain/distinct）是 `eps_throughput_obj`（20 条规则超集，含同名前 6 条）的真子集；
-  吞吐权威口径由 `nexmark_pk` / `qradar_pk` 取代，README 自标「历史数据待复测」。删除归档于
+  吞吐权威口径由 `nexmark_pk` / `rule_scale_test` 取代，README 自标「历史数据待复测」。删除归档于
   git 历史。
 - **`performance/eps_throughput_obj`（object 字段 + 20 规则回归 case）**：历史定位为
   wp-reactor#18（object 大批次被窗口内存驱逐静默丢弃）的复现/回归场景（fork 自
   eps_throughput，run.sh 自述「与 eps_throughput 相同，但带 object 字段」）。#18 修复
-  （内容记账，wp-reactor 228f441）合入后：① 驱逐回归已由 `qradar_pk` run.sh 内置门禁
+  （内容记账，wp-reactor 228f441）合入后：① 驱逐回归已由 `rule_scale_test` run.sh 内置门禁
   （`in memory eviction` = 0 且 conn emitted > 0，数据同样带 object）每日守护；② `validate.sh`
   A/B 需修复前 v0.4.0 二进制，仅剩考古价值；③ 富类型/函数/seq 覆盖网格的正确性由引擎单测
   与 warp-fusion e2e（datagen 对拍）承担，obj 并非类型守护场景。删除归档于 git 历史；
-  qradar_pk README 历史对照备注同步标注场景已归档。
+  rule_scale_test README 历史对照备注同步标注场景已归档。
 
 ### Changed
 
+- **`performance/qradar_pk` → `performance/rule_scale_test` 目录更名**：case 定位改为
+  「合成大规则集规模测试」（376 规则高压吞吐 + 规则家族成本二分 + #18 object 驱逐门禁），
+  不再以第三方对标对象命名；README/run.sh/diag.sh/conf/scripts 的 case 名与 token
+  （含共享 `diag_analyze.py` / `diag_mem_analyze.py` 的 `who` 解析，改走显式 `CASE_NAME`）
+  同步更新。历史 PK_REPORT 等归档正文保留 QRadar EP 对标记录。
 - **吞吐/规则路径回归职责**（随上述两场景删除收口）：日常吞吐与规则路径回归统一走
-  `qradar_pk` run.sh（含 #18 object 驱逐门禁）与 `nexmark_pk`（bench/diag/verify）；object
-  大批次驱逐的专项轻量复现可在 qradar_pk 50000 事件档快速验证。
+  `rule_scale_test` run.sh（含 #18 object 驱逐门禁）与 `nexmark_pk`（bench/diag/verify）；object
+  大批次驱逐的专项轻量复现可在 rule_scale_test 50000 事件档快速验证。
 
 ## [2026-08-30]
 

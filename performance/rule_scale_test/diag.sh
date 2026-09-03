@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# qradar_pk diag.sh — 性能墙定位（perf-diag 诊断模式驱动）
+# rule_scale_test diag.sh — 性能墙定位（perf-diag 诊断模式驱动）
 #
-# 回答的问题：**450 规则负载的吞吐墙在哪一段/哪一族**，而不是「吞吐是多少」（那是 run.sh 的事）。
+# 回答的问题：**376 规则负载的吞吐墙在哪一段/哪一族**，而不是「吞吐是多少」（那是 run.sh 的事）。
 #
 #   run.sh   = 基准：全量跑，出 EPS/RSS/#18 门禁（对标 QRadar EP 80k @ 451 规则）
 #   diag.sh  = 诊断：六档墙梯逐段切除 + 可选规则家族档，出每段增量成本 + 墙判定
@@ -38,7 +38,7 @@
 #   FRAMES=path         直接指定帧文件（默认 data/burst_<N>.frames，与 run.sh 共享）
 #   GEN_FRAMES=1        缺帧时自动生成（默认 1：gen_events.py + dump-frames）
 #   SAMPLE_MS=100       CPU%/RSS 采样周期（档时长短时决定 CPU 归属可信度）
-#   TIMEOUT_SECS=       单次等待超时（默认 N/20000+120；450 规则稳态 ~150k/s，留足余量）
+#   TIMEOUT_SECS=       单次等待超时（默认 N/20000+120；376 规则稳态 ~150k/s，留足余量）
 #   WF_DIAG_MAX_TOTAL_BYTES=0|8GB|60%  诊断模式全局窗口内存 cap（引擎侧）：默认 =
 #                       物理内存 60%（墙梯重发同一份数据 N 次会放大窗口内存压力，
 #                       cap 过小 → commit_append 停车 → 内存墙错报成计算墙，q20 已证伪）；
@@ -202,7 +202,7 @@ cleanup() {
 cleanup; trap cleanup EXIT INT TERM
 
 # 诊断 conf：基于 conf/wfusion.toml 覆盖并行度 + **解除入流限速**
-# 注意：**不改 report_interval**（与 nexmark_pk 相反）。450 条规则下每区间导出 ~8.7k 行
+# 注意：**不改 report_interval**（与 nexmark_pk 相反）。高规则量下每区间导出近万行
 # 指标，改 100ms 会让 exporter 自己成为负载并**丢样本**（实测 40s 跑批只导出 52 个区间，
 # append_total 求和只到 19.5%）。哨兵口径不依赖 metrics 粒度，保持 1s 对 EPS 无影响。
 write_conf() {
@@ -319,7 +319,7 @@ finalize_report() {
   [ "$COLD" = "1" ] && CTX="cold(每档独立daemon) · ${CTX}"
   # 分析：共享 diag_analyze.py（哨兵四元组 × CPU/RSS 采样 × metrics 健康），
   # 输入走环境变量；stdout = 报告，退出码 0=健康 / 1=硬失败。
-  QUERY="qradar" N="$N" CTX="$CTX" COLD_MODE="$CM" \
+  QUERY="ruleset" CASE_NAME="rule_scale_test" N="$N" CTX="$CTX" COLD_MODE="$CM" \
   RULES_COUNT="$RULES_N" \
   STAGE_NAMES="$STAGE_NAMES" APPEND_CUT_STAGES="$APPEND_CUT_STAGES" CORES="$CORES" \
   SENT_PATH="data/perf_sentinel.ndjson" SAMPLES_PATH="$SAMPLES" \
