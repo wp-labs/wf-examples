@@ -6,13 +6,25 @@ All notable changes to the wf-examples performance / verification scenarios will
 
 ### Removed
 
-- **`performance/eps_throughput`（吞吐压测冒烟 case）**：其规则集（6 条：global_throughput /
+- **`performance/eps_throughput`（吞吐压测冒烟 case）**：规则集（6 条：global_throughput /
   per_sip_instances / denied_probe / login_brute / traffic_sum / accu_tracker）与数据模式
-  （burst/sustain/distinct）均为 `eps_throughput_obj`（20 条规则超集，含同名前 6 条；peak/stream
-  × normal/flood/single 兼容旧模式）的真子集；吞吐权威口径已由 `nexmark_pk` / `qradar_pk` 取代，
-  且原 README 自标「历史数据待复测、早于批式向量化、低估当前引擎」。删除并归档于 git 历史——
-  吞吐/规则路径回归后续由 `eps_throughput_obj` 的 #18 门禁与 `qradar_pk` run.sh 承担；根 README
-  同步移除该条目。
+  （burst/sustain/distinct）是 `eps_throughput_obj`（20 条规则超集，含同名前 6 条）的真子集；
+  吞吐权威口径由 `nexmark_pk` / `qradar_pk` 取代，README 自标「历史数据待复测」。删除归档于
+  git 历史。
+- **`performance/eps_throughput_obj`（object 字段 + 20 规则回归 case）**：历史定位为
+  wp-reactor#18（object 大批次被窗口内存驱逐静默丢弃）的复现/回归场景（fork 自
+  eps_throughput，run.sh 自述「与 eps_throughput 相同，但带 object 字段」）。#18 修复
+  （内容记账，wp-reactor 228f441）合入后：① 驱逐回归已由 `qradar_pk` run.sh 内置门禁
+  （`in memory eviction` = 0 且 conn emitted > 0，数据同样带 object）每日守护；② `validate.sh`
+  A/B 需修复前 v0.4.0 二进制，仅剩考古价值；③ 富类型/函数/seq 覆盖网格的正确性由引擎单测
+  与 warp-fusion e2e（datagen 对拍）承担，obj 并非类型守护场景。删除归档于 git 历史；
+  qradar_pk README 历史对照备注同步标注场景已归档。
+
+### Changed
+
+- **吞吐/规则路径回归职责**（随上述两场景删除收口）：日常吞吐与规则路径回归统一走
+  `qradar_pk` run.sh（含 #18 object 驱逐门禁）与 `nexmark_pk`（bench/diag/verify）；object
+  大批次驱逐的专项轻量复现可在 qradar_pk 50000 事件档快速验证。
 
 ## [2026-08-30]
 

@@ -1,7 +1,0 @@
-use "../models/schemas/network.wfs"
-
-scenario eps_burst<seed=1> {
-  traffic {
-    stream conn_events gen 100000/s
-  }
-}
