@@ -4,7 +4,8 @@
 # 用 daemon 端 max_ingest_rate 把引擎消化速率限定为目标 EPS（qradar/nexmark
 # MAX_INGEST_RATE 同款口径），注入端全速 send → 引擎按目标速率稳态消化；
 # 统计该速率下的 CPU（核占数 avg/max）/ RSS 峰值 / allocator commit /
-# e2e 延迟 p50/p99，并判定「跟上 / 达上限」（目标 > 引擎能力时实际 EPS 到顶）。
+# e2e 延迟 p50/p99，并判「达成率 %(可服务/能力封顶)」——目标超过引擎可持续吞吐时
+# 达成率 <80%、实际 EPS 即引擎真实能力顶。
 #
 # 用法:
 #   ./sweep.sh                    # 默认档位 1w,2w,5w,10w
@@ -120,8 +121,8 @@ ALLOW_BIG=${ALLOW_BIG:-0}
 
 echo "== sweep: 100 条常见规则 × 限定 EPS（max_ingest_rate 引擎限速）资源统计 =="
 echo "    每档稳态窗 ${SWEEP_SECS}s（行数 = EPS × ${SWEEP_SECS}）"
-printf "%-7s %-9s %-9s %-16s %-9s %-9s %-7s %-8s %s\n" \
-  "档" "EPS目标" "实际EPS" "CPU% avg/p95/max" "RSS" "commit" "跟上" "耗时" "行数"
+printf "%-7s %-9s %-9s %-16s %-9s %-9s %-8s %-8s %s\n" \
+  "档" "EPS目标" "实际EPS" "CPU% avg/p95/max" "RSS" "commit" "达成%" "耗时" "行数"
 echo "---"
 : > "$REPORT"
 
@@ -187,8 +188,10 @@ for i in "${!EPS_LIST[@]}"; do
   # 实际 EPS = 纯引擎消化段速率（send 完成 → acked_lag=0），平台期不计入
   DIGEST_W=$($PY -c "print(max($ACK0_W - $DIGEST_START_W, 0.05))")
   ACT_EPS=$($PY -c "print(int($LINES / $DIGEST_W))" 2>/dev/null || echo 0)
-  # 跟上 = 实际消化速率达到目标限速；目标 > 引擎能力时实际到顶 → 达上限
-  if $PY -c "exit(0 if $ACT_EPS >= $EPS * 0.8 else 1)" 2>/dev/null; then FOLLOW="跟上"; else FOLLOW="达上限"; fi
+  # 达成率 = 实际消化速率 / 目标限速。≥80% = 目标限速可服务（引擎按速率稳态消化）；
+  # <80% = 目标超出引擎能力（限速失效，实际 EPS 即引擎真实吞吐封顶值）。
+  DONE_PCT=$(( ACT_EPS * 100 / EPS ))
+  if $PY -c "exit(0 if $ACT_EPS >= $EPS * 0.8 else 1)" 2>/dev/null; then FOLLOW="可服务"; else FOLLOW="能力封顶"; fi
 
   WS=$(( START_NS - 1000000000 )); WE="$END_NS"
   CPU_STATS=$("$PY" - "$RSS_SAMPLES" "$WS" "$WE" <<'EOF'
@@ -235,12 +238,12 @@ EOF
   TIER_END=$($PY -c 'import time; print(int(time.time()))')
   TIER_S=$(( TIER_END - TIER_START ))
 
-  printf "%-7s %-9s %-9s %-16s %-9s %-9s %-7s %-8s %s\n" \
+  printf "%-7s %-9s %-9s %-16s %-9s %-9s %-8s %-8s %s\n" \
     "$EPS_DISP" "$EPS" "$ACT_EPS" "$CPU_AVG/$CPU_P95/$CPU_MAX" "${PEAK_RSS}M" "${CMIT_MB}M" \
-    "$FOLLOW" "${TIER_S}s" "$LINES"
-  printf "%s %s %s %s/%s/%s %s %s %s %s %s\n" \
+    "${DONE_PCT}%($FOLLOW)" "${TIER_S}s" "$LINES"
+  printf "%s %s %s %s/%s/%s %s %s %s %s %s %s\n" \
     "$EPS_DISP" "$EPS" "$ACT_EPS" "$CPU_AVG" "$CPU_P95" "$CPU_MAX" "$PEAK_RSS" "$CMIT_MB" \
-    "$FOLLOW" "$TIER_S" "$LINES" >> "$REPORT"
+    "$DONE_PCT" "$FOLLOW" "$TIER_S" "$LINES" >> "$REPORT"
 
   kill "$DAEMON_PID" 2>/dev/null || true
   wait "$DAEMON_PID" 2>/dev/null || true
