@@ -29,5 +29,14 @@ rule q12_bidder_10s_window_count {
     } -> score(10.0)
     entity(digit, b.bidder)
     yield nexmark_alerts (id = b.bidder, alert_type = "q12_window", detail = "bids in 10s window", request_count = 1)
-    limits { max_memory = "512MB" }
+    // limits 实测校准（2026-09-04, wfl limits-est data/metrics.ndjson）:
+    // 30M replay: 实例峰值 2841 × 2.0 = 5682；内存峰值 8.4MB × 2.0 ≈ 17MB。
+    // 100M replay 复核: 实例峰值 2621 / 内存峰值 7.5MB, EMIT 2,833,644 = 30M 精确
+    //   ×3.336（零静默丢）→ 纯计数规则实例状态只随窗内并发 key 数走, 与总 N 无关。
+    // 原拍脑袋 512MB 余量 60× 偏大——上限是保险丝不是工作带。收紧后已对拍 EMIT 不变。
+    limits {
+        max_memory = "17MB"
+        max_instances = 5682
+        on_exceed = throttle
+    }
 }
