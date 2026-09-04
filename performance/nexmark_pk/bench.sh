@@ -21,7 +21,7 @@
 #                     典型 ~10G/100m）；保留结果文件 data/bench_*.txt
 #       all          = 连结果文件 data/bench_*.txt、data/verify_*.txt 一起删
 #   调优用环境变量（并行度默认取 conf/wfusion.toml）:
-#     PARSE_PARALLELISM / RULE_PARALLELISM / MAX_FRAME_BYTES / MAX_FRAME_ROWS
+#     RULE_PARALLELISM / MAX_FRAME_BYTES / MAX_FRAME_ROWS
 #     MAX_INGEST_RATE（引擎端限速）/ RATE / SLICE_MS（stream）
 #     CONNECTIONS（replay 并发连接数，默认 1——2026-08-20 起默认单连接：
 #       gen-nexmark 输出已按事件时间排序（v2 数据），单连接整文件推保持时间
@@ -34,7 +34,7 @@
 #       shard-frames --shard-files，同 key 同连接，有状态负载也安全）
 #     WARMUP=1（replay：先跑一轮预热不计结果——stash 重建后首跑系统性偏低，须剔除）
 # 示例:
-#   PARSE_PARALLELISM=6 RULE_PARALLELISM=6 MAX_FRAME_BYTES=204800 ./bench.sh q1 replay 100m
+#   RULE_PARALLELISM=10 MAX_FRAME_BYTES=204800 ./bench.sh q1 replay 100m   # 调 rule_shards
 #   WARMUP=1 ./bench.sh all replay 30m
 #   ./bench.sh mix replay 30m     # 全部规则一个 daemon 混跑（合并吞吐，对照 all 逐个均值）
 #   CONNECTIONS=4 SHARD_KEYS="bid_events:auction,auction_events:id,person_events:id" ./bench.sh q2 replay 30m  # 有状态:键闭包多连接
@@ -105,8 +105,12 @@ fi
 VERIFY="${VERIFY:-0}"
 for arg in "$@"; do [ "$arg" = "--verify" ] && VERIFY=1; done
 # 调优参数：环境变量（并行度不设默认——write_conf 从 conf/wfusion.toml 读取，env 才覆盖）
-PARSE="${PARSE_PARALLELISM:-}"
 RULE="${RULE_PARALLELISM:-}"
+# decode-route-merge（引擎 2026-08-31）后 parse 池移除：parse_parallelism 弃用忽略，
+# 传了不拦会导致"调了没用"的假预期——显式提醒（可调旋钮只剩 rule_shards/window_buffer_bytes）。
+if [ -n "${PARSE_PARALLELISM:-}" ]; then
+  echo "⚠ PARSE_PARALLELISM 已弃用并忽略（引擎 decode-route-merge 后无 parse 池；调 rule_shards / window_buffer_bytes）" >&2
+fi
 MAX_FRAME_BYTES="${MAX_FRAME_BYTES:-8388608}"
 MAX_FRAME_ROWS="${MAX_FRAME_ROWS:-100000}"
 MAX_INGEST_RATE="${MAX_INGEST_RATE:-}"
@@ -369,10 +373,8 @@ write_conf() {
     done
     RULES="data/mix_rules/*.wfl"
   fi
-  PARSE_V_EFF="${PARSE:-$(sed -n 's/^parse_parallelism = *//p' conf/wfusion.toml | head -1)}"
   RULE_V_EFF="${RULE:-$(sed -n 's/^rule_shards = *//p' conf/wfusion.toml | head -1)}"
   sed -e "s|^rules = .*|rules = \"${RULES}\"|" \
-      -e "s|^parse_parallelism = .*|parse_parallelism = ${PARSE_V_EFF}|" \
       -e "s|^rule_shards = .*|rule_shards = ${RULE_V_EFF}|" \
       conf/wfusion.toml > /tmp/bench_conf.toml
   # 限速：MAX_INGEST_RATE 设置时在 [runtime] 注入 max_ingest_rate

@@ -29,7 +29,7 @@
 ```bash
 ./bench.sh [query=all|mix|q1..q22] [feed=replay|stream] [total=100m|30m|10m|1m]
 WARMUP=1 ./bench.sh all replay 30m     # 预热一轮再测（stash 重建后首跑偏低，剔除）
-PARSE_PARALLELISM=6 RULE_PARALLELISM=6 ./bench.sh q1 replay 10m   # 调并行度
+RULE_PARALLELISM=6 ./bench.sh q1 replay 10m   # 调 rule_shards（parse 已无池，见下）
 CONNECTIONS=4 SHARD_KEYS="bid_events:auction,..." ./bench.sh q2 replay 30m  # 键闭包分片
 ./bench.sh mix replay 30m      # 混跑：全部规则同时加载进一个 daemon（测多规则同跑）
 ```
@@ -81,7 +81,8 @@ q1/replay: EPS=12,881,009 · RSS_peak=3,571MB · CPU 240%avg/382%max · evict=39
 3. **A/B 必须不限速**：`RATE` 会把 EPS 封顶（限速 = 测供给不是引擎）。
 4. **同时段交错对比**：EPS 与 RSS_peak 双峰相位强相关（同配置差 ±8%），结论按 RSS 相位配对；
    单轮数字只作量级参考。
-5. **引用 RSS 必须标注 `parse_buffer_bytes`**：128MB 与 2GB 预算的 EPS/RSS 不可直接对等。
+5. **引用 RSS 必须标注 `window_buffer_bytes`**（入流背压预算，默认 64MiB；旧 `parse_buffer_bytes`
+   已于 2026-08-31 decode-route-merge 移除，引擎不再使用）——预算口径不同的 EPS/RSS 不可直接对等。
 6. **CPU 是活跃窗口径**（哨兵 start/emit ± 0.5s，100ms cputime 差分）：全生命周期统计会把
    亚秒级突发（q2/q8 ≈ 0.4s）稀释成 0% 假象；短跑（<2s）读数只宜作量级参考。
 

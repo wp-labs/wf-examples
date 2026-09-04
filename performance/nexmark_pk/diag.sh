@@ -38,7 +38,9 @@
 #                       消除首档独自承担的窗口冷分配/page fault 偏差（2026-08-24 q1 10m
 #                       实测：不预热时 floor(21.2M) 反而慢于 rules(26.6M) 25%，偏差大于信号；
 #                       预热后 floor 升到 31.8M、墙梯恢复单调）。关掉只为省一档时间/内存。
-#   PARSE_PARALLELISM= / RULE_PARALLELISM=   并行度（默认取 conf/wfusion.toml）
+#   RULE_PARALLELISM=10   并行度（rule_shards，默认取 conf/wfusion.toml）。
+#                         PARSE_PARALLELISM 已弃用并忽略（引擎 decode-route-merge
+#                         2026-08-31 后无 parse 池；传了会提醒）
 #   FRAMES=path         直接指定帧文件（默认 data/bench_<total>_<DATA_VER>.frames，与 bench.sh 共享）
 #   DATA_VER=v5 / MAX_FRAME_BYTES=8388608 / MAX_FRAME_ROWS=100000
 #   GEN_FRAMES=1        帧缺失时自动生成（gen-nexmark + dump-frames，30m 需数分钟/数 GB）
@@ -89,8 +91,10 @@ GEN_FRAMES="${GEN_FRAMES:-0}"
 FORCE="${FORCE:-0}"
 GATE="${GATE:-}"                       # L4 门禁配置（conf/perf-gate.toml）
 RECORD_BASELINE="${RECORD_BASELINE:-}"  # 留存基线墙表（相对回归参照）
-PARSE="${PARSE_PARALLELISM:-}"
 RULE="${RULE_PARALLELISM:-}"
+if [ -n "${PARSE_PARALLELISM:-}" ]; then
+  echo "⚠ PARSE_PARALLELISM 已弃用并忽略（引擎 decode-route-merge 后无 parse 池；调 rule_shards / window_buffer_bytes）" >&2
+fi
 WINDOWS_SRC="models/schemas/windows.toml"
 CONF_TMP=/tmp/diag_conf.toml
 SAMPLES=/tmp/diag_samples.txt
@@ -292,10 +296,8 @@ cleanup; trap cleanup EXIT INT TERM
 # 查询 conf：基于 conf/wfusion.toml 覆盖 rules/并行度/windows（与 bench.sh write_conf 同源）
 write_conf() {
   local Q="$1"
-  PARSE_EFF="${PARSE:-$(sed -n 's/^parse_parallelism = *//p' conf/wfusion.toml | head -1 | tr -d ' ')}"
   RULE_EFF="${RULE:-$(sed -n 's/^rule_shards = *//p' conf/wfusion.toml | head -1 | tr -d ' ')}"
   sed -e "s|^rules = .*|rules = \"models/queries/$Q.wfl\"|" \
-      -e "s|^parse_parallelism = .*|parse_parallelism = ${PARSE_EFF}|" \
       -e "s|^rule_shards = .*|rule_shards = ${RULE_EFF}|" \
       -e "s|^windows = .*|windows = \"${WINDOWS_EFF}\"|" \
       conf/wfusion.toml > "$CONF_TMP"

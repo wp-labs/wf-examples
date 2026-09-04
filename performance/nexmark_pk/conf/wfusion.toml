@@ -6,7 +6,8 @@ sinks = "topology/sinks"
 windows = "models/schemas/windows.toml"
 
 [runtime]
-#parse_parallelism = 10
+# parse_parallelism 已弃用并忽略（引擎 decode-route-merge 2026-08-31 后无 parse 池）；
+# 入流背压由 window_buffer_bytes 承担。可调：rule_shards / window_buffer_bytes / max_ingest_rate
 rule_shards=  10
 rule_exec_timeout = "30s"
 schemas = "models/schemas/*.wfs"

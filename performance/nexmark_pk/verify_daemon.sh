@@ -15,7 +15,8 @@
 #     data/bench_<total>_v5.frames 必须存在（bench.sh 会生成；1m 缓存已入库）。
 #   env（与 bench.sh 同款）:
 #     REPO / WFUSION / WFGEN   二进制来源（默认 ../../../warp-fusion/target/release）
-#     PARSE_PARALLELISM / RULE_PARALLELISM   并行度（默认取 conf/wfusion.toml）
+#     RULE_PARALLELISM   并行度（rule_shards，默认取 conf/wfusion.toml）
+#     PARSE_PARALLELISM   已弃用并忽略（decode-route-merge 后无 parse 池，传了会提醒）
 #     DATA_VER   帧缓存版本（默认 v5）
 #     SKIP_BIN_CHECK=1 / BIN_CHECK_STRICT=1   二进制新鲜度自检开关
 #
@@ -27,8 +28,10 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 QUERY="${1:-all}"
 TOTAL="${2:-1m}"
 DATA_VER="${DATA_VER:-v5}"
-PARSE="${PARSE_PARALLELISM:-}"
 RULE="${RULE_PARALLELISM:-}"
+if [ -n "${PARSE_PARALLELISM:-}" ]; then
+  echo "⚠ PARSE_PARALLELISM 已弃用并忽略（引擎 decode-route-merge 后无 parse 池；调 rule_shards / window_buffer_bytes）" >&2
+fi
 
 # 二进制来源（同 bench.sh）：优先本地 warp-fusion release；回退 PATH。
 REPO="${REPO:-}"
@@ -205,11 +208,9 @@ echo "== verify_daemon: query=$QUERY total=$TOTAL frames=$(basename "$FRAMES") �
 for Q in "${QUERIES[@]}"; do
   CONF="/tmp/verify_daemon_${Q}.toml"
   # 并行度默认取 $BASE_CONF；env 覆盖（单次 sed 完成全部替换）
-  PARSE_EFF="${PARSE:-$(sed -n 's/^parse_parallelism = *//p' "$BASE_CONF" | head -1)}"
   RULE_EFF="${RULE:-$(sed -n 's/^rule_shards = *//p' "$BASE_CONF" | head -1)}"
   sed -e "s|^sinks = .*|sinks = \"topology/sinks_file\"|" \
       -e "s|^rules = .*|rules = \"models/queries/${Q}.wfl\"|" \
-      -e "s|^parse_parallelism = .*|parse_parallelism = ${PARSE_EFF}|" \
       -e "s|^rule_shards = .*|rule_shards = ${RULE_EFF}|" \
       "$BASE_CONF" > "$CONF"
 
