@@ -1,0 +1,18 @@
+# wfusion 配置 — mode 由 CLI 控制: wfusion daemon | wfusion batch
+# daemon 模式: ./run.sh（持续运行，Ctrl-C 停止）
+# batch 模式 : ./smoke.sh（一次性确定性验证）
+
+sources_dir = "topology/sources"
+sinks = "topology/sinks"
+windows = "models/schemas/windows.toml"
+
+[runtime]
+executor_parallelism = 2
+rule_exec_timeout = "30s"
+schemas = "models/schemas/*.wfs"
+rules = "models/rules/*/*.wfl"
+
+[logging]
+level = "info"
+format = "plain"
+file = "data/wfusion.log"

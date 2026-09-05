@@ -1,0 +1,28 @@
+// Nginx access log 事件窗口 — 覆盖最常见的 access log 字段
+//
+// 注意: http_status 用 chars（"200"/"500"...），避免 digit 注入产生的
+// 浮点值在比较/分组上的引擎差异；5xx 判定在示例里用精确码位演示
+// （真实接入可用 parser 归一化后仍是 chars 码位或升级 digit 语义）。
+window nginx_access {
+    stream_tag = "nginx_access"
+    time = event_time
+    over = 5m
+    fields {
+        client_ip: ip
+        method: chars
+        uri: chars
+        http_status: chars
+        bytes_sent: digit
+        user_agent: chars
+        event_time: time
+    }
+}
+
+// 告警 / 统计输出窗口（over=0：只做输出通道，不保留时间窗）
+window nginx_alerts {
+    over = 0
+    fields {
+        alert_type: chars
+        detail: chars
+    }
+}

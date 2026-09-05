@@ -1,0 +1,12 @@
+[sink_group]
+name = "nginx_out"
+windows = ["nginx_alerts"]
+wf_meta_disable = ["__wfu_id", "__wfu_entity_id"]
+
+[[sink_group.sinks]]
+connect = "file_json_sink"
+name = "nginx_file"
+
+[sink_group.sinks.params]
+base = "data/alerts"
+file = "nginx.ndjson"

@@ -2,6 +2,20 @@
 
 All notable changes to the wf-examples performance / verification scenarios will be documented in this file.
 
+## [2026-09-05]
+
+### Added
+
+- **`nginx_log_stats/` — Nginx access 日志统计分析示例**：自包含 case，两条运行路径：
+  `./smoke.sh`（batch 确定性验证：lint → wfgen gen → wfusion batch → 304 行输出断言）与
+  `./run.sh`（持续运行：wfusion daemon TCP :9800 + wfgen stream 实时注入，输出实时追加
+  `data/alerts/nginx.ndjson`，75s 实测 212 行且持续增长）。规则：`nginx_status_stats`
+  （`stats<5s:fixed>` 按状态码分组，桶关闭输出请求量/独立客户端/5xx，看板实时可见）与 `nginx_5xx_surge`
+  （同源 IP 1m 内 5xx≥3）。配套 `./view.sh` + `view/index.html`：零依赖实时看板直接读引擎输出文件、
+  每 3s 自动刷新——实时访问统计（状态码分布/每桶请求时间线/分桶表，随 5s 桶增长）与
+  5xx 突发检测列表实时更新。实现备注：字段用 `http_status: chars`（数字注入会以浮点存储，events 子句
+  数值比较与 stats 分组在该形态下有引擎差异；`status` 名保留）。
+
 ## [2026-09-03]
 
 ### Added

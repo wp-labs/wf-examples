@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nginx 实时统计 &amp; 检测 — nginx_log_stats</title>
+<style>
+  :root { color-scheme: light dark; --line:#e2e6ec; --card:#fff; --bg:#f2f4f7; --tx:#1c2430; --mut:#8a94a3; }
+  @media (prefers-color-scheme: dark) { --line:#2e3540; --card:#20242b; --bg:#171a1f; --tx:#dde3ea; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 ui-sans-serif,system-ui,"PingFang SC",sans-serif; background:var(--bg); color:var(--tx); }
+  header { padding:14px 22px; background:var(--card); border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  h1 { font-size:17px; margin:0; } h1 small { color:var(--mut); font-weight:400; }
+  .live { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:#16a34a; }
+  .live .dot { width:8px; height:8px; border-radius:50%; background:#16a34a; animation:blink 1.4s infinite; }
+  @keyframes blink { 50% { opacity:.2; } }
+  .src { color:var(--mut); font-size:12px; margin-left:auto; }
+  button { font:inherit; padding:5px 12px; border:1px solid #cbd2db; border-radius:6px; background:var(--card); cursor:pointer; }
+  main { padding:18px 22px; display:grid; gap:18px; max-width:1200px; margin:0 auto; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
+  h2 { margin:0 0 4px; font-size:15px; }
+  section > p.sub { margin:0 0 14px; color:var(--mut); font-size:12px; }
+  .cards { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:14px; }
+  .card { min-width:130px; flex:1; background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:10px 14px; }
+  .card .k { color:var(--mut); font-size:12px; }
+  .card .v { font-size:22px; font-weight:600; margin-top:2px; }
+  .grid2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:16px; margin-bottom:14px; }
+  .blk h3 { font-size:13px; margin:0 0 8px; color:var(--mut); font-weight:500; }
+  .bar-row { display:flex; align-items:center; gap:8px; font-size:12px; margin:4px 0; }
+  .bar-row .lb { width:86px; text-align:right; flex:none; }
+  .ipl .lb { width:132px; text-align:right; flex:none; font-family: ui-monospace, Menlo, monospace; }
+  .ipl .nm { width:auto; color:var(--mut); white-space:nowrap; }
+  #ip-list { max-height:220px; overflow:auto; }
+  #ip-title b { color:var(--tx); }
+  .bar-track { flex:1; background:var(--bg); border-radius:4px; overflow:hidden; height:16px; }
+  .bar { height:100%; border-radius:4px; min-width:2px; }
+  .bar-row .nm { width:120px; flex:none; color:var(--mut); }
+  .tl { display:flex; align-items:flex-end; gap:3px; height:80px; }
+  .tl .col { flex:1; background:#2563eb; border-radius:2px 2px 0 0; opacity:.85; position:relative; min-width:4px; }
+  .tl .col:hover::after { content:attr(data-t); position:absolute; bottom:calc(100% + 4px); left:50%; transform:translateX(-50%);
+    background:#111; color:#fff; font-size:11px; padding:2px 6px; border-radius:4px; white-space:nowrap; z-index:5; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th,td { padding:6px 10px; text-align:left; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { color:var(--mut); font-weight:500; }
+  .pill { display:inline-block; padding:0 8px; border-radius:999px; font-size:12px; }
+  .pill.ok{background:#dcfce7;color:#15803d} .pill.warn{background:#fef3c7;color:#b45309}
+  .pill.err{background:#fee2e2;color:#b91c1c} .pill.info{background:#dbeafe;color:#1d4ed8}
+  .empty { color:var(--mut); padding:22px; text-align:center; }
+  .c2{background:#16a34a}.c3{background:#2563eb}.c4{background:#d97706}.c5{background:#dc2626}.co{background:#8a94a3}
+</style>
+</head>
+<body>
+<header>
+  <h1>Nginx 实时统计 &amp; 检测 <small>nginx_log_stats</small></h1>
+  <span class="live"><span class="dot"></span>每 3s 自动刷新</span>
+  <button id="refresh">立即刷新</button>
+  <button id="pick">选择文件…</button>
+  <input id="file" type="file" accept=".ndjson,.jsonl,application/json" hidden>
+  <span class="src" id="src">加载中…</span>
+</header>
+<main>
+
+  <section id="sec-stat">
+    <h2>实时访问统计</h2>
+    <p class="sub">数据源：<code>data/alerts/nginx.ndjson</code> 的 <code>nginx_status_stats</code> 行
+      —— 引擎每 5s 固定桶关闭即追加一行，页面随文件实时更新<span id="stat-note" style="margin-left:8px"></span></p>
+    <div class="cards" id="stat-cards"></div>
+    <div class="grid2">
+      <div class="blk"><h3>状态码分布（累计 · Top 10）</h3><div id="status-dist"></div></div>
+      <div class="blk"><h3>请求时间线（每桶）</h3><div class="tl" id="timeline"></div></div>
+    </div>
+    <div class="grid2"><div class="blk"><h3 id="ip-title">独立 IP 列表</h3><div id="ip-list" class="ipl"></div></div></div>
+    <table id="stat-table"></table>
+    <div class="empty" id="stat-empty" style="display:none">暂无统计行——持续运行（./run.sh）约 5s 后出现首桶</div>
+  </section>
+
+  <section id="sec-detect">
+    <h2>5xx 突发检测</h2>
+    <p class="sub">数据源：<code>data/alerts/nginx.ndjson</code> 的 <code>http_5xx_surge</code> 告警行<span id="det-note" style="margin-left:8px"></span></p>
+    <div class="cards" id="det-cards"></div>
+    <table id="det-table"></table>
+    <div class="empty" id="det-empty" style="display:none">暂无告警</div>
+  </section>
+
+</main>
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const state={alerts:[],ok:false};
+const colorOf=s=>{const n=parseInt(s,10);if(isNaN(n))return"co";const c=Math.floor(n/100);return c===2?"c2":c===3?"c3":c===4?"c4":c===5?"c5":"co";};
+function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+function parseNDJ(text){return text.trim().split("\n").filter(Boolean).map(l=>{try{return JSON.parse(l);}catch{return null;}}).filter(Boolean);}
+function fmt(n){if(n==null)return"-";if(n>=1e6)return(n/1e6).toFixed(1)+"M";if(n>=1e3)return(n/1e3).toFixed(1)+"k";return String(n);}
+function shortT(t){return t&&t.length>=19?t.slice(11,19):(t||"-");}
+function parseDetail(s){const o={};if(!s)return o;(s.match(/(\w[\w]*)=([^ ]+)/g)||[]).forEach(p=>{const i=p.indexOf("=");o[p.slice(0,i)]=p.slice(i+1);});return o;}
+function pillFor(st){const c=Math.floor(parseInt(st,10)/100);return c===2?"ok":c===3?"info":c===4?"warn":c===5?"err":"info";}
+
+function renderStats(){
+  const stat=state.alerts.filter(r=>r.alert_type==="nginx_status_stats");
+  const empty=$("stat-empty");
+  if(!stat.length){empty.style.display="block";return;}
+  empty.style.display="none";
+  // 解析每行: {t: fired_at, status, total, clients, 5xx}
+  const rows=stat.map(r=>{const d=parseDetail(r.detail);return{t:r.__wfu_fired_at||"",s:d.status,n:Number(d.total)||0,c:Number(d.clients)||0,x:Number(d["5xx"])||0};});
+  // 独立 IP：来自 nginx_ip_stats 分桶行（每桶每 IP 一行），跨桶累计去重
+  const ipMap={};
+  for(const r of state.alerts.filter(r=>r.alert_type==="nginx_ip_stats")){
+    const d=parseDetail(r.detail), ip=d.ip; if(!ip) continue;
+    const e=ipMap[ip]||(ipMap[ip]={hits:0,x5:0});
+    e.hits+=Number(d.hits)||0; e.x5+=Number(d["5xx"])||0;
+  }
+  const ipCount=Object.keys(ipMap).length;
+  const cum={},byT={};
+  let cum5=0;
+  for(const r of rows){cum[r.s]=(cum[r.s]||0)+r.n;cum5+=r.x;byT[r.t]=(byT[r.t]||0)+r.n;}
+  const total=Object.values(cum).reduce((a,b)=>a+b,0);
+
+  const cards=$("stat-cards");cards.innerHTML="";
+  const card=(k,v,tip)=>cards.insertAdjacentHTML("beforeend",`<div class="card"><div class="k">${k}</div><div class="v"${tip?` title="${tip}"`:''}>${v}</div></div>`);
+  card("累计请求",fmt(total));card("独立 IP",ipCount?fmt(ipCount):"-","来自 nginx_ip_stats 分桶行去重（按已关闭桶累计）；明细见下方列表");
+  card("累计 5xx",fmt(cum5));
+  card("5xx 占比",total?(100*cum5/total).toFixed(1)+"%":"-");
+  card("统计桶数",stat.length);card("最近桶",rows.length?shortT(rows[rows.length-1].t):"-");
+
+  const sd=Object.entries(cum).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  const sMax=Math.max(...sd.map(x=>x[1]),1);
+  $("status-dist").innerHTML=sd.map(([s,n])=>`<div class="bar-row"><span class="lb">${esc(s)}</span><div class="bar-track"><div class="bar ${colorOf(s)}" style="width:${(n/sMax*100).toFixed(1)}%"></div></div><span class="nm">${fmt(n)} · ${(100*n/total).toFixed(1)}%</span></div>`).join("");
+
+  const times=Object.keys(byT).sort();
+  const tMax=Math.max(...Object.values(byT),1);
+  $("timeline").innerHTML=times.map(t=>{const n=byT[t];
+    return `<div class="col" style="height:${Math.max(3,n/tMax*100).toFixed(1)}%" data-t="${esc(t)} · ${fmt(n)} req"></div>`;}).join("");
+
+  // 独立 IP 列表（Top 10，限高滚动）
+  const $ip=$("ip-list");
+  const topIp=Object.entries(ipMap).sort((a,b)=>b[1].hits-a[1].hits).slice(0,10);
+  $("ip-title").innerHTML=ipCount?`独立 IP（共 <b>${ipCount.toLocaleString()}</b> 个）· 请求 Top 10`:"独立 IP";
+  if(!topIp.length){$ip.innerHTML=`<div class="empty">暂无——持续运行约 5s 后随首桶出现</div>`;}
+  else{
+    const imax=Math.max(1,...topIp.map(x=>x[1].hits));
+    $ip.innerHTML=topIp.map(([ip,e])=>`<div class="bar-row"><span class="lb">${esc(ip)}</span><div class="bar-track"><div class="bar ${e.x5?"c5":"c3"}" style="width:${Math.max(4,e.hits/imax*100).toFixed(1)}%"></div></div><span class="nm">${e.hits.toLocaleString()} 次${e.x5?` · 5xx ${e.x5.toLocaleString()}`:""}</span></div>`).join("");
+  }
+
+  const rowsD=rows.slice().sort((a,b)=>a.t>b.t?1:-1).reverse();
+  $("stat-note").textContent=rows.length>10?`共 ${rows.length} 行 · 仅列最近 10 行`:"";
+  $("stat-table").innerHTML=`<thead><tr><th>桶时间</th><th>状态码</th><th>请求量</th><th>独立 IP</th><th>5xx</th></tr></thead><tbody>`+
+    rowsD.slice(0,10).map(r=>`<tr><td title="${esc(r.t)}">${shortT(r.t)}</td><td><span class="pill ${pillFor(r.s)}">${esc(r.s)}</span></td><td>${fmt(r.n)}</td><td>${r.c}</td><td>${r.x}</td></tr>`).join("")+"</tbody>";
+}
+
+function renderDetect(){
+  const det=state.alerts.filter(r=>r.alert_type==="http_5xx_surge");
+  const empty=$("det-empty");
+  if(!det.length){empty.style.display="block";$("det-table").innerHTML="";return;}
+  empty.style.display="none";
+  const ips=new Set(det.map(r=>parseDetail(r.detail).client_ip));
+  const cards=$("det-cards");cards.innerHTML="";
+  const card=(k,v,c)=>cards.insertAdjacentHTML("beforeend",`<div class="card"><div class="k">${k}</div><div class="v" style="${c?`color:${c}`:''}">${v}</div></div>`);
+  card("5xx 突发告警",det.length,"#dc2626");card("涉及源 IP",ips.size);
+  card("首次告警",det.length?shortT(det[0].__wfu_fired_at):"-");card("最近告警",det.length?shortT(det[det.length-1].__wfu_fired_at):"-");
+  const body=det.slice().sort((a,b)=>a.__wfu_fired_at>b.__wfu_fired_at?1:-1).reverse().slice(0,10);
+  $("det-note").textContent=det.length>10?`共 ${det.length} 条 · 仅列最近 10 条`:"";
+  $("det-table").innerHTML=`<thead><tr><th>时间</th><th>源 IP</th><th>URI</th><th>状态</th></tr></thead><tbody>`+body.map(r=>{
+    const d=parseDetail(r.detail);
+    return `<tr><td title="${esc(r.__wfu_fired_at)}">${shortT(r.__wfu_fired_at)}</td><td>${esc(d.client_ip)}</td><td>${esc(d.uri)}</td><td><span class="pill err">${esc(d.http_status||"500")}</span></td></tr>`;
+  }).join("")+"</tbody>";
+}
+
+async function loadViaHttp(){
+  let loaded=false;
+  try{
+    const resp=await fetch("/data/alerts/nginx.ndjson",{cache:"no-store"});
+    if(!resp.ok)throw new Error(String(resp.status));
+    state.alerts=parseNDJ(await resp.text());state.ok=true;loaded=true;
+  }catch{state.alerts=[];state.ok=false;}
+  $("src").textContent=loaded
+    ? "文件直读: /data/alerts/nginx.ndjson · "+state.alerts.length+" 行"
+    : "未检测到本地服务 — 先 ./run.sh 运行，再 ./view.sh 起服务（或点「选择文件」）";
+  renderStats();renderDetect();
+}
+$("refresh").onclick=loadViaHttp;
+$("pick").onclick=()=>$("file").click();
+$("file").onchange=e=>{
+  const f=e.target.files&&e.target.files[0];if(!f)return;
+  const rd=new FileReader();
+  rd.onload=()=>{state.alerts=parseNDJ(String(rd.result));state.ok=true;renderStats();renderDetect();$("src").textContent="文件直读: "+f.name+" · "+state.alerts.length+" 行";};
+  rd.readAsText(f);
+};
+loadViaHttp();
+setInterval(()=>{if(document.visibilityState!=="hidden")loadViaHttp();},3000);
+</script>
+</body>
+</html>

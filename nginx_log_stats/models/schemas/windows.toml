@@ -1,0 +1,21 @@
+# nginx_log_stats 窗口物理参数
+[window_defaults]
+evict_interval = "30s"
+max_window_bytes = "256MB"
+max_total_bytes = "2GB"
+evict_policy = "time_first"
+watermark = "5s"
+allowed_lateness = "30m"
+late_policy = "drop"
+
+# nginx_access 数据窗口
+[window.nginx_access]
+mode = "local"
+max_window_bytes = "64MB"
+over_cap = "5m"
+
+# nginx_alerts 输出窗口 (over=0)
+[window.nginx_alerts]
+mode = "local"
+max_window_bytes = "16MB"
+over_cap = "0s"

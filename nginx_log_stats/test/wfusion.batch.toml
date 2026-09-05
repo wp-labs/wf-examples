@@ -1,0 +1,27 @@
+# nginx_log_stats — batch replay 配置
+#
+# 确定性冒烟路径：wfgen gen 生成的 ndjson → wfusion batch 回放，
+# 输出落到 data/alerts/nginx.ndjson。
+# mode 由 CLI 控制: wfusion batch
+
+sinks = "topology/sinks"
+windows = "models/schemas/windows.toml"
+
+[[sources]]
+connect = "file_src"
+enable = true
+name = "seed_nginx_access"
+path = "data/generated/nginx_access_quick.jsonl"
+stream_tag = "nginx_access"
+data_format = "ndjson"
+
+[runtime]
+executor_parallelism = 2
+rule_exec_timeout = "30s"
+schemas = "models/schemas/nginx.wfs"
+rules = "models/rules/*/*.wfl"
+
+[logging]
+level = "info"
+format = "plain"
+file = "data/wfusion.log"
