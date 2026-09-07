@@ -1,0 +1,24 @@
+# baseline case batch 回放配置（确定性，无需 TCP/daemon）。
+# 用法: wfusion batch --config test/wfusion.batch.toml --work-dir .
+
+sinks = "topology/sinks"
+windows = "models/schemas/windows.toml"
+
+[[sources]]
+connect = "file_src"
+enable = true
+name = "metrics_file"
+path = "data/generated/metrics_baseline.jsonl"
+stream_tag = "metrics_stream"
+data_format = "ndjson"
+
+[runtime]
+executor_parallelism = 4
+rule_exec_timeout = "30s"
+schemas = "models/schemas/*.wfs"
+rules = "models/rules/baseline_producer.wfl"
+
+[logging]
+level = "info"
+format = "plain"
+file = "data/logs/wfusion.log"

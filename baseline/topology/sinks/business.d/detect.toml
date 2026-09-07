@@ -1,0 +1,10 @@
+[sink_group]
+name = "baseline_alerts_group"
+windows = ["baseline_alerts"]
+wf_meta_disable = ["__wfu_*"]
+[[sink_group.sinks]]
+connect = "file_json_sink"
+name = "detect_file"
+[sink_group.sinks.params]
+base = "data/detect"
+file = "alerts.ndjson"

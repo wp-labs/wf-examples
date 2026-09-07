@@ -16,6 +16,7 @@ wfusion（warp-fusion + wp-reactor）的**可运行场景与性能基准**仓库
 | 目录 | 定位 | 入口 |
 |---|---|---|
 | [`getting_started/`](getting_started/README.md) | 最简：一条命令验证完整 CEP 管道（batch + daemon） | `./run.sh` |
+| [`baseline/`](baseline/README.md) | 在线行为基线 step 1：stats（含 sumsq）生成 BaselineRecord 落文件（n/sum/sum_sq） | `./smoke.sh` |
 | [`core/remote_ctrl/`](core/remote_ctrl/README.md) | 远端规则仓库同步 + 规则版本切换 + admin_api 热重载（L1/L2/blocked）全链路 | `./run.sh` |
 | [`core/meta_disable/`](core/meta_disable/) | meta/spill 关闭路径冒烟 | `./smoke.sh` |
 | [`connectors/`](connectors/) | sink/source 连接器配置样例（blackhole/file/doris/syslog/tcp…） | 供 case `topology/` 引用 |

@@ -1,0 +1,44 @@
+// metrics 指标流 — 基线数据生产的输入（entity/metric 双键 + 数值 value）。
+// 每个 (entity, metric) 的 value 构成一条待聚合的样本序列；stats 规则按
+// 窗口收盘产出 BaselineRecord（n/sum/sum_sq）。
+window metrics_stream {
+    stream_tag = "metrics_stream"
+    time = event_time
+    over = 1h
+    fields {
+        entity: chars
+        metric: chars
+        value: float
+        event_time: time
+    }
+}
+
+// 基线产出记录（= BaselineRecord, 设计方案 §4.2）：
+//   entity, metric        —— 隔离键
+//   win_start, win_end    —— 窗口边界（@window_start_time/@window_end_time）
+//   n / sum / sum_sq      —— 三元组：消费侧推导 mean = sum/n、
+//                           std = sqrt(sum_sq/n - mean^2)（无需引擎存样本）
+window baseline_out {
+    over = 0
+    fields {
+        entity: chars
+        metric: chars
+        win_start: time
+        win_end: time
+        n: float
+        sum: float
+        sum_sq: float
+    }
+}
+
+// 基线偏离判定输出（S2-M3a：provider join + where 越界过滤后的告警）。
+window baseline_alerts {
+    over = 0
+    fields {
+        entity: chars
+        alert_type: chars
+        value: float
+        mu: float
+        deviation: float
+    }
+}

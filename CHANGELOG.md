@@ -2,6 +2,18 @@
 
 All notable changes to the wf-examples performance / verification scenarios will be documented in this file.
 
+## [2026-09-07]
+
+### Added
+
+- **`baseline` — 在线行为基线 step 1（数据生产）**：`baseline_producer` 规则
+  （stats `<1m:fixed>` demo / 设计 1h + `group by (entity, metric)` + 新聚合
+  `sumsq`）把 `metrics_stream` 收敛为 `BaselineRecord`（n/sum/sum_sq + 窗口边界），
+  `yield baseline_out` → `file_json_sink` 落 `data/baseline/baseline.ndjson`；
+  `smoke.sh` 四步（lint / wfgen gen / batch / 对拍），`verify_baseline.py` 以输入事件
+  逐键总量对拍输出。引擎配套：wp-reactor wf-lang 全链 `sumsq` 聚合 + wf-engine
+  Classic 数值累加/平方域归并（见 baseline/README）。
+
 ## [2026-09-03]
 
 ### Added

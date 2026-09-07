@@ -1,0 +1,32 @@
+use "../schemas/metrics.wfs"
+
+// baseline 数据生产规则（设计方案 §4.1/§4.2 形态）——
+// 1h 固定窗（demo 用 1m 便于跑通）group by (entity, metric)，每窗每键产出一
+// 条基线记录（n/sum/sum_sq）经 yield 落 baseline_out，由 sink 写文件/外部库。
+//
+// - sumsq 聚合（∑v²）：本引擎新增聚合，见 docs/design/baseline-online-design.md
+//   §4.2 —— 消费侧用 n/sum/sum_sq 三元组推导 mean/std，无需引擎存原始样本。
+// - win_start/win_end：窗口系统变量，stats 标量快路径经 CloseOutput 窗口边界
+//   解析（数值 last/top 富路径不在此列）。
+rule baseline_producer {
+    events { e : metrics_stream }
+    stats<1m:fixed> group by (e.entity, e.metric) {
+        e | count          as n;
+        e | sum(e.value)   as s;
+        e | sumsq(e.value) as ss;
+    }
+    entity(str, e.entity)
+    yield baseline_out (
+        entity    = e.entity,
+        metric    = e.metric,
+        win_start = @window_start_time,
+        win_end   = @window_end_time,
+        n         = stat.value(final(n)),
+        sum       = stat.value(final(s)),
+        sum_sq    = stat.value(final(ss))
+    )
+
+    limits {
+        max_memory = "128MB"
+    }
+}

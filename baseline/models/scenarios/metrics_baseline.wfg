@@ -1,0 +1,11 @@
+use "../schemas/metrics.wfs"
+
+// baseline 案例数据生成：metrics_stream 全量随机注入。
+// 确定性由 seed 保证；校验脚本直接对拍生成事件与基线输出的聚合总量
+// （脚本不关心具体字段分布，只验证 n/sum/sum_sq 逐 (entity, metric) 一致）。
+#[duration=5m]
+scenario metrics_baseline<seed=42> {
+  traffic {
+    stream metrics_stream gen 200/s
+  }
+}

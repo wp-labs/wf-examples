@@ -1,0 +1,14 @@
+// 远端 A 通道的 provider 静态窗（v1：knowdb CSV 文件加载，S2-M3a）。
+// 数据 = 全桶三元组导出 CSV（entity 一行）：保留可加三元组 n/sum/sum_sq，
+// 另附消费列 mu/sigma（由导出脚本按 mean=sum/n、σ=√(sum_sq/n−mean²) 推导，
+// 供 join 判定直接用；契约见 baseline-online-design.md §11.3）。
+window<provider> baseline_ref {
+    fields {
+        entity: chars
+        n: float
+        sum: float
+        sum_sq: float
+        mu: float
+        sigma: float
+    }
+}

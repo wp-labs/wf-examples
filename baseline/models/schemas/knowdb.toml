@@ -1,0 +1,11 @@
+# 远端 A 通道 v1：knowdb 从 CSV 加载 provider 静态窗 baseline_ref。
+# CSV 相对路径 = 本文件所在目录(models/schemas) + base_dir + dir + data_file。
+# 数据文件由 scripts/export_baseline_ref.py 从 producer 输出聚合导出
+# （data/detect/baseline_ref.csv），列 = entity,n,sum,sum_sq,mu,sigma。
+base_dir = "../../data"
+
+[[tables]]
+name = "baseline_ref"
+enabled = true
+dir = "detect"
+data_file = "baseline_ref.csv"

@@ -1,0 +1,32 @@
+[window_defaults]
+evict_interval = "30s"
+max_window_bytes = "256MB"
+max_total_bytes = "2GB"
+evict_policy = "time_first"
+watermark = "2s"
+allowed_lateness = "30m"
+late_policy = "drop"
+
+# metrics_stream
+[window.metrics_stream]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "1h"
+
+# baseline_out (over=0 输出窗)
+[window.baseline_out]
+mode = "local"
+max_window_bytes = "16MB"
+over_cap = "0s"
+
+# 远端 A：provider 静态窗（knowdb CSV 加载，见 models/schemas/knowdb.toml）
+[window.baseline_ref]
+mode = "local"
+table = "baseline_ref"
+over_cap = "0s"
+
+# baseline 偏离判定输出（S2-M3a）
+[window.baseline_alerts]
+mode = "local"
+max_window_bytes = "16MB"
+over_cap = "0s"

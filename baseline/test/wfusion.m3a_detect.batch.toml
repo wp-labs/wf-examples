@@ -1,0 +1,25 @@
+# S2-M3a：基线判定 batch（远端 A 通道验证）。
+# bootstrap 从 models/schemas/knowdb.toml 加载 baseline_ref.csv 为
+# ProviderWindow；baseline_detect 规则每事件 join provider + where 越界过滤。
+
+sinks = "topology/sinks"
+windows = "models/schemas/windows.toml"
+
+[[sources]]
+connect = "file_src"
+enable = true
+name = "live_events_file"
+path = "data/detect/live_events.jsonl"
+stream_tag = "metrics_stream"
+data_format = "ndjson"
+
+[runtime]
+executor_parallelism = 4
+rule_exec_timeout = "30s"
+schemas = "models/schemas/*.wfs"
+rules = "models/rules/baseline_detect.wfl"
+
+[logging]
+level = "info"
+format = "plain"
+file = "data/logs/wfusion_m3a_detect.log"

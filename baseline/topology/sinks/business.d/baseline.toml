@@ -1,0 +1,10 @@
+[sink_group]
+name = "baseline_out_group"
+windows = ["baseline_out"]
+wf_meta_disable = ["__wfu_*"]
+[[sink_group.sinks]]
+connect = "file_json_sink"
+name = "baseline_file"
+[sink_group.sinks.params]
+base = "data/baseline"
+file = "baseline.ndjson"

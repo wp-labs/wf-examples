@@ -1,0 +1,24 @@
+# S2-M3a：producer 受控基线事件 batch（生成 t_baseline 产物供导出 CSV）。
+# 与 step1 同一 producer 规则，输入换为受控事件（多实体 × 多 1m 窗）。
+
+sinks = "topology/sinks"
+windows = "models/schemas/windows.toml"
+
+[[sources]]
+connect = "file_src"
+enable = true
+name = "baseline_events_file"
+path = "data/detect/baseline_events.jsonl"
+stream_tag = "metrics_stream"
+data_format = "ndjson"
+
+[runtime]
+executor_parallelism = 4
+rule_exec_timeout = "30s"
+schemas = "models/schemas/*.wfs"
+rules = "models/rules/baseline_producer.wfl"
+
+[logging]
+level = "info"
+format = "plain"
+file = "data/logs/wfusion_m3a_producer.log"
