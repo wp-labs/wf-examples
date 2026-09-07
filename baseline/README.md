@@ -35,8 +35,22 @@ count/sum/avg/min/max）。
 （warp-fusion 以 path 依赖本地 wp-reactor，重建后刷 ~/bin）。
 
 ```bash
-cd baseline && ./smoke.sh
+cd baseline && ./smoke.sh        # step1 生产（batch 对拍）
+./scripts/run_m3a.sh             # S2-M3a：knowdb CSV 远端 A 通道判定验证
+./scripts/run_long.sh [rounds]   # daemon 长跑：窗推进 + 内存平台（默认 3 轮 ≈1 分钟）
 ```
+
+### 长跑验证（run_long.sh）
+
+daemon + TCP 注入（wfgen send），producer 专用 15s 窗（`models/rules-long/`，
+生产形态仍 1h/1m）：每轮事件时间 +120s 前移驱动逐窗收盘，判据——
+
+1. **窗推进不漏**：每轮 baseline.ndjson 单调 +6 窗×5 键 = 30 条（事件时间不前移
+   会导致窗永不收盘的假绿）；
+2. **内存平台**：stats 状态每窗 reset，末段两次 6s 采样 RSS/commit 增长 ≤
+   `GROW_MB`（默认 80MB）。实测 3 轮：30→60→90 条，ps rss Δ<1MB PASS。
+
+产物：`data/metrics.ndjson` / `data/long_samples.tsv` / `data/logs/wfusion_long.log`。
 
 产物：
 

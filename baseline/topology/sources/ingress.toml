@@ -1,0 +1,9 @@
+# baseline daemon TCP 入口（metrics_stream，arrow_framed）——与 memory_stability 同款。
+connect = "tcp_src"
+enable = true
+key = "ingress"
+stream_tag = ""
+addr = "127.0.0.1"
+port = "9800"
+framing = "len"
+data_format = "arrow_framed"

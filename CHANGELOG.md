@@ -6,13 +6,14 @@ All notable changes to the wf-examples performance / verification scenarios will
 
 ### Added
 
-- **`baseline` — 在线行为基线 step 1（数据生产）**：`baseline_producer` 规则
-  （stats `<1m:fixed>` demo / 设计 1h + `group by (entity, metric)` + 新聚合
-  `sumsq`）把 `metrics_stream` 收敛为 `BaselineRecord`（n/sum/sum_sq + 窗口边界），
-  `yield baseline_out` → `file_json_sink` 落 `data/baseline/baseline.ndjson`；
-  `smoke.sh` 四步（lint / wfgen gen / batch / 对拍），`verify_baseline.py` 以输入事件
-  逐键总量对拍输出。引擎配套：wp-reactor wf-lang 全链 `sumsq` 聚合 + wf-engine
-  Classic 数值累加/平方域归并（见 baseline/README）。
+- **`baseline` — 在线行为基线 step1（数据生产）+ S2-M3a（远端 A 通道）**：
+  `baseline_producer`（stats + 新聚合 `sumsq`）产 BaselineRecord 落文件，`smoke.sh`
+  四步 lint/gen/batch/对拍；`run_m3a.sh` 用 knowdb CSV（provider 静态窗
+  `baseline_ref`）+ `baseline_detect`（on each + snapshot join + where 越界过滤）
+  闭环远端 A 判定（受控 5 实体，svc_e 9× 唯一告警）。
+- **`baseline` 长跑验证（`run_long.sh`）**：daemon + TCP 注入 + 事件时间每轮
+  +120s 前移，15s 窗 producer（`models/rules-long/`）观察窗推进与内存平台；
+  实测 3 轮 30→60→90 条单调增长、ps rss 平台 Δ<1MB。
 
 ## [2026-09-03]
 

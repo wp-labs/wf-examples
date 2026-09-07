@@ -1,0 +1,21 @@
+# baseline daemon 模式（TCP 实时输入 + 指标监控）：常规 producer（1m 窗）。
+# 长跑窗推进/内存验证用 conf/long.wfusion.toml（15s 窗，见 scripts/run_long.sh）。
+
+sources_dir = "topology/sources"
+sinks = "topology/sinks"
+windows = "models/schemas/windows.toml"
+
+[runtime]
+executor_parallelism = 4
+rule_exec_timeout = "30s"
+schemas = "models/schemas/*.wfs"
+rules = "models/rules/baseline_producer.wfl"
+
+[metrics]
+enabled = true
+report_interval = "2s"
+
+[logging]
+level = "info"
+format = "plain"
+file = "data/logs/wfusion.log"

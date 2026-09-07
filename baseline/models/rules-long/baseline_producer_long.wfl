@@ -1,0 +1,26 @@
+// 长跑专用 producer（15s 固定窗）：与 baseline_producer 同构，仅窗口长度不同。
+// 供 scripts/run_long.sh 在 ~1 分钟内观察多次窗收盘推进（生产形态仍为 1h/1m）。
+use "../schemas/metrics.wfs"
+
+rule baseline_producer_long {
+    events { e : metrics_stream }
+    stats<15s:fixed> group by (e.entity, e.metric) {
+        e | count          as n;
+        e | sum(e.value)   as s;
+        e | sumsq(e.value) as ss;
+    }
+    entity(str, e.entity)
+    yield baseline_out (
+        entity    = e.entity,
+        metric    = e.metric,
+        win_start = @window_start_time,
+        win_end   = @window_end_time,
+        n         = stat.value(final(n)),
+        sum       = stat.value(final(s)),
+        sum_sq    = stat.value(final(ss))
+    )
+
+    limits {
+        max_memory = "128MB"
+    }
+}
