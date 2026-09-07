@@ -1,0 +1,28 @@
+# S2-M2 近端 B judge batch：启动 warm 共享 BaselineStore（runtime.baseline_history
+# = 逐窗 CSV），对 live 事件逐条 baseline_dev z 判定。
+# 前置：wfusion.m3a_producer.batch.toml 产出 baseline.ndjson →
+#        scripts/export_baseline_history.py 导出 CSV。
+
+sinks = "topology/sinks"
+windows = "models/schemas/windows.toml"
+
+[[sources]]
+connect = "file_src"
+enable = true
+name = "live_events_file"
+path = "data/detect/live_events.jsonl"
+stream_tag = "metrics_stream"
+data_format = "ndjson"
+
+[runtime]
+executor_parallelism = 4
+rule_exec_timeout = "30s"
+schemas = "models/schemas/*.wfs"
+rules = "models/rules/baseline_judge.wfl"
+baseline_history = "data/detect/baseline_history.csv"
+baseline_history_k = 8
+
+[logging]
+level = "info"
+format = "plain"
+file = "data/logs/wfusion_m2_judge.log"

@@ -1,0 +1,10 @@
+[sink_group]
+name = "baseline_judge_group"
+windows = ["baseline_judge_alerts"]
+wf_meta_disable = ["__wfu_*"]
+[[sink_group.sinks]]
+connect = "file_json_sink"
+name = "judge_file"
+[sink_group.sinks.params]
+base = "data/detect"
+file = "judge.ndjson"

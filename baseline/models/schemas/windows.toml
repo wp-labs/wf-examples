@@ -30,3 +30,9 @@ over_cap = "0s"
 mode = "local"
 max_window_bytes = "16MB"
 over_cap = "0s"
+
+# 近端 B judge 输出（S2-M2）
+[window.baseline_judge_alerts]
+mode = "local"
+max_window_bytes = "16MB"
+over_cap = "0s"

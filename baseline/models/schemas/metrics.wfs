@@ -42,3 +42,14 @@ window baseline_alerts {
         deviation: float
     }
 }
+
+// 近端 B judge 输出（S2-M2：baseline_dev z-score 越界告警）。
+window baseline_judge_alerts {
+    over = 0
+    fields {
+        entity: chars
+        alert_type: chars
+        value: float
+        z: float
+    }
+}
