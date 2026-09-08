@@ -1,194 +1,184 @@
-# baseline 使用指南（在线行为基线 · 地铁客流案例）
+# baseline() —— 在线行为基线：作用 · 构建 · 检测
 
-> 本文是 **baseline 案例的独立使用指南**：运行模式、判定通道与数据契约、产物、
-> 校验体系、配置参数与排障。案例入口（业务简介 / 快速上手）见
-> [README.md](README.md)；架构设计见 `wp-reactor/docs/design/baseline-online-design.md`
-> （§4 数据生产 / §5 消费 API / §11 分层记忆架构 / §11.7 相位同窗）。
-
----
-
-## 1. 快速开始
-
-**前置**：`wfusion` / `wfgen` 在 PATH（若引擎有本地改动：warp-fusion 以 path 依赖
-本地 wp-reactor，`cargo build --release -p wfusion -p wfgen` 后刷 `~/bin/`）；
-`python3`；`--pg` 模式另需 docker。
-
-```bash
-cd baseline
-./smoke.sh                     # ① 一次性数据生产 + 对拍（~秒级）
-./scripts/run_loop.sh          # ② 有界闭环校验：两条判定通道断言（默认 5 轮 ≈1 分钟）
-./view.sh                      # ③ 看板 → http://localhost:8124/view/（另开终端）
-```
-
-| 入口 | 模式 | 做什么 | 期望 |
-|---|---|---|---|
-| `./smoke.sh` | 生产(step1) | batch 回放 producer + 输入/输出总量对拍 | `n/sum/sum_sq` 逐键一致 |
-| `./scripts/run_m2.sh` | S2-M2 最小闭环 | warm 历史 + judge z 判定对拍 | 仅 5号线 告警（z≈500+） |
-| `./scripts/run_m3a.sh` | S2-M3a 最小验证 | knowdb CSV 供给 → detect join 判定 | 仅 5号线（dev≈8）告警 |
-| `./scripts/run_long.sh [n]` | 长跑验证 | 窗推进不漏 + 内存平台（默认 3 轮） | 每轮 +30 行、RSS 平台 |
-| `./scripts/run_loop.sh [n]` | 有界闭环 | daemon 全链路：收盘→judge/detect→refresh 断言 | 每轮 1 条 5号线 告警 |
-| `./scripts/run_refresh.sh` | refresh 实证 | CSV 覆盖后 3 tick 内判定读到新供给 | 仅 5号线 告警（dev≈199） |
-| `./scripts/run_pg_refresh.sh` | PG 供给实证 | PG 事实库 UPDATE 后判定读到新聚合 | 仅 5号线 告警（dev≈199） |
-| `./scripts/run_phase.sh [n]` | 相位同窗 e2e | 忙/闲双档 × 相位配置接线验证 | 每轮恰 1 条、首条 z≈10 |
-| `./run.sh [--pg] [时长]` | 持续闭环 | 长跑 + 注入循环（Ctrl-C / 时长停） | 看板实时增长 |
-| `./view.sh [--pg]` | 看板 | 只读静态页（默认 :8124） | 页面 2s 刷新 |
+> 本文说明 **baseline 能力本身**：它解决什么问题、基线数据如何构建、检测如何
+> 判定（含两条判定通道与相位同窗）。落地示例（5 条地铁客流）与运行入口见
+> [README.md](README.md)（案例操作手册）；逐条实现/测试见 §7 参考。
 
 ---
 
-## 2. 判定通道与数据契约（先看懂再跑）
+## 1. 作用：什么是"在线行为基线"
+
+异常检测的前提是知道**什么是正常**。`baseline()` 把"正常"建成一条**可随时间
+演进的基线画像**（某 `(entity, metric)` 的 μ/σ 及其历史形态），事件到达时与
+画像比对得偏离度，越界即告警。它解决三个问题：
+
+| 问题 | baseline 的答案 |
+|---|---|
+| **水平位移/突发**（值从 1000 跳到 9000） | 近端滚动基线：与本键最近 K 窗比，z 越界 |
+| **周期内异常**（早高峰不该出现的低谷） | 同相位基线：只与"历史同期"（同相位位置）比 |
+| **新常态自适应** | 半衰期加权：近期权重高、旧窗渐隐，基线跟随新常态 |
+| **画像可解释/可复核** | 基线是看得见的记录（三元组），不是引擎黑盒状态 |
+
+业务示意（案例）：5 条地铁线路客流 `flow≈1000±25`，`5号线` 某窗客流冲到 9000
+（≈9×）→ 判定通道告警；`1~4号线` 永不误报。
+
+---
+
+## 2. 基线构建方案
+
+### 2.1 基线的数据形态 = 可加三元组 `BaselineRecord`
 
 ```
-metrics_stream ─▶ producer stats<窗>: group by (entity, metric)
+BaselineRecord = (entity, metric, win_start, win_end, n, sum, sum_sq)
+```
+
+- `n / sum / sum_sq`（∑1 / ∑v / ∑v²）是**可加三元组**：跨窗口/跨层可直接相加后
+  重推画像——`μ = sum/n`、`σ² = max(0, sum_sq/n − μ²)`；
+- **只允许导出三元组，禁止只吐 μ/σ**（§11.3 契约底线）：μ/σ 不可跨层累加，
+  三元组保证任意消费侧方法（mean / median / percentile…）可重新推导；
+- 幂等：同 `(键, win_start)` 重放 → 替换，batch 重跑/分片合并不重复计数。
+
+### 2.2 生成 = stats 窗口收盘（复用五原语，不新增状态机）
+
+```
+metrics_stream ─▶ stats<窗:fixed> group by (entity, metric)
                   { count as n; sum(v) as s; sumsq(v) as ss }
             ─▶ yield baseline_out(entity, metric, win_start, win_end, n, sum, sum_sq)
-            ─▶ 落盘 baseline.ndjson（实时追加）
-                 ├─▶ 近端 B：收盘 append 共享 BaselineStore（内存）
-                 │      └─ judge 规则：baseline_dev() |z|>3 → judge.ndjson
-                 ├─▶ 导出聚合 → baseline_ref 供给（CSV 重载 或 PG 直聚合）
-                 │      └─ detect 规则：(v−μ)/μ > 5 → alerts.ndjson
-                 └─（PG 模式）postgres sink → baseline_records 事实表
+            ─▶ sink（file / PG / …）── 事实源
 ```
 
-| 概念 | 含义 |
-|---|---|
-| `entity`/`metric` | 隔离键（线路 / 客流） |
-| `win_start`/`win_end` | 窗口边界（epoch 纳秒） |
-| `n`/`sum`/`sum_sq` | 可加三元组：`mean = sum/n`、`σ = √(sum_sq/n − mean²)`。**契约底线**——各层必须保留三元组（可加、方法可重推导），`mu/sigma` 只是派生消费列 |
-| 近端 B · judge | 事件级在线判定（共享内存 store，相位开启=同相位历史比较） |
-| 远端 A · detect | 全局周期基线供给判定（knowdb provider 周期装载） |
-| `mu`/`sigma` | `μ=sum/n`、`σ=√(max(0,sum_sq/n−μ²))`——供给行的画像列 |
+- 一条基线记录 = 一个已收盘窗口（`win_start` 自带相位信息，消费侧随时筛同相位）；
+- `sumsq`（∑v²）是为基线新增的最小 stats 聚合（wf-lang 全链 + wf-engine 数值路径）；
+  高吞吐 SoA 快路径仍只认 `count/sum/avg/min/max`——`sumsq` 落 Classic 数值路径，
+  是"规则表达能力 vs 快路径资格"的显式取舍；
+- 窗口粒度即画像粒度：demo 用 15s~1m 便于观察；生产按设计用 1h，跨窗合并由
+  消费侧完成。
 
-**数据血缘（PG 模式）**：PG sink → `baseline_records`（追加事实，唯一事实源）；
-引擎每次装载/刷新对事实表**表级 query 直聚合**成供给行（无外部中转表）；
-`data/detect/baseline_ref.csv` 只是每轮导出的**看板镜像**。file 模式该 CSV 即
-knowdb 供给源。详见 [pg/](pg/baseline_records.sql)。
+### 2.3 持久化 = 独立基线库（严禁复用窗口 spill）
 
----
+收盘记录经规则级 yield→sink 落**外部持久库**（PG 事实表 / Doris / 本地 redb），
+主键 `(entity, metric, win_start)`、追加幂等。**不存进窗口 spill**：基线是长存
+画像资产，spill 是临时中间态，二者语义与生命周期不同。
 
-## 3. 运行模式详解
+### 2.4 分层记忆架构（读取侧：近 + 远 + 低频壳）
 
-### 3.1 数据生产对拍（smoke.sh）
-确定性生成 `metrics_stream` 事件 → batch 回放 `baseline_producer`（1m 固定窗 +
-sumsq）→ `scripts/verify_baseline.py` 把输入事件逐键总量与输出对拍（对齐引擎 float→i128
-截断口径）。产物 `data/baseline/baseline.ndjson`。
-
-### 3.2 近端 B 最小闭环（run_m2.sh）
-5 条线路受控历史（4 窗 × 60 样本）+ 5号线 9× 越界 → producer 收盘 →
-`scripts/export_baseline_history.py` 导出历史 CSV → `runtime.baseline_history` warm 共享
-store → judge（`|baseline_dev|>3`）→ 断言仅 5号线（z≈500+）。
-
-### 3.3 远端 A 最小验证（run_m3a.sh）
-同受控数据 → producer → `scripts/export_baseline_ref.py` 聚合 provider CSV（三元组 +
-mu/sigma）→ knowdb CSV 装载 → detect join → 断言仅 5号线（dev≈8）。
-
-### 3.4 有界闭环校验（run_loop.sh）★ 最常用
-单 daemon 全链路（`conf/loop.wfusion.toml`：producer_long + judge + detect）：
-每轮事件时间 +120s 驱动 15s 窗持续收盘，注入 1 个 5号线=9000。逐轮断言
-baseline 增长、两条通道各 +1；终态校验 judge 仅 5号线 z>3、detect dev≈8、
-CSV μ≈1000、refresh 日志次数、末段内存平台。**相位关闭形态的默认回归**。
-
-### 3.5 持续闭环（run.sh [--pg] [时长]）
-长时间运行的注入循环（`INJ_INTERVAL` 默认 8s 一轮），配合看板实时观察。
-`--pg`：docker postgres + `pg/baseline_records.sql` 建事实表 + postgres sink 双写 +
-引擎 PG 直聚合供给（boot 以 `win_start='seed'` 占位 5 行，首轮收盘后删除）。
-Ctrl-C（或时长到）自动恢复 conf、清理后台。
-
-### 3.6 近端 B 相位同窗（run_phase.sh）
-judge 按**事件时间**折相位桶、只与**历史同期**比较（早高峰只跟早高峰比）；相位随
-收盘自然推进、无需外部刷新。配置：`[runtime]` 成对字段
-`baseline_history_phase_period/bucket`。用例 `conf/loop.phase.wfusion.toml`：
-period=240s / bucket=15s（=窗宽），忙时格(8..15) 3000、闲时格(0..7) 1000，奇偶轮
-交替忙/闲。断言 judge 每轮恰 1 条（仅 5号线、z>3、首条 z≈10 作相位生效 canary）。
-精确隔离语义（同相位过滤/半衰期参照=4×period/缺 event_time 全桶回退）由
-`wf-cep baseline::` 单测锁定，本 e2e 防全引擎接线回归。
-
-> ⚠ **相位常量同步**：conf 与 `scripts/gen_metrics_phase.py` 的 `PERIOD_S/BUCKET_S` 是两处
-> 重复，run_phase.sh 启动会用 `--constants` 交叉校验拦截错位；生成器属性可自检：
-> `python3 scripts/gen_metrics_phase.py --selfcheck`。
-> 批量注入下事件判定滞后于收盘 → 越界自窗先入其相位桶，z 被摊薄（≈10 而非理论
-> 400）仍 ≫3——daemon 级断言口径是"接线与稳定性"，隔离语义以单测为准。
-
-### 3.7 refresh / PG 供给实证（run_refresh.sh / run_pg_refresh.sh）
-验证供给**运行期可刷新**：同一批事件在"旧供给(μ≈1000)"下不告警；把供给改到
-μ=5（CSV 覆盖 或 PG UPDATE）后等 ≥3 个刷新 tick，同批事件再注入 → 仅 5号线
-告警 dev≈199；日志锚点 `provider refresh loaded table=baseline_ref`。
-
-### 3.8 长跑内存平台（run_long.sh）
-窗推进不漏（每轮 +6 窗×5 键 = 30 行）+ stats 状态随窗重置的内存平台（末段
-6s×2 采样 RSS/commit 增长 ≤ `GROW_MB` 默认 80MB）。产物
-`data/long_samples.tsv`。
-
-### 3.9 看板（view.sh）
-只读静态页，2s 轮询 `data/` 产物。区块：
-总览 / 逐窗均值漂移 / **实时滚动基线 · judge**（近端 B 告警，本键最近 K 窗，相位
-开启=同相位历史）/ **全局周期基线告警 · detect**（远端 A 告警）/ **detect 判定
-依据 · 基线画像 baseline_ref**（供给 μ/σ，告警 mu 的来源）/ 内存平台曲线。
-`--pg` 仅提示用途（页面读同一批引擎产物文件）。
-
----
-
-## 4. 产物与数据文件
-
-| 文件 | 内容 |
-|---|---|
-| `data/baseline/baseline.ndjson` | 收盘基线记录（每 15s 窗 × 线路） |
-| `data/detect/judge.ndjson` | judge z 越界告警（entity/alert_type/value/z） |
-| `data/detect/alerts.ndjson` | detect 偏离告警（…/mu/deviation） |
-| `data/detect/baseline_ref.csv` | 供给镜像（n/sum/sum_sq/mu/sigma） |
-| `data/metrics.ndjson` | 注入事件流 |
-| `data/logs/wfusion*.log` | 引擎日志（refresh 锚点） |
-| `data/loop_samples.tsv` | 内存/RSS/行数采样 |
-
----
-
-## 5. 配置与参数
-
-- **conf**：`conf/wfusion.toml`（smoke）· `conf/loop.wfusion.toml`（闭环）·
-  `conf/loop.phase.wfusion.toml`（相位）· `conf/loop.pg.wfusion.toml`（PG）·
-  `conf/refresh.wfusion.toml`（refresh 实证）· `conf/long.wfusion.toml`（长跑）。
-- **规则**：`models/rules-loop/*.wfl`（producer_long + judge + detect）等，见各目录。
-- **窗口长度**：demo 15s~1m；生产按设计 1h，消费侧按周期同相位合并。
-- **注入**：`scripts/gen_metrics_live.py`（闭环）/ `scripts/gen_metrics_phase.py`（相位）/
-  scenario `models/scenarios/metrics_baseline.wfg`。
-- **近端 B runtime**：`baseline_history`（warm CSV）· `baseline_history_k`（默认 8）
-  · `baseline_history_decay`（默认 true）· `baseline_history_phase_period/bucket`
-  （成对开启相位；0 < bucket ≤ period）。
-
----
-
-## 6. 校验体系
-
-| 层 | 位置 | 断言 |
+| 层 | 形态 | 语义 |
 |---|---|---|
-| 脚本断言 | `scripts/run_*.sh`（见 §3） | 各通道计数/数值/单调/内存 |
-| 对拍脚本 | `scripts/verify_baseline.py` `scripts/verify_m2.py` `scripts/verify_detect.py` | 总量对拍 / 实体与 z / 契约自洽与 dev |
-| 生成器自检 | `scripts/gen_metrics_phase.py --selfcheck` | 单调/均衡/忙闲纯度/spike/周期复现 |
-| 规则同步守卫 | `scripts/check_rules_sync.sh`（挂在 run_loop/run_phase 启动） | rules-loop 组合快照与 canonical 逐字一致（见 models/README.md） |
-| 引擎单测 | `wf-cep baseline::` `wf-runtime baseline_warm_tests` | 分桶/同相位过滤/decay/幂等/裁剪/并发/配置校验 |
-| 基准 | `cargo test --release -p wf-cep baseline_bench -- --ignored --nocapture` | append/deviation_at 每 op 纳秒（规模缩放） |
+| **近端 B** | 规则级共享内存表 `BaselineStore`（收盘 append + 启动 warm） | 事件时间精确、每事件≈内存读；是检测热路径宿主 |
+| **远端 A** | knowdb ProviderWindow（CSV 重载 / **PG 表级聚合**）周期供给 | 长留存/跨进程共享；接受处理时间近似 |
+| 壳 C（远期） | external 低频服务化 | 参数自由、无 join 键限制，不做高 EPS 主路径 |
+
+**数据血缘（PG 模式）**：`PG sink → baseline_records`（追加事实，唯一事实源）；
+引擎每次装载/刷新对事实表执行聚合 SQL（`GROUP BY entity` 现算供给行），**无外部
+中转表**；`baseline_ref.csv` 仅作看板镜像。
+
+### 2.5 状态推进两种方式
+
+- **收盘推进**：窗收盘自然产出新记录 → append/落库（近端 B 相位随收盘自动推进，
+  无需外部刷新）；
+- **刷新推进**：远端 A 由宿主启动 `RefreshService`（wp-knowledge），每表独立周期
+  重载并**并发通知**宿主搬入边界。
 
 ---
 
-## 7. 约定与排障
+## 3. 检测方案
 
-- **端口**：9800 = TCP 注入（各 case 共享——运行前脚本会 `lsof` 清理残留 daemon）；
-  8124 = 看板；9901 = metrics exporter。
-- **残留进程**：`lsof -ti:9800 | xargs kill` 是既存约定；跑新 case 前先清场。
-- **二进制**：引擎/示例代码改动后需重建并刷 `~/bin/{wfusion,wfgen}`
-  （warp-fusion release：`cargo build --release -p wfusion -p wfgen`）。
-- **PG**：`docker compose up -d postgres` 起库；`pg/baseline_records.sql` 为事实表
-  DDL；`./run.sh`/`scripts/run_pg_refresh.sh` 退出会自动把 knowdb 配置恢复 CSV 变体（强杀会
-  残留，可用 `git checkout -- baseline/models/schemas/knowdb.toml` 还原）。
-- **相位配置解析**：`scripts/run_phase.sh` 交叉校验 conf 与生成器常量，错位即 FAIL。
+### 3.1 判定函数与通道
+
+| 通道 | 判定 | 公式（示例阈值） | 语义 |
+|---|---|---|---|
+| **judge（近端 B）** | 每事件、引擎内 `baseline_dev()` | `z = (v − μ)/σ`，`|z| > 3` | 单次尖峰/位移最敏感；σ≈0 不判离群（防除零误报） |
+| **detect（远端 A）** | 每事件 join 供给表 | `(v − μ)/μ > 5` | 量级相对偏离（9× 客流），供给周期装载 |
+
+无基线（键无历史）→ 判定为 None → 不告警（冷启动不误报）。
+
+### 3.2 相位同窗（近端 B 扩展）
+
+"早高峰只跟早高峰比"：store 按键的**相位桶**分存
+`phase(ts) = (ts mod period) div bucket`（epoch 折叠、无时区），judge 按**事件
+时间**折桶、只合并同相位历史（忙时格只与忙时格比）。要点：
+
+- 配置成对：`baseline_history_phase_period/bucket`（`0 < bucket ≤ period`）；
+- **桶宽 = 收盘窗宽**（或整数倍）语义才干净：每周期每桶恰 1 窗，跨期对比不混入
+  当日多窗；
+- 半衰期参照随序列重现间距：相位开 = `4×period`（保留 ~4 期同期画像），相位关 =
+  `4×窗宽`（相邻窗，原语义不变）；
+- 事件缺 `event_time` → 全桶并集（保守回退，仅诊断场景）。
+
+### 3.3 合并数学：半衰期加权矩（消费侧）
+
+`w = 0.5^(age/半衰期)`，以最新窗为参照：近期权重高、远期保留长程背景；方差由
+**衰减加权矩**统一计算（各记录 `(n,sum,sum_sq)` 按权重累加后重推），无需存原始
+样本。等权（`decay=false`）为确定对拍形态。
+
+### 3.4 消费侧 API 演进（远期，§5）
+
+`baseline(近期窗口, 周期, 方法, 值)`：`周期` 选同相位样本集（日/周/月或 none），
+`方法` 决定"当前窗口聚合法 + 历史合并法"必须同一统计量（mean / median /
+percentile(pN) / ewma）——当前实现以 `baseline_dev`（z）为近端 B 判定原语，
+EWMA/median/percentile 是同一合并函数上的方法参数化演进。
 
 ---
 
-## 8. 参考
+## 4. 性能与可扩展性（实测）
 
-- 设计文档：`wp-reactor/docs/design/baseline-online-design.md`（以下相对各自仓库根；wp-reactor 为工作区兄弟仓库）
-- 引擎实现：`wp-reactor/crates/wf-cep/src/baseline.rs`（store）·
-  `crates/wf-cep/src/cep/eval/funcs_baseline.rs`（baseline_dev）·
-  `crates/wf-runtime/src/lifecycle/bootstrap.rs`（相位安装/warm）·
-  `crates/wf-runtime/src/lifecycle/baseline_warm_tests.rs`（warm/配置测试）·
-  `crates/wf-cep/src/baseline_bench.rs`（性能基准）
-- 供给刷新服务：`wp-knowledge`（RefreshService / loader 单表重载）
+`BaselineStore` 主逻辑基准（`cargo test --release -p wf-cep baseline_bench`，
+release，K=8）：
+
+| 形态 | append | deviation_at | 吞吐 |
+|---|---|---|---|
+| 1 实体 | ~70ns | ~86ns | ~1100万判定/s |
+| 1 万实体 | ~70ns | ~86ns（与规模**解耦**） | ~1100万判定/s |
+
+- `append`（收盘）与实体规模无关（哈希定位稳定）；
+- `deviation_at`（每事件判定）经 store 改为 `entity→metric→相位桶` 三层嵌套后
+  与共享实体数解耦（旧全表扫描在 1 万实体下 7.9µs → 86ns，≈92×）；
+- 结论：单/大实体集群判定都在 ~100ns 级，热路径不随实体空间线性退化。
+
+---
+
+## 5. 案例落地（wf-examples/baseline）
+
+案例把上述方案落到**可跑、可断言、可看板**的示例：5 条地铁线路客流 + 5号线
+9× 越界。入口映射：
+
+| 能力验证点 | 入口 | 断言 |
+|---|---|---|
+| 数据生产（收盘 → 三元组对拍） | `./smoke.sh` | 输入/输出逐键总量一致 |
+| 近端 B judge（warm + z 判定） | `./scripts/run_m2.sh` | 仅 5号线 z≈500+ |
+| 远端 A detect（供给 join） | `./scripts/run_m3a.sh` | 仅 5号线 dev≈8 |
+| 全链路闭环（默认形态回归） | `./scripts/run_loop.sh` | 每轮 1 条/通道、CSV μ≈1000、内存平台 |
+| 相位同窗（接线 e2e） | `./scripts/run_phase.sh` | 每轮恰 1 条、首条 z≈10 canary |
+| 供给刷新（CSV / PG 直聚合） | `scripts/run_refresh.sh` / `scripts/run_pg_refresh.sh` | 改供给 μ→5 后同批事件仅 5号线 dev≈199 |
+| 持续运行 + 看板 | `./run.sh [--pg]` + `./view.sh` | 实时产物/图表 |
+
+运行细节、产物与排障见 [README.md](README.md)。
+
+---
+
+## 6. 方案决策速查（D1–D6 / S2）
+
+| 决策 | 内容 |
+|---|---|
+| 半衰期 | `dur`=半衰期，权重 `0.5^(age/dur)` 平滑从不为 0（非硬截断） |
+| 存储 | 独立持久基线库（PG/Doris/本地 redb），**严禁复用窗口 spill** |
+| 生成 | 复用 stats 五原语 + `sumsq`，无新状态机；相位靠 `win_start` 消费侧筛选 |
+| 周期 | 一等公民：同相位窗口集参与对比 |
+| 判定分层 | 近端 B 精确（事件时间）· 远端 A 近似（处理时间，提前刷新）· 壳 C 低频 |
+| 事实源 | 外部 sink=唯一事实源；引擎内不持有另一份权威态 |
+| 一致性 | B 收盘 append 幂等；A 供给刷新幂等（主键 upsert）；存储不可用降级仅失长程 |
+
+---
+
+## 7. 参考
+
+- 设计文档：`wp-reactor/docs/design/baseline-online-design.md`（§4 构建 / §5 消费
+  API / §6 内联热路径 / §11 分层记忆 / §11.7 相位同窗）
+- 引擎实现（相对各自仓库根；wp-reactor 为工作区兄弟仓库）：
+  - `wp-reactor/crates/wf-cep/src/baseline.rs`——BaselineStore（三元组/相位桶/
+    半衰期/幂等）
+  - `wp-reactor/crates/wf-cep/src/cep/eval/funcs_baseline.rs`——`baseline_dev`
+  - `wp-reactor/crates/wf-runtime/src/lifecycle/bootstrap.rs`——相位解析安装/warm
+  - `wp-reactor/crates/wf-cep/src/baseline_bench.rs`——性能基准
+- 供给刷新服务：`wp-knowledge`（RefreshService / loader 单表重载 /
+  `init_postgres_provider_named_uri`）

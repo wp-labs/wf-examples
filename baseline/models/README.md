@@ -23,6 +23,7 @@
 
 ## 其它
 
-- `schemas/`：窗口/流 schema（`metrics.wfs` / `baseline_ref.wfs` / `windows.toml`）与
-  knowdb 供给配置（`knowdb.toml`=CSV 变体 / `knowdb.pg.toml`=PG 变体，运行期二选一）。
-- `scenarios/`：`metrics_baseline.wfg`——确定性注入场景（seed=42）。
+- `schemas/`：窗口/流 schema（`models/schemas/metrics.wfs` / `baseline_ref.wfs` /
+  `windows.toml`）与 knowdb 供给配置（`models/schemas/knowdb.toml`=CSV 变体 /
+  `models/schemas/knowdb.pg.toml`=PG 变体，运行期二选一）。
+- `scenarios/`：`models/scenarios/metrics_baseline.wfg`——确定性注入场景（seed=42）。
