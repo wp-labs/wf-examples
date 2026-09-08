@@ -1,0 +1,14 @@
+# PG sink 连接器（baseline 事实库落库）——type=postgres 来自 wp-connectors。
+# 列 = 记录字段子集（列名须与引擎产出字段名一致，缺字段写 NULL）。
+[[connectors]]
+id = "pg_sink"
+type = "postgres"
+allow_override = ["endpoint", "database", "table", "username", "password", "columns"]
+
+[connectors.params]
+endpoint = "127.0.0.1:5432"
+database = "postgres"
+username = "postgres"
+password = "demo"
+table = "baseline_records"
+columns = ["entity", "metric", "win_start", "win_end", "n", "sum", "sum_sq"]

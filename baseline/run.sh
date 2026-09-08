@@ -73,7 +73,9 @@ SAMPLES=data/loop_samples.tsv
 KDB=models/schemas/knowdb.toml
 KDB_PG=models/schemas/knowdb.pg.toml
 PG_SQL=pg/baseline_ref.sql
+PG_REC_SQL=pg/baseline_records.sql
 PG_CID=""
+CONF=conf/loop.wfusion.toml
 
 cleanup() {
   [ -n "${INJ_PID:-}" ] && kill "$INJ_PID" 2>/dev/null || true
@@ -113,10 +115,12 @@ if [ "$PG_MODE" = 1 ]; then
   done
   docker exec "$PG_CID" pg_isready -U postgres -d postgres >/dev/null 2>&1 || { echo "ERROR: postgres 未就绪" >&2; exit 1; }
   docker exec -i "$PG_CID" psql -U postgres -d postgres -v ON_ERROR_STOP=1 < "$PG_SQL" >/dev/null
-  # 引擎 knowdb 配置切 PG 变体（退出恢复 CSV 变体）
+  docker exec -i "$PG_CID" psql -U postgres -d postgres -v ON_ERROR_STOP=1 < "$PG_REC_SQL" >/dev/null
+  # 引擎 knowdb 配置切 PG 变体（退出恢复 CSV 变体）；sink 树切 sinks-pg（双写 PG 事实库）
   KDB_BAK=$(mktemp)
   cp "$KDB" "$KDB_BAK"
   cp "$KDB_PG" "$KDB"
+  CONF=conf/loop.pg.wfusion.toml
 else
   # 种子 provider CSV（占位 μ≈1000 σ=20；首轮 detect 即有基线；随后 exporter 原子覆盖）
   "$PY" - <<PYEOF
@@ -134,7 +138,7 @@ fi
 lsof -ti:$PORT 2>/dev/null | xargs kill 2>/dev/null || true
 sleep 1
 echo "1> 启动 wfusion daemon (log=$LOG)"
-"$WFUSION" daemon --config conf/loop.wfusion.toml --work-dir . >data/daemon.log 2>&1 &
+"$WFUSION" daemon --config "$CONF" --work-dir . >data/daemon.log 2>&1 &
 WFUSION_PID=$!
 sleep 2
 if ! kill -0 "$WFUSION_PID" 2>/dev/null; then

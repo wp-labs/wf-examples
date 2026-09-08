@@ -1,0 +1,22 @@
+# baseline 长期闭环 — PG 数据后端变体（run.sh --pg 用）：
+# 与 loop.wfusion.toml 同构，仅 sinks 指向 topology/sinks-pg/
+# （baseline_out 双写 file + pg_sink → PG baseline_records 事实库）。
+
+sources_dir = "topology/sources"
+sinks = "topology/sinks-pg"
+windows = "models/schemas/windows.toml"
+
+[runtime]
+executor_parallelism = 4
+rule_exec_timeout = "30s"
+schemas = "models/schemas/*.wfs"
+rules = "models/rules-loop/*.wfl"
+
+[metrics]
+enabled = true
+report_interval = "2s"
+
+[logging]
+level = "info"
+format = "plain"
+file = "data/logs/wfusion_loop.log"

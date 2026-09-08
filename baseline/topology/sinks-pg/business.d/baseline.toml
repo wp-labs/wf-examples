@@ -1,0 +1,17 @@
+[sink_group]
+name = "baseline_out_group"
+windows = ["baseline_out"]
+wf_meta_disable = ["__wfu_*"]
+# 事实库双写：文件（看板/审计）+ PG（--pg 模式的唯一事实库 sink 后端）
+[[sink_group.sinks]]
+connect = "file_json_sink"
+name = "baseline_file"
+[sink_group.sinks.params]
+base = "data/baseline"
+file = "baseline.ndjson"
+[[sink_group.sinks]]
+connect = "pg_sink"
+name = "baseline_pg"
+[sink_group.sinks.params]
+table = "baseline_records"
+columns = ["entity", "metric", "win_start", "win_end", "n", "sum", "sum_sq"]
