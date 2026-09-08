@@ -9,3 +9,5 @@ name = "baseline_ref"
 enabled = true
 dir = "detect"
 data_file = "baseline_ref.csv"
+# S2-M3b：daemon 运行期按此周期重读 CSV 替换 ProviderWindow（测试用小周期）
+refresh = "1s"
