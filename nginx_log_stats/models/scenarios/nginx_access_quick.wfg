@@ -1,0 +1,29 @@
+use "../schemas/nginx.wfs"
+use "../rules/02-alert/nginx_5xx_surge.wfl"
+
+// nginx_access_quick — 模拟 2 分钟 Nginx access 流量:
+//   - 90% 正常 200 请求（miss）
+//   - 10% 同源 client_ip 连续 4 次 500（hit → 触发 http_5xx_surge，也计入 5xx 统计）
+// 统计规则 nginx_status_stats 对全部事件按 http_status 分组输出（无需 expect）。
+#[duration=2m]
+scenario nginx_access_quick<seed=42> {
+  traffic {
+    stream nginx_access gen 100/s
+  }
+  injection {
+    hit<10%> nginx_access {
+      client_ip seq {
+        use(http_status="500") with(4)
+      }
+    }
+    miss<90%> nginx_access {
+      client_ip seq {
+        use(http_status="200") with(1)
+      }
+    }
+  }
+  expect {
+    hit(nginx_5xx_surge) >= 75%
+    miss(nginx_5xx_surge) <= 1%
+  }
+}

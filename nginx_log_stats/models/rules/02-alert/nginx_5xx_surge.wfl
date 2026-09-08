@@ -1,0 +1,24 @@
+use "nginx.wfs"
+
+// Nginx 5xx 突发告警 — 同一 client_ip 在 1 分钟内 5xx >= 3 次
+// match 形态: match<client_ip:1m> { on event { count >= 3 } }（参照 ssh_brute_force）
+rule nginx_5xx_surge {
+    events {
+        c : nginx_access
+            && c.http_status == "500"
+    }
+    match<client_ip:1m> {
+        on event { c | count >= 3; }
+    } -> score(70.0)
+    entity(ip, c.client_ip)
+    yield nginx_alerts (
+        alert_type = "http_5xx_surge",
+        detail = fmt("client_ip={} http_status={} uri={}", c.client_ip, c.http_status, c.uri)
+    )
+
+    limits {
+        max_memory = "64MB";
+        max_instances = 10000;
+        on_exceed = throttle;
+    }
+}

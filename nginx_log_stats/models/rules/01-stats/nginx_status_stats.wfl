@@ -1,0 +1,23 @@
+use "nginx.wfs"
+
+// Nginx access 日志统计 — 按 HTTP 状态码分组（1m 固定桶）
+// stats 形态: stats<1m:fixed> group by (c.http_status)（参照 nexmark q16_channel_stats）
+// 桶关闭时每 (桶 × 状态码) 输出一行: 请求量 / 5xx 数 / 独立客户端数。
+rule nginx_status_stats {
+    events { c : nginx_access }
+    stats<5s:fixed> group by (c.http_status) {
+        c | count as total;
+        c | count as total_5xx where c.http_status == "500";
+        c | distinct_count(c.client_ip) as clients;
+    }
+    entity(digit, 1)
+    yield nginx_alerts (
+        alert_type = "nginx_status_stats",
+        detail = fmt("status={} total={} clients={} 5xx={}",
+            c.http_status,
+            stat.value(final(total)),
+            stat.value(final(clients)),
+            stat.value(final(total_5xx)))
+    )
+    limits { max_memory = "256MB" }
+}
