@@ -1,10 +1,13 @@
-// 远端 A 通道的 provider 静态窗（v1：knowdb CSV 文件加载，S2-M3a）。
-// 数据 = 全桶三元组导出 CSV（entity 一行）：保留可加三元组 n/sum/sum_sq，
-// 另附消费列 mu/sigma（由导出脚本按 mean=sum/n、σ=√(sum_sq/n−mean²) 推导，
-// 供 join 判定直接用；契约见 baseline-online-design.md §11.3）。
+// 远端 A 通道的 provider 静态窗（v1：knowdb CSV 加载 / PG 直聚合，S2-M3a）。
+// 数据 = 按 (entity, phase_bucket) 聚合的供给行（2026-09-08 相位化：不再整段
+// 退化）——保留可加三元组 n/sum/sum_sq，另附消费列 mu/sigma（由聚合侧按
+// mean=sum/n、σ=√(sum_sq/n−mean²) 推导，供 join 判定直接用；契约见
+// baseline-online-design.md §11.3）。phase_bucket 为十进制 chars（join 键
+// 不接受 float），与事件侧 metrics_stream.phase_bucket 同口径（phase_cfg.py）。
 window<provider> baseline_ref {
     fields {
         entity: chars
+        phase_bucket: chars
         n: float
         sum: float
         sum_sq: float

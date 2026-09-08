@@ -23,8 +23,10 @@
 #     与生成器常量一致（两处重复无单一事实源，改一忘一 → 忙/闲划分静默错位，FAIL）；
 #   - 生成器自身属性（单调/线路均衡/忙闲纯度/spike/周期复现）可独立自检：
 #       python3 scripts/gen_metrics_phase.py --selfcheck
-#   - 终态另做 detect sanity：若全局基线通道产生告警必须仅 5号线 且 dev>5（防忙/闲
-#     正常事件误报；忙闲混合下 9000 偏离被钝化 ≈3.5，数量不作硬断言）。
+#   - 终态另做 detect sanity：若全局基线通道产生告警必须仅 5号线 且 dev>5。
+#     相位化供给（2026-09-08）后语义：忙轮 spike(9000) vs 忙桶基线 μ3000 →
+#     dev≈2 <5 不告警（相对忙时正常 3× 不算 5× 级越界）；闲轮 spike vs 闲桶 μ1000
+#     → dev≈8 告警——detect 只对同相位真越界告警，数量不作硬断言。
 #
 # 用法: ./scripts/run_phase.sh [rounds]   默认 8 轮 ≈ 1.5 分钟
 # 环境: ROUNDS/WFUSION/WFGEN/PYTHON
@@ -76,13 +78,16 @@ printf '==> 0. 相位常量一致: period=%ss bucket=%ss（conf == gen）\n' "$C
 
 # 种子 provider CSV（占位 μ≈1000，σ=20；detect 通道沿用 loop 语义，本次不断言）
 "$PY" - <<PYEOF
-import csv
+import csv, sys
+sys.path.insert(0, "scripts")
+import phase_cfg
 lines = ["1号线", "2号线", "3号线", "4号线", "5号线"]
 with open("$CSV", "w", encoding="utf-8", newline="") as f:
     w = csv.writer(f)
-    w.writerow(["entity", "n", "sum", "sum_sq", "mu", "sigma"])
+    w.writerow(["entity", "phase_bucket", "n", "sum", "sum_sq", "mu", "sigma"])
     for e in lines:
-        w.writerow([e, 240, 240000.0, 240096000.0, 1000.0, 20.0])
+        for p in range(phase_cfg.BUCKETS):
+            w.writerow([e, "p" + str(p), 240, 240000.0, 240096000.0, 1000.0, 20.0])
 print("seeded", "$CSV")
 PYEOF
 

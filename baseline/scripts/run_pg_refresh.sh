@@ -37,15 +37,16 @@ for i in $(seq 1 40); do
 done
 docker exec "$CID" pg_isready -U postgres -d postgres >/dev/null 2>&1 || { echo "ERROR: postgres 未就绪"; exit 1; }
 
-echo "==> 1. 建事实表 baseline_records + 种子（μ≈1000 占位，改明细即改供给）"
+echo "==> 1. 建事实表 baseline_records + 种子（全相位桶占位 μ≈1000，改明细即改供给）"
 docker exec -i "$CID" psql -U postgres -d postgres -v ON_ERROR_STOP=1 < pg/baseline_records.sql >/dev/null
 docker exec "$CID" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "
-INSERT INTO baseline_records (entity, metric, win_start, win_end, n, sum, sum_sq) VALUES
-  ('1号线','flow','seed','seed',1,1000.0,1000400.0),
-  ('2号线','flow','seed','seed',1,1000.0,1000400.0),
-  ('3号线','flow','seed','seed',1,1000.0,1000400.0),
-  ('4号线','flow','seed','seed',1,1000.0,1000400.0),
-  ('5号线','flow','seed','seed',1,1000.0,1000400.0);" >/dev/null
+INSERT INTO baseline_records (entity, metric, win_start, win_end, n, sum, sum_sq)
+SELECT e, 'flow',
+       to_char(TIMESTAMP '1970-01-01' + p * INTERVAL '15 second', 'YYYY-MM-DD HH24:MI:SS'),
+       to_char(TIMESTAMP '1970-01-01' + (p + 1) * INTERVAL '15 second', 'YYYY-MM-DD HH24:MI:SS'),
+       1, 1000.0, 1000400.0
+FROM unnest(ARRAY['1号线','2号线','3号线','4号线','5号线']) AS e,
+     generate_series(0, 15) AS p;" >/dev/null
 
 # 备份并替换 knowdb.toml（PG 变体），退出恢复
 cp "$KDB" "$CSV_BACKUP"

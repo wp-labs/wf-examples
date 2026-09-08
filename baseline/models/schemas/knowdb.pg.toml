@@ -1,8 +1,8 @@
-# 全局周期基线供给（PG 变体，供 scripts/run_pg_refresh.sh 使用）：
+# 全局周期基线供给（PG 变体，供 scripts/run_pg_refresh.sh / run.sh --pg 使用）：
 # 引擎识别 [provider] kind="postgres" → 安装 wp_knowledge 命名 provider
 # （engine_pg），[[tables]] 从 PG 同名表 SELECT 装载，并按下表 refresh 周期
 # 经 NamedSql 规格刷新（daemon）。与本目录 knowdb.toml（CSV 变体）二选一：
-# run_pg_refresh.sh 会临时替换本文件为 knowdb.toml 并在退出时恢复。
+# run.sh --pg / run_pg_refresh.sh 会临时替换本文件为 knowdb.toml 并在退出时恢复。
 
 version = 2
 base_dir = "../../data"
@@ -16,6 +16,12 @@ pool_size = 4
 name = "baseline_ref"
 enabled = true
 refresh = "1s"
-# 供给 = 事实源聚合：不落外部中转表，引擎每次装载/刷新直接对 baseline_records
-# 做可加三元组聚合（records 是 PG 模式的唯一事实源；见 pg/baseline_records.sql）。
-query = "SELECT entity, sum(n) AS n, sum(sum) AS sum, sum(sum_sq) AS sum_sq, sum(sum)/sum(n) AS mu, sqrt(greatest(sum(sum_sq)/sum(n) - power(sum(sum)/sum(n), 2), 0)) AS sigma FROM baseline_records GROUP BY entity"
+# 供给 = 事实源相位化聚合（2026-09-08）：不落外部中转表，引擎每次装载/刷新直接对
+# baseline_records 做可加三元组聚合（records 是 PG 模式的唯一事实源；见
+# pg/baseline_records.sql）。按 (entity, 相位桶) 分组——桶 = win_start 的 epoch 秒
+# 折 period/bucket（演示档 240s/15s，与 scripts/phase_cfg.py 同口径），detect 按
+# (entity, phase_bucket) join 同相位基线；不再整段退化（全历史混合会把基线稀释）。
+# 生产注意：应加滚动窗口 WHERE（如 win_start::timestamp >= now() - interval '30
+# days'）与保留策略；refresh="1s" 为演示周期，生产对齐事实落库节奏（分钟级）。
+# 列输出对齐 baseline_ref.wfs：phase_bucket 以 text（join 键 chars，非 float）。
+query = "SELECT entity, ('p' || (((extract(epoch from win_start::timestamp)::bigint % 240) / 15))::text) AS phase_bucket, sum(n) AS n, sum(sum) AS sum, sum(sum_sq) AS sum_sq, sum(sum)/sum(n) AS mu, sqrt(greatest(sum(sum_sq)/sum(n) - power(sum(sum)/sum(n), 2), 0)) AS sigma FROM baseline_records WHERE win_start ~ '^[0-9]{4}-' GROUP BY entity, phase_bucket"

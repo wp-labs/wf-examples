@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""S2-M3a 判定对拍验证：
-1) provider CSV（数据契约）内部自洽：mu ≈ sum/n；
+"""S2-M3a 判定对拍验证（相位化供给，2026-09-08）：
+1) provider CSV（数据契约）逐行自洽：mu ≈ sum/n；且每实体存在供给行（桶可多）；
 2) baseline_alerts 恰好 1 条 = 5号线（9000/1000 = 8x > 5x），1~4号线 不告警。
 """
 import csv
@@ -18,29 +18,27 @@ def main() -> int:
         print(f"ERROR: 缺 {CSV}")
         return 1
 
-    ref = {}
+    entities = set()
     with open(CSV, encoding="utf-8") as f:
         for r in csv.DictReader(f):
-            ref[r["entity"]] = {
-                "n": float(r["n"]),
-                "sum": float(r["sum"]),
-                "sum_sq": float(r["sum_sq"]),
-                "mu": float(r["mu"]),
-                "sigma": float(r["sigma"]),
-            }
-    if not ref:
+            e = r["entity"]
+            entities.add(e)
+            n = float(r["n"])
+            s = float(r["sum"])
+            mu = float(r["mu"])
+            if n <= 0:
+                print(f"ERROR: {e} 桶{r.get('phase_bucket')} n<=0")
+                return 1
+            mu_re = s / n
+            if not (abs(mu_re - mu) <= 1e-9 * max(abs(mu_re), abs(mu)) + 1e-6):
+                print(
+                    f"ERROR: {e} 桶{r.get('phase_bucket')} mu 与 sum/n 不一致: "
+                    f"csv={mu} recompute={mu_re}"
+                )
+                return 1
+    if not entities:
         print("ERROR: provider CSV 为空")
         return 1
-
-    # 契约自洽：三元组 → mu 复核（相对容差）
-    for e, r in ref.items():
-        if r["n"] <= 0:
-            print(f"ERROR: {e} n<=0")
-            return 1
-        mu_re = r["sum"] / r["n"]
-        if not (abs(mu_re - r["mu"]) <= 1e-9 * max(abs(mu_re), abs(r["mu"])) + 1e-6):
-            print(f"ERROR: {e} mu 与 sum/n 不一致: csv={r['mu']} recompute={mu_re}")
-            return 1
 
     alerts = []
     if os.path.exists(ALERTS):
@@ -64,10 +62,10 @@ def main() -> int:
             if a.get("alert_type") != "flow_deviation":
                 bad.append(f"{e} alert_type 异常: {a.get('alert_type')}")
 
-    print(f"provider 实体数: {len(ref)}  告警数: {len(alerts)}")
-    for e in sorted(ref):
+    print(f"provider 实体数: {len(entities)}  告警数: {len(alerts)}")
+    for e in sorted(entities):
         mark = "⚠ 异常命中" if e in by_entity else "正常（未告警）"
-        print(f"  {e}: mu={ref[e]['mu']:.3f} sigma={ref[e]['sigma']:.3f}  {mark}")
+        print(f"  {e}:  {mark}")
 
     if bad:
         print("FAIL:")

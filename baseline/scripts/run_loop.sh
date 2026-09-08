@@ -46,16 +46,20 @@ for _i in $(seq 1 20); do
   sleep 0.2
 done
 
-# 种子 provider CSV（占位 μ≈1000，σ=20；首轮 detect 即有基线；后续每轮由
-# exporter 用真实收盘聚合原子覆盖）。schema = entity,n,sum,sum_sq,mu,sigma
+# 种子 provider CSV（占位 μ≈1000，σ=20；每实体×每相位桶一行——detect 按
+# (entity, phase_bucket) join，boot 即任意相位可命中；后续每轮由 exporter 用
+# 真实收盘聚合原子覆盖）。schema = entity,phase_bucket,n,sum,sum_sq,mu,sigma
 "$PY" - <<PYEOF
-import csv
+import csv, sys
+sys.path.insert(0, "scripts")
+import phase_cfg
 lines = ["1号线", "2号线", "3号线", "4号线", "5号线"]
 with open("$CSV", "w", encoding="utf-8", newline="") as f:
     w = csv.writer(f)
-    w.writerow(["entity", "n", "sum", "sum_sq", "mu", "sigma"])
+    w.writerow(["entity", "phase_bucket", "n", "sum", "sum_sq", "mu", "sigma"])
     for e in lines:
-        w.writerow([e, 240, 240000.0, 240096000.0, 1000.0, 20.0])
+        for p in range(phase_cfg.BUCKETS):
+            w.writerow([e, "p" + str(p), 240, 240000.0, 240096000.0, 1000.0, 20.0])
 print("seeded", "$CSV")
 PYEOF
 
@@ -102,6 +106,9 @@ send_round() {
 nlines() { local f=$1; [[ -f "$f" ]] && wc -l < "$f" | tr -d ' ' || echo 0; }
 
 prev_rows=0; prev_judge=0; prev_alerts=0
+# 相位化 detect（2026-09-08）：供给按 (entity, phase_bucket) join。spike 相位在
+# offset 120/240 交替轮间于 p11/p3 循环 → 同相位第二次出现（r≥3）起每轮告警，
+# 首个周期（冷相位）静默（r1/r2 可 0）。judge（相位关滚动）仍每轮 1 条。
 echo "==> 1. 分轮注入 + 收盘导出闭环（每轮 offset +120s、1 个 5号线=9000 越界）"
 for r in $(seq 1 "$ROUNDS"); do
   offset=$((r * 120))
@@ -117,8 +124,15 @@ for r in $(seq 1 "$ROUNDS"); do
     tail -30 "$LOG" 2>/dev/null || true
     exit 1
   fi
-  if (( ALERTS_N <= prev_alerts )); then
-    echo "FAIL: round $r detect 无新增告警 (5号线=9000 越界应每轮告警)" >&2
+  if (( JUDGE_N < r )); then
+    echo "FAIL: round $r judge=$JUDGE_N 期望 ≥$r（5号线 spike 每轮 z 越界）" >&2
+    exit 1
+  fi
+  # detect：同相位冷启动后须单调不回落（累计 ≥ max(0, r-2)）
+  det_exp=$(( r >= 3 ? r - 2 : 0 ))
+  if (( ALERTS_N < det_exp )); then
+    echo "FAIL: round $r detect=$ALERTS_N 期望 ≥$det_exp（相位复现后每轮应告警；" \
+      "冷相位首现静默是相位化正确行为）" >&2
     exit 1
   fi
   prev_rows=$ROWS; prev_judge=$JUDGE_N; prev_alerts=$ALERTS_N
@@ -173,22 +187,24 @@ with open(out, encoding="utf-8") as f:
     base_rows = sum(1 for line in f if line.strip())
 if base_rows < 20:
     bad.append(f"baseline 收盘过少 {base_rows}")
-ref = {}
+ref = []
 with open(csvp, encoding="utf-8") as f:
     for r in csv.DictReader(f):
-        ref[r["entity"]] = float(r["mu"])
-if len(ref) != 5:
-    bad.append(f"provider CSV 应 5 行，实际 {len(ref)}")
-for e, mu in ref.items():
-    if not (900 <= mu <= 1100):
-        bad.append(f"{e} mu={mu} 应 ≈1000")
+        ref.append((r["entity"], r["phase_bucket"], float(r["mu"])))
+# 相位化供给（2026-09-08）：每实体×每相位桶一行；行数随收盘覆盖的桶增长（≥5），
+# 且所有行 μ≈1000（5号线 spike 所在桶被 9000 抬到 ≈1013，仍在容差内）。
+if len(ref) < 5:
+    bad.append(f"provider CSV 行数过少 {len(ref)}")
+mu_all = [mu for (_, _, mu) in ref]
+if not (900 <= min(mu_all) and max(mu_all) <= 1100):
+    bad.append(f"provider 行 μ 应 ≈1000，实际范围 {min(mu_all):.1f}..{max(mu_all):.1f}")
 if $RELOADS < 10:
     bad.append("refresh 日志过少")
 if $DC > $GROW_MB or $DR > $GROW_MB:
     bad.append(f"内存仍增长 commitΔ=$DC MB rssΔ=$DR MB")
 
 print(f"  judge {len(j)} 条 z>3；detect {len(a)} 条 dev≈8；baseline {base_rows} 行；"
-      f"csv μ={ {k: round(v, 1) for k, v in sorted(ref.items())} }")
+      f"csv {len(ref)} 行 μ={min(mu_all):.1f}..{max(mu_all):.1f}")
 if bad:
     print("FAIL:")
     for b in bad:

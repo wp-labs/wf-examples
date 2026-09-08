@@ -115,30 +115,37 @@ if [ "$PG_MODE" = 1 ]; then
   docker exec "$PG_CID" pg_isready -U postgres -d postgres >/dev/null 2>&1 || { echo "ERROR: postgres 未就绪" >&2; exit 1; }
   # 事实库（PG sink 落点）建表/清空；供给由引擎每次装载/刷新直接聚合本表
   docker exec -i "$PG_CID" psql -U postgres -d postgres -v ON_ERROR_STOP=1 < "$PG_REC_SQL" >/dev/null
-  # 启动占位种子（win_start='seed' 标记）：boot 即有 5 行可注册 provider；
-  # 首轮收盘后由下方清理，避免污染事实聚合。
+  # 启动占位种子（win_start='1970-01-01 …' 标记，全相位桶 80 行）：boot 即有
+  # provider 供给行（任意相位可 join）；首轮收盘后由下方清理（LIKE '1970-%'），
+  # 避免污染事实聚合。
   docker exec "$PG_CID" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "
-INSERT INTO baseline_records (entity, metric, win_start, win_end, n, sum, sum_sq) VALUES
-  ('1号线','flow','seed','seed',1,1000.0,1000400.0),
-  ('2号线','flow','seed','seed',1,1000.0,1000400.0),
-  ('3号线','flow','seed','seed',1,1000.0,1000400.0),
-  ('4号线','flow','seed','seed',1,1000.0,1000400.0),
-  ('5号线','flow','seed','seed',1,1000.0,1000400.0);" >/dev/null
+INSERT INTO baseline_records (entity, metric, win_start, win_end, n, sum, sum_sq)
+SELECT e, 'flow',
+       to_char(TIMESTAMP '1970-01-01' + p * INTERVAL '15 second', 'YYYY-MM-DD HH24:MI:SS'),
+       to_char(TIMESTAMP '1970-01-01' + (p + 1) * INTERVAL '15 second', 'YYYY-MM-DD HH24:MI:SS'),
+       1, 1000.0, 1000400.0
+FROM unnest(ARRAY['1号线','2号线','3号线','4号线','5号线']) AS e,
+     generate_series(0, 15) AS p;" >/dev/null
   # 引擎 knowdb 配置切 PG 变体（退出恢复 CSV 变体）；sink 树切 sinks-pg（双写 PG 事实库）
   KDB_BAK=$(mktemp)
   cp "$KDB" "$KDB_BAK"
   cp "$KDB_PG" "$KDB"
   CONF=conf/loop.pg.wfusion.toml
 else
-  # 种子 provider CSV（占位 μ≈1000 σ=20；首轮 detect 即有基线；随后 exporter 原子覆盖）
+  # 种子 provider CSV（占位 μ≈1000 σ=20；每实体×每相位桶一行——detect 按
+  # (entity, phase_bucket) join，boot 即任意相位可命中；随后 exporter 原子覆盖）
   "$PY" - <<PYEOF
-import csv
+import csv, sys
+sys.path.insert(0, "scripts")
+import phase_cfg
 lines = ["1号线", "2号线", "3号线", "4号线", "5号线"]
 with open("$CSV", "w", encoding="utf-8", newline="") as f:
     w = csv.writer(f)
-    w.writerow(["entity", "n", "sum", "sum_sq", "mu", "sigma"])
+    w.writerow(["entity", "phase_bucket", "n", "sum", "sum_sq", "mu", "sigma"])
     for e in lines:
-        w.writerow([e, 240, 240000.0, 240096000.0, 1000.0, 20.0])
+        for p in range(phase_cfg.BUCKETS):
+            w.writerow([e, "p" + str(p), 240, 240000.0, 240096000.0, 1000.0, 20.0])
+print("seeded", "$CSV")
 PYEOF
 fi
 
@@ -216,7 +223,7 @@ echo "   healthy: round-1 closed loop OK (baseline=$R judge=$J alerts=$A)"
 if [ "$PG_MODE" = 1 ]; then
   # 首轮收盘已把真实聚合写入 provider——清掉启动占位种子（等 2s 覆盖 ≥1 个刷新周期）
   sleep 2
-  docker exec "$PG_CID" psql -U postgres -d postgres -c "DELETE FROM baseline_records WHERE win_start = 'seed';" >/dev/null || true
+  docker exec "$PG_CID" psql -U postgres -d postgres -c "DELETE FROM baseline_records WHERE win_start LIKE '1970-%';" >/dev/null || true
 fi
 
 echo "4> 运行中…（每 5s 打印一次）"

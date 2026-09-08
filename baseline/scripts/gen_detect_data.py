@@ -10,6 +10,8 @@ import json
 import os
 import random
 
+import phase_cfg  # 相位折叠共享口径（detect 供给与事件打标一致）
+
 NS0 = 1767225600000000000  # 2026-01-01T00:00:00Z (epoch ns)
 OUT_DIR = "data/detect"
 SVCS = ["1号线", "2号线", "3号线", "4号线", "5号线"]
@@ -29,6 +31,7 @@ def row(entity: str, value: float, t_ns: int) -> dict:
         "event_time": t_ns,
         "metric": "flow",
         "value": float(value),
+        "phase_bucket": phase_cfg.label(phase_cfg.bucket_of_ns(t_ns)),
     }
 
 
@@ -44,13 +47,18 @@ def main() -> None:
     rng = random.Random(42)
     t0 = NS0 + 10 * 60 * 1_000_000_000  # 00:10:00Z
 
+    # 时间轴交错（time-major：先扫时刻再扫线路）——5 条线并行推进，事件时间单调，
+    # producer 的 4 个 1m 窗对每条线都完整收盘（若按线外层循环会产生时间回退，
+    # watermark 推进后旧窗已关 → 其余线的事件进不了已关窗，只剩末尾 1 窗，
+    # 供给缺失大部分相位桶 → detect 相位 join miss）。
     baseline = []
-    for svc in SVCS:
-        for i in range(240):  # 4 分钟 × 60s，落入 producer 的 4 个 1m 窗
+    for i in range(240):  # 4 分钟 × 60s，落入 producer 的 4 个 1m 窗
+        for svc in SVCS:
             v = 1000 + rng.randint(-25, 25)
             baseline.append(row(svc, v, t0 + i * 1_000_000_000))
 
-    live_t = t0 + 6 * 60 * 1_000_000_000  # 00:16:00Z（基线之后）
+    live_t = t0 + 6 * 60 * 1_000_000_000  # 00:16:00Z（基线之后，相位 p0 命中
+    # 00:12 窗的 p0 供给行；与 detect 供给按 (entity, phase_bucket) join）
     live = []
     for i, svc in enumerate(SVCS):
         v = 9000 if svc == "5号线" else 1000 + rng.randint(-10, 10)

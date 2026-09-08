@@ -91,7 +91,7 @@ metrics_stream ─▶ stats<窗:fixed> group by (entity, metric)
 | 通道 | 判定 | 公式（示例阈值） | 语义 |
 |---|---|---|---|
 | **judge（近端 B）** | 每事件、引擎内 `baseline_dev()` | `z = (v − μ)/σ`，`|z| > 3` | 单次尖峰/位移最敏感；σ≈0 不判离群（防除零误报） |
-| **detect（远端 A）** | 每事件 join 供给表 | `(v − μ)/μ > 5` | 量级相对偏离（9× 客流），供给周期装载 |
+| **detect（远端 A）** | 每事件 join 供给表（2026-09-08 起按 `(entity, phase_bucket)` join 同相位基线行，不再整段退化） | `(v − μ)/μ > 5` | 量级相对偏离（9× 客流），供给周期装载/直聚合 |
 
 无基线（键无历史）→ 判定为 None → 不告警（冷启动不误报）。
 
@@ -150,8 +150,8 @@ release，K=8）：
 | 数据生产（收盘 → 三元组对拍） | `./smoke.sh` | 输入/输出逐键总量一致 |
 | 近端 B judge（warm + z 判定） | `./scripts/run_m2.sh` | 仅 5号线 z≈500+ |
 | 远端 A detect（供给 join） | `./scripts/run_m3a.sh` | 仅 5号线 dev≈8 |
-| 全链路闭环（默认形态回归） | `./scripts/run_loop.sh` | 每轮 1 条/通道、CSV μ≈1000、内存平台 |
-| 相位同窗（接线 e2e） | `./scripts/run_phase.sh` | 每轮恰 1 条、首条 z≈10 canary |
+| 全链路闭环（默认形态回归） | `./scripts/run_loop.sh` | judge 每轮 1 条；detect 同相位复现后每轮告警（累计 ≥ r−2）；CSV 按 (实体,桶) 聚合、内存平台 |
+| 相位同窗（接线 e2e） | `./scripts/run_phase.sh` | judge 每轮 1 条；detect 忙轮 spike（3×<5×）正确不告警、闲轮复现告警 |
 | 供给刷新（CSV / PG 直聚合） | `scripts/run_refresh.sh` / `scripts/run_pg_refresh.sh` | 改供给 μ→5 后同批事件仅 5号线 dev≈199 |
 | 持续运行 + 看板 | `./run.sh [--pg]` + `./view.sh` | 实时产物/图表 |
 

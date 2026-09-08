@@ -13,6 +13,8 @@ import json
 import random
 import sys
 
+import phase_cfg  # 相位折叠共享口径（detect 供给与事件打标一致）
+
 count = int(sys.argv[1])
 span_s = float(sys.argv[2])
 offset_s = int(sys.argv[3]) if len(sys.argv) > 3 else 0
@@ -38,6 +40,9 @@ for i in range(count):
             "event_time": t,
             "metric": "flow",
             "value": float(value),
+            # detect 供给相位化（2026-09-08）：事件带 phase_bucket 冗余列，供
+            # baseline_detect 按 (entity, phase_bucket) join 同相位供给行。
+            "phase_bucket": phase_cfg.label(phase_cfg.bucket_of_ns(t)),
         }
     )
 

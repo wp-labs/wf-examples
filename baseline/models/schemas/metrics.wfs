@@ -10,6 +10,7 @@ window metrics_stream {
         metric: chars
         value: float
         event_time: time
+        phase_bucket: chars   // detect 相位供给 join 键（由注入事件打标，见 gen_*）
     }
 }
 

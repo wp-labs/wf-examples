@@ -24,18 +24,20 @@ import json
 import random
 import sys
 
+import phase_cfg  # 相位折叠/周期共享口径（detect 供给与事件打标一致）
+
 BASE_NS = 1767225600000000000  # 2026-01-01T00:00:00Z（15s/240s 网格对齐）
-PERIOD_S = 240
-BUCKET_S = 15
-BUSY_SLOTS = range(8, 16)  # 忙时相位格（周期内 120s..240s）
+PERIOD_S = phase_cfg.PERIOD_S
+BUCKET_S = phase_cfg.BUCKET_S
+BUSY_SLOTS = range(phase_cfg.BUCKETS // 2, phase_cfg.BUCKETS)  # 忙时相位格（后半周期）
 BUSY_LEVEL = 3000.0
 IDLE_LEVEL = 1000.0
 LINES = ["1号线", "2号线", "3号线", "4号线", "5号线"]
 
 
 def slot_of(t_ns):
-    d_s = (t_ns - BASE_NS) // 1_000_000_000
-    return (d_s // BUCKET_S) % (PERIOD_S // BUCKET_S)
+    """事件时刻 → 忙/闲档判定用的相位槽（epoch 秒折叠，与 phase_cfg 同口径）。"""
+    return phase_cfg.bucket_of_ns(t_ns)
 
 
 def level_of(t_ns):
@@ -63,6 +65,7 @@ def build_rows(count, span_s, offset_s, spike_idx):
                 "event_time": t,
                 "metric": "flow",
                 "value": float(value),
+                "phase_bucket": phase_cfg.label(slot_of(t)),  # detect 相位供给 join 键
             }
         )
     return rows
