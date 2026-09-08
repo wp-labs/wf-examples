@@ -18,6 +18,14 @@
 #     event_time），并顺带验证忙/闲双档长期运行无崩溃/无误报。
 #   - 相位关闭行为（默认 conf）不受影响，回归由 scripts/run_loop.sh 覆盖。
 #
+# 自检/防错位：
+#   - 启动即用 gen_metrics_phase.py --constants 交叉校验 conf 相位 period/bucket
+#     与生成器常量一致（两处重复无单一事实源，改一忘一 → 忙/闲划分静默错位，FAIL）；
+#   - 生成器自身属性（单调/线路均衡/忙闲纯度/spike/周期复现）可独立自检：
+#       python3 scripts/gen_metrics_phase.py --selfcheck
+#   - 终态另做 detect sanity：若全局基线通道产生告警必须仅 5号线 且 dev>5（防忙/闲
+#     正常事件误报；忙闲混合下 9000 偏离被钝化 ≈3.5，数量不作硬断言）。
+#
 # 用法: ./scripts/run_phase.sh [rounds]   默认 8 轮 ≈ 1.5 分钟
 # 环境: ROUNDS/WFUSION/WFGEN/PYTHON
 # ===========================================================================
@@ -43,6 +51,22 @@ mkdir -p data/logs data/detect data/baseline
 rm -f "$LOG" "$OUT" "$JUDGE" "$ALERTS" data/daemon.log data/live.jsonl "$CSV"
 # 端口 9800 被各 case 共享：残留 daemon 会串扰（既存约定，先清场）
 lsof -ti:"$PORT" 2>/dev/null | xargs kill 2>/dev/null || true
+
+# 交叉校验（防配置/生成器错位）：conf 相位常量必须与 gen_metrics_phase.py 一致——
+# 两处重复的 period/bucket 没有单一事实源，改其一而忘另一会让忙/闲划分静默错位。
+GEN_CONST=$("$PY" scripts/gen_metrics_phase.py --constants)
+read -r GEN_PERIOD GEN_BUCKET <<< "$GEN_CONST"
+CONF_PERIOD=$(grep -E '^\s*baseline_history_phase_period\s*=' "$CONF" | sed -n 's/.*"\([0-9]*\)s".*/\1/p' | head -1)
+CONF_BUCKET=$(grep -E '^\s*baseline_history_phase_bucket\s*=' "$CONF" | sed -n 's/.*"\([0-9]*\)s".*/\1/p' | head -1)
+if [ -z "$CONF_PERIOD" ] || [ -z "$CONF_BUCKET" ]; then
+  echo "FAIL: 无法从 $CONF 解析 baseline_history_phase_*（需秒为单位字符串）" >&2
+  exit 1
+fi
+if [ "$CONF_PERIOD" != "$GEN_PERIOD" ] || [ "$CONF_BUCKET" != "$GEN_BUCKET" ]; then
+  echo "FAIL: conf 相位 period/bucket=${CONF_PERIOD}s/${CONF_BUCKET}s 与生成器 ${GEN_PERIOD}s/${GEN_BUCKET}s 不一致——生成器/配置已错位" >&2
+  exit 1
+fi
+printf '==> 0. 相位常量一致: period=%ss bucket=%ss（conf == gen）\n' "$CONF_PERIOD" "$CONF_BUCKET"
 
 # 种子 provider CSV（占位 μ≈1000，σ=20；detect 通道沿用 loop 语义，本次不断言）
 "$PY" - <<PYEOF
@@ -95,6 +119,7 @@ for r in $(seq 1 "$ROUNDS"); do
   fi
   if (( J != r )); then
     echo "FAIL: round $r judge=$J 期望 ${r}——每轮应恰 1 条 5号线 真越界，其余全静默" >&2
+    echo "  judge 前 5 行: $(head -5 "$JUDGE" 2>/dev/null | tr '\n' ' ')" >&2
     tail -30 "$LOG" 2>/dev/null || true
     exit 1
   fi
@@ -137,14 +162,23 @@ with open(out, encoding="utf-8") as f:
     base_rows = sum(1 for line in f if line.strip())
 if base_rows < $((ROUNDS * 20)):
     bad.append(f"baseline 收盘过少 {base_rows}")
+# detect sanity（忙/闲混合全局基线 μ≈2000 使 9000 偏离钝化 ≈3.5 <5 → 正常应极少告警）：
+# 只防误报——若产生告警必须仅 5号线 且为真越界（dev>5），数量不做硬断言。
+al = load("data/detect/alerts.ndjson")
+ae = sorted({x.get("entity") for x in al})
+if ae and ae != ["5号线"]:
+    bad.append(f"detect 实体 {ae} 应仅 5号线（忙/闲正常事件不得进入全局基线通道误报）")
+if al and not all(float(x.get("deviation", 0)) > 5.0 for x in al):
+    bad.append("detect 告警 deviation 应 >5（真越界）")
 
-print(f"  judge {len(j)} 条（全 5号线 z>3，首条 z={first_z:.1f}）；baseline {base_rows} 行")
+print(f"  judge {len(j)} 条（全 5号线 z>3，首条 z={first_z:.1f}）；baseline {base_rows} 行；"
+      f"detect {len(al)} 条（sanity）")
 if bad:
     print("FAIL:")
     for b in bad:
         print("  -", b)
     sys.exit(1)
-print("PASS: 近端 B 相位同窗接线 e2e——忙/闲双档 8 轮无崩溃无误报、每轮恰 1 条真越界，"
+print(f"PASS: 近端 B 相位同窗接线 e2e——忙/闲双档 ${ROUNDS} 轮无崩溃无误报、每轮恰 1 条真越界，"
       "首条 z 落在相位生效区间；隔离语义由 wf-cep baseline 单测锁定")
 PYEOF
 

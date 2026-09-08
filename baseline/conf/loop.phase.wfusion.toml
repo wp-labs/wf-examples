@@ -3,6 +3,8 @@
 #   远端 A detect/refresh 全保留），仅新增 [runtime] 相位配置：
 #     baseline_history_phase_period = "240s"   演示用小周期（忙/闲交替）
 #     baseline_history_phase_bucket = "15s"    = 收盘窗宽（每周期每相位格恰 1 窗）
+#   ⚠ 改这两个值必须同步 scripts/gen_metrics_phase.py 的 PERIOD_S/BUCKET_S
+#   （run_phase.sh 启动会用 --constants 交叉校验拦截不一致）。
 #   相位开启后 judge 按事件时间折桶、只与同相位历史比较（忙时只跟忙时比），
 #   语义由 wf-cep baseline 单测逐条锁定；本 e2e（gen_metrics_phase.py：忙时格
 #   3000/闲时格 1000 + 每轮 1 个 5号线=9000 越界）验证全引擎接线与忙/闲双档
