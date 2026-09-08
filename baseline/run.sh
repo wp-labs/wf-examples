@@ -10,14 +10,25 @@
 # 两条判定通道持续出告警。输出实时追加 data/ 下 —— 另开终端 ./view.sh 即可看板。
 #
 # 用法:
-#   ./run.sh            # 持续运行，Ctrl-C 停止
-#   ./run.sh 5m         # 运行指定时长后自动停止（验收/演示）
+#   ./run.sh              # CSV 数据后端，持续运行（Ctrl-C 停止）
+#   ./run.sh 5m           # 运行指定时长后自动停止（验收/演示）
+#   ./run.sh --pg         # 全局周期基线供给用 PG 做数据后端（docker postgres）
+#   ./run.sh --pg 5m      # 参数可任意组合
 # 环境: INJ_INTERVAL（注入轮间隔秒，默认 8）· COUNT / SPAN / PORT / WFUSION / WFGEN / PYTHON
 # ===========================================================================
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-DURATION="${1:-}"
+PG_MODE=0
+DURATION=""
+for a in "$@"; do
+  case "$a" in
+    --pg) PG_MODE=1 ;;                                        # 数据后端：PG
+    --help|-h) echo "用法: ./run.sh [--pg] [时长]（例: ./run.sh --pg 5m）"; exit 0 ;;
+    *s|*m|*h) DURATION="$a" ;;
+    *) echo "错误: 未知参数 '$a'（支持 --pg 与时长，如 30s/5m）" >&2; exit 1 ;;
+  esac
+done
 INJ_INTERVAL="${INJ_INTERVAL:-8}"
 COUNT="${COUNT:-3000}"
 SPAN="${SPAN:-90}"
@@ -59,28 +70,56 @@ ALERTS=data/detect/alerts.ndjson
 CSV=data/detect/baseline_ref.csv
 METRICS=data/metrics.ndjson
 SAMPLES=data/loop_samples.tsv
+KDB=models/schemas/knowdb.toml
+KDB_PG=models/schemas/knowdb.pg.toml
+PG_SQL=pg/baseline_ref.sql
+PG_CID=""
 
 cleanup() {
   [ -n "${INJ_PID:-}" ] && kill "$INJ_PID" 2>/dev/null || true
   [ -n "${SAMP_PID:-}" ] && kill "$SAMP_PID" 2>/dev/null || true
   [ -n "${WFUSION_PID:-}" ] && kill "$WFUSION_PID" 2>/dev/null || true
+  if [ -n "${KDB_BAK:-}" ] && [ -f "$KDB_BAK" ]; then
+    cp "$KDB_BAK" "$KDB"
+    rm -f "$KDB_BAK"
+  fi
 }
 trap cleanup EXIT INT TERM
 
 echo "============================================"
 echo "  baseline — 持续长期闭环（daemon + 注入 + 导出刷新）"
+if [ "$PG_MODE" = 1 ]; then
+  echo "  数据后端: PG（全局周期基线供给 → knowdb NamedSql engine_pg 周期刷新）"
+fi
 echo "============================================"
 echo "  收盘基线: data/baseline/baseline.ndjson（实时追加）"
 echo "  judge/detect 告警: data/detect/judge.ndjson / alerts.ndjson"
-echo "  查看看板: ./view.sh → http://localhost:8124/view/"
+echo "  查看看板: ./view.sh[ --pg] → http://localhost:8124/view/"
 echo "  停止: Ctrl-C${DURATION:+" 或 ${DURATION} 后自动停止"}"
 echo "============================================"
 
 mkdir -p data/logs data/detect data/baseline
 rm -f "$LOG" "$OUT" "$JUDGE" "$ALERTS" "$METRICS" "$SAMPLES" data/daemon.log data/live.jsonl "$CSV"
 
-# 种子 provider CSV（占位 μ≈1000 σ=20；首轮 detect 即有基线；随后 exporter 原子覆盖）
-"$PY" - <<PYEOF
+# 0) 数据后端：CSV（默认）或 PG（--pg）
+if [ "$PG_MODE" = 1 ]; then
+  command -v docker >/dev/null 2>&1 || { echo "错误: --pg 需要 docker（docker-compose.yml 起 postgres）" >&2; exit 1; }
+  echo "0> PG 数据后端：起 postgres + 种子表"
+  docker compose up -d postgres >/dev/null
+  PG_CID=$(docker compose ps -q postgres)
+  for i in $(seq 1 40); do
+    docker exec "$PG_CID" pg_isready -U postgres -d postgres >/dev/null 2>&1 && break
+    sleep 0.5
+  done
+  docker exec "$PG_CID" pg_isready -U postgres -d postgres >/dev/null 2>&1 || { echo "ERROR: postgres 未就绪" >&2; exit 1; }
+  docker exec -i "$PG_CID" psql -U postgres -d postgres -v ON_ERROR_STOP=1 < "$PG_SQL" >/dev/null
+  # 引擎 knowdb 配置切 PG 变体（退出恢复 CSV 变体）
+  KDB_BAK=$(mktemp)
+  cp "$KDB" "$KDB_BAK"
+  cp "$KDB_PG" "$KDB"
+else
+  # 种子 provider CSV（占位 μ≈1000 σ=20；首轮 detect 即有基线；随后 exporter 原子覆盖）
+  "$PY" - <<PYEOF
 import csv
 lines = ["1号线", "2号线", "3号线", "4号线", "5号线"]
 with open("$CSV", "w", encoding="utf-8", newline="") as f:
@@ -89,6 +128,7 @@ with open("$CSV", "w", encoding="utf-8", newline="") as f:
     for e in lines:
         w.writerow([e, 240, 240000.0, 240096000.0, 1000.0, 20.0])
 PYEOF
+fi
 
 # 1) wfusion daemon（避免占用 9800 的残留进程）
 lsof -ti:$PORT 2>/dev/null | xargs kill 2>/dev/null || true
@@ -115,7 +155,11 @@ echo "2> 启动注入 + 导出刷新 + 采样后台任务"
     "$WFGEN" send --scenario models/scenarios/metrics_baseline.wfg --input data/live.jsonl \
       --addr 127.0.0.1:$PORT --ws models/schemas/metrics.wfs >/dev/null 2>&1 || true
     sleep 3                      # 收盘 → sink 落盘
-    "$PY" scripts/export_baseline_ref.py > /dev/null 2>&1 || true   # 聚合 → CSV（原子）
+    "$PY" scripts/export_baseline_ref.py > /dev/null 2>&1 || true   # 聚合 → CSV（看板/审计，两模式都写）
+    if [ "$PG_MODE" = 1 ] && [ -s "$OUT" ]; then
+      "$PY" scripts/export_baseline_ref_pg.py 2>/dev/null \
+        | docker exec -i "$PG_CID" psql -U postgres -d postgres >/dev/null 2>&1 || true   # 聚合 → PG 供给表
+    fi
     sleep "$INJ_INTERVAL"
   done
 ) &

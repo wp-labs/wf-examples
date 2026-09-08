@@ -47,9 +47,9 @@ count/sum/avg/min/max）。
 cd baseline && ./smoke.sh        # step1 生产（batch 对拍）
 ./scripts/run_m3a.sh             # S2-M3a：knowdb CSV 全局周期基线供给通道判定验证
 ./scripts/run_long.sh [rounds]   # daemon 长跑：窗推进 + 内存平台（默认 3 轮 ≈1 分钟）
-./run.sh [时长]                 # 持续闭环长跑（Ctrl-C 或 ./run.sh 5m 停止）
+./run.sh [--pg] [时长]           # 持续闭环长跑（--pg=PG 数据后端；Ctrl-C 或 5m 停止）
 ./scripts/run_loop.sh [rounds]   # 有界闭环校验（两条判定通道断言，默认 5 轮）
-./view.sh                        # 结果看板 → http://localhost:8124/view/
+./view.sh [--pg]                 # 结果看板 → http://localhost:8124/view/
 ```
 
 ### 长跑验证（run_long.sh）
