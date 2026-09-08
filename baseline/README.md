@@ -49,8 +49,33 @@ cd baseline && ./smoke.sh        # step1 生产（batch 对拍）
 ./scripts/run_long.sh [rounds]   # daemon 长跑：窗推进 + 内存平台（默认 3 轮 ≈1 分钟）
 ./run.sh [--pg] [时长]           # 持续闭环长跑（--pg=PG 数据后端；Ctrl-C 或 5m 停止）
 ./scripts/run_loop.sh [rounds]   # 有界闭环校验（两条判定通道断言，默认 5 轮）
+./scripts/run_phase.sh [rounds]  # 近端 B 相位同窗接线 e2e（默认 8 轮 ≈1.5 分钟）
 ./view.sh [--pg]                 # 结果看板 → http://localhost:8124/view/
 ```
+
+### 近端 B 相位同窗（S2-M2-b，run_phase.sh）
+
+近端 B judge 的相位同窗：store 键含相位桶 `(entity, metric, phase_bucket)`，
+judge 按**事件时间**折叠相位桶、只与历史同期（同相位）比较——早高峰只跟早高峰比。
+相位由 `[runtime]` 配置开启（`baseline_history_phase_period/bucket` 成对），随收盘
+自然推进、无需外部刷新。精确语义（同相位过滤、相位下半衰期参照=4×period、事件缺
+`event_time` 的全桶回退）由 `wf-cep baseline::` 单测锁定。
+
+```bash
+./scripts/run_phase.sh [rounds]  # 默认 8 轮 ≈1.5 分钟；逐轮断言 judge 恰 1 条/轮
+```
+
+场景（`scripts/gen_metrics_phase.py` + `conf/loop.phase.wfusion.toml`）：
+
+- 相位周期 240s / 桶宽 15s（=收盘窗宽）；忙时格（8..15）水平 3000、闲时格（0..7）
+  水平 1000；每轮事件时间 +120s = 半周期 → 忙/闲轮交替、相位位置每 2 轮复现；
+- 每轮注入 1 个 5号线=9000 越界点。断言：judge **每轮恰 1 条**、仅 5号线、z>3，
+  5 条线忙/闲双档零误报；首条 z≈10 作“相位已生效”canary（滚动形态实测 ≈21）。
+
+> 实测注意（2026-09-08）：批量注入（wfgen send 整轮一帧）下事件判定滞后于收盘，
+> 越界事件所在窗已先 append 进其自身相位桶 → z 被自窗摊薄（≈10 而非理论 400），
+> 仍 ≫3 检出；该形态下滚动模式因“自窗+邻窗已入缓冲”同样每轮只告 1 条，故 daemon
+> e2e 以**接线与稳定性**为断言口径（不凭计数断言隔离语义），隔离语义以单测为准。
 
 ### 长跑验证（run_long.sh）
 

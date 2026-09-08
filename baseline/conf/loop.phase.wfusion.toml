@@ -1,0 +1,34 @@
+# baseline 近端 B 相位同窗 e2e（scripts/run_phase.sh）：
+#   与 loop.wfusion.toml 同构（producer 15s 收盘 → baseline_out + 近端 B judge +
+#   远端 A detect/refresh 全保留），仅新增 [runtime] 相位配置：
+#     baseline_history_phase_period = "240s"   演示用小周期（忙/闲交替）
+#     baseline_history_phase_bucket = "15s"    = 收盘窗宽（每周期每相位格恰 1 窗）
+#   相位开启后 judge 按事件时间折桶、只与同相位历史比较（忙时只跟忙时比），
+#   语义由 wf-cep baseline 单测逐条锁定；本 e2e（gen_metrics_phase.py：忙时格
+#   3000/闲时格 1000 + 每轮 1 个 5号线=9000 越界）验证全引擎接线与忙/闲双档
+#   长期运行稳定性：每轮恰 1 条 5号线 真越界（z>3）、其余零误报、首条 z≈10
+#   （相位桶内仅自窗；若配置未生效滚动混合多窗 → z≈21，作 canary）。
+# 规则来自 models/rules-loop/*.wfl（producer_long + judge + detect 的集合，单 glob）。
+
+sources_dir = "topology/sources"
+sinks = "topology/sinks"
+windows = "models/schemas/windows.toml"
+
+[runtime]
+executor_parallelism = 4
+rule_exec_timeout = "30s"
+schemas = "models/schemas/*.wfs"
+rules = "models/rules-loop/*.wfl"
+baseline_history_k = 8
+baseline_history_decay = true
+baseline_history_phase_period = "240s"
+baseline_history_phase_bucket = "15s"
+
+[metrics]
+enabled = true
+report_interval = "2s"
+
+[logging]
+level = "info"
+format = "plain"
+file = "data/logs/wfusion_phase.log"
