@@ -75,7 +75,7 @@
 
   <section id="sec-judge">
     <h2>实时滚动基线 · judge（在线 z 判定）</h2>
-    <p class="sub">数据源：<code>data/detect/judge.ndjson</code> —— 事件到达即与 <b>本线路最近 K 个已收盘窗</b> 的 μ/σ 比对，<code>baseline_dev()</code> |z| &gt; 3 告警</p>
+    <p class="sub">数据源：<code>data/detect/judge.ndjson</code> —— 事件到达即与<b>本键最近 K 个已收盘窗</b>（相位开启时 = 事件时间同相位历史）的 μ/σ 比对，<code>baseline_dev()</code> |z| &gt; 3 告警</p>
     <div class="cards" id="judge-cards"></div>
     <div class="ovf"><table id="judge-table"></table></div>
     <p class="note" id="judge-note"></p>
@@ -92,8 +92,8 @@
   </section>
 
   <section id="sec-ref">
-    <h2>全局周期基线供给表 baseline_ref（provider CSV）</h2>
-    <p class="sub">数据源：<code>data/detect/baseline_ref.csv</code> —— n/sum/sum_sq 三元组 + μ/σ 消费列（§11.3 契约）</p>
+    <h2>全局周期基线供给 · baseline_ref（镜像 CSV）</h2>
+    <p class="sub">数据源：<code>data/detect/baseline_ref.csv</code> —— n/sum/sum_sq 三元组 + μ/σ 消费列（§11.3 契约）；供给真源随运行后端：CSV 重载或 PG 事实库 <code>baseline_records</code> 表级聚合（本 CSV 为看板镜像）</p>
     <div class="ovf"><table id="ref-table"></table></div>
     <div class="empty" id="ref-empty" style="display:none">暂无供给表</div>
   </section>

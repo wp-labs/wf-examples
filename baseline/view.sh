@@ -8,7 +8,7 @@
 #   data/baseline/baseline.ndjson    收盘基线（每 15s 窗 × 线路 一行）
 #   data/detect/judge.ndjson         实时滚动基线(judge) z 越界告警
 #   data/detect/alerts.ndjson        全局周期基线(detect) 偏离告警
-#   data/detect/baseline_ref.csv     全局周期基线供给表（mu/sigma；--pg 模式下仍每轮写出供本看板）
+#   data/detect/baseline_ref.csv     全局周期基线供给镜像（mu/sigma 消费列）
 #   data/loop_samples.tsv            内存/RSS/行数采样（内存平台曲线）
 #   data/logs/wfusion_loop.log       provider refresh 次数（log 锚点）
 # 未跑 run.sh 时各区块显示"暂无"，运行后自动出现。
@@ -16,7 +16,7 @@
 # 用法:
 #   ./view.sh            # 默认（run.sh：CSV 数据后端）
 #   ./view.sh --pg       # run.sh --pg（PG 数据后端）——本看板仍读引擎产物文件，
-#                        # 供给表由 run.sh --pg 每轮原子写出 baseline_ref.csv + 写 PG
+#                        # baseline_ref.csv 每轮原子写出供展示；供给本身由引擎装载/刷新
 #   ./view.sh 8125       # 自定义端口；--pg 与端口可同用
 # ===========================================================================
 set -euo pipefail
@@ -39,7 +39,7 @@ fi
 
 echo "baseline 闭环查看: http://localhost:${PORT}/view/"
 if [ "$PG_MODE" = 1 ]; then
-  echo "（数据后端: PG —— 先 ./run.sh --pg 持续运行；供给表另经 docker postgres 验证）"
+  echo "（数据后端: PG —— 先 ./run.sh --pg 持续运行；供给 = 引擎直聚合 baseline_records）"
 else
   echo "（先 ./run.sh 持续运行生成 data/ 产物，或 ./scripts/run_loop.sh 做有界校验；Ctrl-C 停止服务）"
 fi
