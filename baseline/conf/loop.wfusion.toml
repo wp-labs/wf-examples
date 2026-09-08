@@ -1,0 +1,24 @@
+# baseline 长期闭环 daemon（run_loop.sh）：
+#   生产(15s 固定窗收盘) → baseline_out sink + 实时滚动基线（共享 BaselineStore append
+#   → judge(baseline_dev z 越界) ；另导出 CSV → knowdb refresh(1s) → detect(全局周期基线
+#   provider join) —— 全链路单 daemon 长跑，事件时间每轮 +120s 驱动持续收盘。
+# 规则来自 models/rules-loop/*.wfl（producer_long + judge + detect 的集合，单 glob）。
+
+sources_dir = "topology/sources"
+sinks = "topology/sinks"
+windows = "models/schemas/windows.toml"
+
+[runtime]
+executor_parallelism = 4
+rule_exec_timeout = "30s"
+schemas = "models/schemas/*.wfs"
+rules = "models/rules-loop/*.wfl"
+
+[metrics]
+enabled = true
+report_interval = "2s"
+
+[logging]
+level = "info"
+format = "plain"
+file = "data/logs/wfusion_loop.log"

@@ -1,0 +1,19 @@
+use "../schemas/metrics.wfs"
+
+// 实时滚动基线 judge（S2-M2）：事件到达即与共享基线历史表（BaselineStore）的
+// 最近 K 个已收盘窗做 z-score 判定。
+//   baseline_dev(entity, metric, value) —— 引擎级共享 store：producer 收盘
+//   append / 启动 warm（conf runtime.baseline_history CSV）→ 等权合并最近 K
+//   窗得 μ/σ → 返回 z=(v−μ)/σ；无历史或 σ≈0 → None → where false（不误报）。
+// 事件时间精确性由"store 只含已收盘窗 + 收盘由事件时间驱动"保证（§11 S2-5）。
+rule baseline_judge {
+    events { e : metrics_stream }
+    on each e where abs(baseline_dev(e.entity, e.metric, e.value)) > 3.0 -> score(90.0)
+    entity(str, e.entity)
+    yield baseline_judge_alerts (
+        entity     = e.entity,
+        alert_type = "flow_z_outlier",
+        value      = e.value,
+        z          = abs(baseline_dev(e.entity, e.metric, e.value))
+    )
+}

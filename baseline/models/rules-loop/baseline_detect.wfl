@@ -1,0 +1,23 @@
+use "../schemas/metrics.wfs"
+use "../schemas/baseline_ref.wfs"
+
+// 基线偏离判定（全局周期基线供给通道，S2-M3a 最小验证）。
+// 每事件 join provider 静态表 baseline_ref（knowdb CSV 加载，bootstrap 一次性）
+// 取该 entity 的全时段基线（mu/sigma；数据契约保留可加三元组，见 §11.3），
+// 偏离超过 5× 的越界事件才产出告警。
+// 形态对齐 q13b（on each + provider snapshot join）+ q3（join 后 where 过滤）：
+// join miss → ref 字段为空 → where 为 false → 不告警；命中且越界 → 告警。
+rule baseline_detect {
+    events { e : metrics_stream }
+    on each e -> score(80.0)
+    join baseline_ref snapshot on e.entity == baseline_ref.entity
+    where (e.value - baseline_ref.mu) / baseline_ref.mu > 5.0
+    entity(str, e.entity)
+    yield baseline_alerts (
+        entity    = e.entity,
+        alert_type = "flow_deviation",
+        value     = e.value,
+        mu        = baseline_ref.mu,
+        deviation = (e.value - baseline_ref.mu) / baseline_ref.mu
+    )
+}
