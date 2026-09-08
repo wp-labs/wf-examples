@@ -13,7 +13,7 @@ import sys
 
 SRC = "data/baseline/baseline.ndjson"
 DST = "data/detect/baseline_ref.csv"
-METRIC = "qps"
+METRIC = "flow"
 
 
 def main() -> int:
@@ -36,7 +36,9 @@ def main() -> int:
             g[2] += float(r["sum_sq"])
 
     os.makedirs(os.path.dirname(DST), exist_ok=True)
-    with open(DST, "w", encoding="utf-8", newline="") as f:
+    # 原子替换：先写临时文件再 rename，避免运行中的 loader refresh 读到半截 CSV。
+    tmp = DST + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
         w.writerow(["entity", "n", "sum", "sum_sq", "mu", "sigma"])
         for e in sorted(agg):
@@ -48,7 +50,7 @@ def main() -> int:
             sigma = math.sqrt(max(var, 0.0))
             w.writerow([e, f"{n:.0f}", repr(s), repr(ss), repr(mu), repr(sigma)])
             print(f"  {e}: n={n:.0f} mu={mu:.3f} sigma={sigma:.3f}")
-
+    os.replace(tmp, DST)
     print(f"导出 {len(agg)} 行 -> {DST}")
     return 0
 

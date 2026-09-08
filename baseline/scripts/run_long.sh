@@ -14,7 +14,8 @@
 # 产物: data/metrics.ndjson（alloc/window 指标采样）、data/long_samples.tsv、
 #       data/baseline/baseline.ndjson（累计基线记录）、data/logs/wfusion_long.log
 #
-# 注：判定规则/远端 A 的 refresh 不在本脚本范围（A 为静态装载，refresh 属 S2-M3b）。
+# 注：判定规则/全局周期基线供给的 refresh 不在本脚本范围（供给表按启动装载一次，
+# refresh 属 S2-M3b）。
 # ===========================================================================
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

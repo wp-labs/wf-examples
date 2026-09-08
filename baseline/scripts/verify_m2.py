@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""S2-M2 judge 对拍验证（近端 B z-score）：
-1) warm 数据自洽：judge 用全部历史窗（受控 5 实体×4 窗×60）——producer 输出
+"""S2-M2 judge 对拍验证（实时滚动基线 z-score）：
+1) warm 数据自洽：judge 用全部历史窗（受控 5 条线路×4 窗×60）——producer 输出
    经 export_baseline_history.py 导出 CSV；
-2) judge 输出恰 1 条 = svc_e（9000 vs μ≈1000 σ≈15 → z≈500+），svc_a..d |z|<1 不告警。
+2) judge 输出恰 1 条 = 5号线（9000 vs μ≈1000 σ≈15 → z≈500+），1~4号线 |z|<1 不告警。
 """
 import json
 import os
 import sys
 
 ALERTS = "data/detect/judge.ndjson"
-EXPECTED = "svc_e"
+EXPECTED = "5号线"
 
 
 def main() -> int:
@@ -32,7 +32,7 @@ def main() -> int:
             z = float(a.get("z", 0.0))
             if e == EXPECTED and not (z > 100.0):
                 bad.append(f"{e} z 期望 >>3（≈500+），实际 {z}")
-            if a.get("alert_type") != "qps_z_outlier":
+            if a.get("alert_type") != "flow_z_outlier":
                 bad.append(f"{e} alert_type 异常: {a.get('alert_type')}")
 
     print(f"judge 告警数: {len(alerts)}")
@@ -43,7 +43,7 @@ def main() -> int:
         for b in bad:
             print("  -", b)
         return 1
-    print("PASS：svc_e z>>3 唯一告警（近端 B judge），svc_a..d 正常未告警")
+    print("PASS：5号线 z>>3 唯一告警（实时滚动基线 judge），1~4号线 正常未告警")
     return 0
 
 

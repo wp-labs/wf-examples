@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# S2-M3a 最小验证（远端 A 通道：knowdb CSV → ProviderWindow → join 判定）
-#   1. gen     受控数据（5 实体历史 + live 判定事件，svc_e 故意 9x）
+# S2-M3a 最小验证（全局周期基线供给通道：knowdb CSV → ProviderWindow → join 判定）
+#   1. gen     受控数据（5 条线路历史 + live 判定事件，5号线 故意 9x）
 #   2. producer baseline_producer 聚合受控历史 → baseline.ndjson
 #   3. export  聚合成 provider CSV（三元组 + mu/sigma，契约 §11.3）
 #   4. detect  knowdb 加载 CSV → baseline_detect 每事件 join + 越界 where → 告警
-#   5. verify  断言仅 svc_e 告警、CSV 契约自洽
+#   5. verify  断言仅 5号线 告警、CSV 契约自洽
 # ===========================================================================
 set -euo pipefail
 

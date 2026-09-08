@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# S2-M2 最小闭环（近端 B：共享 BaselineStore warm + baseline_dev judge 对拍）
-#   1. gen    受控数据（复用 S2-M3a：5 实体历史 + live，svc_e 9000=9×）
+# S2-M2 最小闭环（实时滚动基线：共享 BaselineStore warm + baseline_dev judge 对拍）
+#   1. gen    受控数据（复用 S2-M3a：5 条线路历史 + live，5号线 9000=9×）
 #   2. producer batch → baseline.ndjson（逐窗记录）
 #   3. export 逐窗历史 CSV（entity,metric,win_start,win_end,n,sum,sum_sq）
 #   4. judge  batch：runtime.baseline_history warm store → baseline_judge
 #      （on each where |baseline_dev|>3）→ judge.ndjson
-#   5. verify 断言仅 svc_e（z≈500+）告警、svc_a..d 不告警
+#   5. verify 断言仅 5号线（z≈500+）告警、1~4号线 不告警
 # ===========================================================================
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

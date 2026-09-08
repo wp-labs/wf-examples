@@ -4,6 +4,15 @@
 用 stats 引擎把指标流收敛为可落盘的 `BaselineRecord`（`n/sum/sum_sq` 三元组），
 后续步骤（消费侧 API / 持久化后端）都以本步产出的记录为输入。
 
+> **业务示意（本 case 的可读包装）**：想象 5 条地铁线路（`1号线`~`5号线`）
+> 每 15 秒上报一次客流强度（`metric=flow`，正常 ≈ 1000±25 人次/采样点）。
+> 引擎把每条线路的客流按时间窗**结账归档**（收盘 → `n/sum/sum_sq` 三元组），
+> 用三元组随时可推导该线路的 μ/σ —— 客流历史画像可长期压缩保存。
+> `5号线` 每轮注入一次客流 9000（≈9× 异常大客流/事故前兆），两条判定通道
+> 各自独立告警：**实时滚动基线 judge**（|z|>3，对单次尖峰最敏感）与 **全局周期基线 detect**
+> （(v−μ)/μ>5，供给表经 knowdb 周期刷新）——而 1~4 号线永不误报。
+> 闭环长跑同时验证：窗持续收盘不漏账、画像随新常态滚动更新、内存平台。
+
 > 设计：`wp-reactor/docs/design/baseline-online-design.md`（§4 数据生产 / §5 消费 API）。
 > 里程碑: §9 MVP 第一件。
 
@@ -36,8 +45,11 @@ count/sum/avg/min/max）。
 
 ```bash
 cd baseline && ./smoke.sh        # step1 生产（batch 对拍）
-./scripts/run_m3a.sh             # S2-M3a：knowdb CSV 远端 A 通道判定验证
+./scripts/run_m3a.sh             # S2-M3a：knowdb CSV 全局周期基线供给通道判定验证
 ./scripts/run_long.sh [rounds]   # daemon 长跑：窗推进 + 内存平台（默认 3 轮 ≈1 分钟）
+./run.sh [时长]                 # 持续闭环长跑（Ctrl-C 或 ./run.sh 5m 停止）
+./scripts/run_loop.sh [rounds]   # 有界闭环校验（两条判定通道断言，默认 5 轮）
+./view.sh                        # 结果看板 → http://localhost:8124/view/
 ```
 
 ### 长跑验证（run_long.sh）

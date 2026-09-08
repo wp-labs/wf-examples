@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """S2-M3a 判定对拍验证：
 1) provider CSV（数据契约）内部自洽：mu ≈ sum/n；
-2) baseline_alerts 恰好 1 条 = svc_e（9000/1000 = 8x > 5x），svc_a..d 不告警。
+2) baseline_alerts 恰好 1 条 = 5号线（9000/1000 = 8x > 5x），1~4号线 不告警。
 """
 import csv
 import json
@@ -10,7 +10,7 @@ import sys
 
 CSV = "data/detect/baseline_ref.csv"
 ALERTS = "data/detect/alerts.ndjson"
-EXPECTED_ANOMALY = "svc_e"
+EXPECTED_ANOMALY = "5号线"
 
 
 def main() -> int:
@@ -61,7 +61,7 @@ def main() -> int:
             dev = float(a.get("deviation", 0.0))
             if e == EXPECTED_ANOMALY and not (7.5 <= dev <= 8.5):
                 bad.append(f"{e} deviation 期望≈8.0, 实际 {dev}")
-            if a.get("alert_type") != "qps_deviation":
+            if a.get("alert_type") != "flow_deviation":
                 bad.append(f"{e} alert_type 异常: {a.get('alert_type')}")
 
     print(f"provider 实体数: {len(ref)}  告警数: {len(alerts)}")
@@ -75,7 +75,7 @@ def main() -> int:
             print("  -", b)
         return 1
 
-    print("PASS：svc_e 8x 偏离唯一告警，svc_a..d 正常未告警，CSV 契约自洽")
+    print("PASS：5号线 8x 偏离唯一告警，1~4号线 正常未告警，CSV 契约自洽")
     return 0
 
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""S2-M3a 受控数据生成：baseline 历史事件（5 实体 × 4 分钟 × 每秒 1 事件）
-+ live 判定事件（每实体 1 条，svc_e 故意 9000 = 9×）。
+"""S2-M3a 受控数据生成：baseline 历史事件（5 条线路 × 4 分钟 × 每秒 1 事件）
++ live 判定事件（每线路 1 条，5号线 故意 9000 = 9×）。
 
 事件行形状对齐 wfgen gen 输出（_stream/_timestamp/_window 元字段 + event_time
 epoch 纳秒）。确定性（seed=42），供 producer → 导出 CSV → detect 判定对拍。
@@ -12,7 +12,7 @@ import random
 
 NS0 = 1767225600000000000  # 2026-01-01T00:00:00Z (epoch ns)
 OUT_DIR = "data/detect"
-SVCS = ["svc_a", "svc_b", "svc_c", "svc_d", "svc_e"]
+SVCS = ["1号线", "2号线", "3号线", "4号线", "5号线"]
 
 
 def iso_ns(ns: int) -> str:
@@ -27,7 +27,7 @@ def row(entity: str, value: float, t_ns: int) -> dict:
         "_window": "metrics_stream",
         "entity": entity,
         "event_time": t_ns,
-        "metric": "qps",
+        "metric": "flow",
         "value": float(value),
     }
 
@@ -53,12 +53,12 @@ def main() -> None:
     live_t = t0 + 6 * 60 * 1_000_000_000  # 00:16:00Z（基线之后）
     live = []
     for i, svc in enumerate(SVCS):
-        v = 9000 if svc == "svc_e" else 1000 + rng.randint(-10, 10)
+        v = 9000 if svc == "5号线" else 1000 + rng.randint(-10, 10)
         live.append(row(svc, v, live_t + i * 1_000_000_000))
 
     write(os.path.join(OUT_DIR, "baseline_events.jsonl"), baseline)
     write(os.path.join(OUT_DIR, "live_events.jsonl"), live)
-    print("  预期：svc_e 偏离 (9000-1000)/1000 = 8.0x > 5x → 应告警；svc_a..d ≈0x → 不告警")
+    print("  预期：5号线 偏离 (9000-1000)/1000 = 8.0x > 5x → 应告警；1~4号线 ≈0x → 不告警")
 
 
 if __name__ == "__main__":
