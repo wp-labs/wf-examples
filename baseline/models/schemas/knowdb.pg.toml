@@ -1,0 +1,18 @@
+# 全局周期基线供给（PG 变体，供 scripts/run_pg_refresh.sh 使用）：
+# 引擎识别 [provider] kind="postgres" → 安装 wp_knowledge 命名 provider
+# （engine_pg），[[tables]] 从 PG 同名表 SELECT 装载，并按下表 refresh 周期
+# 经 NamedSql 规格刷新（daemon）。与本目录 knowdb.toml（CSV 变体）二选一：
+# run_pg_refresh.sh 会临时替换本文件为 knowdb.toml 并在退出时恢复。
+
+version = 2
+base_dir = "../../data"
+
+[provider]
+kind = "postgres"
+connection_uri = "postgresql://postgres:demo@127.0.0.1:5432/postgres"
+pool_size = 4
+
+[[tables]]
+name = "baseline_ref"
+enabled = true
+refresh = "1s"
