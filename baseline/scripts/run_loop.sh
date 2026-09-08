@@ -38,6 +38,13 @@ SAMPLES=data/loop_samples.tsv
 
 mkdir -p data/logs data/detect data/baseline
 rm -f "$LOG" "$OUT" "$ALERTS" "$JUDGE" "$METRICS" "$SAMPLES" data/daemon.log data/live.jsonl "$CSV"
+# 端口 9800 被各 case 共享：残留 daemon 会抢占 → 新 daemon bind 失败或注入打进
+# 旧实例（偶发首轮 rx=0/judge=0 的根因）。先清场并**等端口真正释放**再启动。
+lsof -ti:"$PORT" 2>/dev/null | xargs kill 2>/dev/null || true
+for _i in $(seq 1 20); do
+  lsof -ti:"$PORT" >/dev/null 2>&1 || break
+  sleep 0.2
+done
 
 # 种子 provider CSV（占位 μ≈1000，σ=20；首轮 detect 即有基线；后续每轮由
 # exporter 用真实收盘聚合原子覆盖）。schema = entity,n,sum,sum_sq,mu,sigma

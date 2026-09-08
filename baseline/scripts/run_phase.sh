@@ -49,8 +49,13 @@ CSV=data/detect/baseline_ref.csv
 
 mkdir -p data/logs data/detect data/baseline
 rm -f "$LOG" "$OUT" "$JUDGE" "$ALERTS" data/daemon.log data/live.jsonl "$CSV"
-# 端口 9800 被各 case 共享：残留 daemon 会串扰（既存约定，先清场）
+# 端口 9800 被各 case 共享：残留 daemon 会抢占——先清场并**等端口真正释放**再
+# 启动（避免新 daemon bind 失败或注入打进旧实例的偶发首轮 rx=0）。
 lsof -ti:"$PORT" 2>/dev/null | xargs kill 2>/dev/null || true
+for _i in $(seq 1 20); do
+  lsof -ti:"$PORT" >/dev/null 2>&1 || break
+  sleep 0.2
+done
 
 # 交叉校验（防配置/生成器错位）：conf 相位常量必须与 gen_metrics_phase.py 一致——
 # 两处重复的 period/bucket 没有单一事实源，改其一而忘另一会让忙/闲划分静默错位。
