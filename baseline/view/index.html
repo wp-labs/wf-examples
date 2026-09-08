@@ -83,7 +83,7 @@
   </section>
 
   <section id="sec-detect">
-    <h2>全局周期基线 · detect（knowdb 供给 join）</h2>
+    <h2>全局周期基线告警 · detect（远端 A）</h2>
     <p class="sub">数据源：<code>data/detect/alerts.ndjson</code> —— 与周期刷新的全局供给表 <code>baseline_ref</code> 比对，(v−μ)/μ &gt; 5 告警</p>
     <div class="cards" id="det-cards"></div>
     <div class="ovf"><table id="det-table"></table></div>
@@ -92,7 +92,7 @@
   </section>
 
   <section id="sec-ref">
-    <h2>全局周期基线供给 · baseline_ref（镜像 CSV）</h2>
+    <h2>detect 判定依据 · 基线画像 baseline_ref（μ/σ）</h2>
     <p class="sub">数据源：<code>data/detect/baseline_ref.csv</code> —— n/sum/sum_sq 三元组 + μ/σ 消费列（§11.3 契约）；供给真源随运行后端：CSV 重载或 PG 事实库 <code>baseline_records</code> 表级聚合（本 CSV 为看板镜像）</p>
     <div class="ovf"><table id="ref-table"></table></div>
     <div class="empty" id="ref-empty" style="display:none">暂无供给表</div>
