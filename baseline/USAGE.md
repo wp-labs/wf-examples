@@ -56,7 +56,7 @@ metrics_stream ─▶ stats<窗:fixed> group by (entity, metric)
 
 ### 2.3 持久化 = 独立基线库（严禁复用窗口 spill）
 
-收盘记录经规则级 yield→sink 落**外部持久库**（PG 事实表 / Doris / 本地 redb），
+收盘记录经规则级 yield→sink 落**外部持久库**
 主键 `(entity, metric, win_start)`、追加幂等。**不存进窗口 spill**：基线是长存
 画像资产，spill 是临时中间态，二者语义与生命周期不同。
 
@@ -66,7 +66,10 @@ metrics_stream ─▶ stats<窗:fixed> group by (entity, metric)
 |---|---|---|
 | **近端 B** | 规则级共享内存表 `BaselineStore`（收盘 append + 启动 warm） | 事件时间精确、每事件≈内存读；是检测热路径宿主 |
 | **远端 A** | knowdb ProviderWindow（CSV 重载 / **PG 表级聚合**）周期供给 | 长留存/跨进程共享；接受处理时间近似 |
-| 壳 C（远期） | external 低频服务化 | 参数自由、无 join 键限制，不做高 EPS 主路径 |
+
+> external 壳 C（低频服务化出口）**已排除**：引擎内判定两档（B 热路径 / A 长程）已
+> 闭环；“外部查询当前偏离度”属宿主产品 API 层职责（消费同一数据契约即可），不在
+> 引擎内再造第三份状态与合并逻辑。见 wp-reactor 设计文档 §11.1/§11.4。
 
 **数据血缘（PG 模式）**：`PG sink → baseline_records`（追加事实，唯一事实源）；
 引擎每次装载/刷新对事实表执行聚合 SQL（`GROUP BY entity` 现算供给行），**无外部
@@ -164,7 +167,7 @@ release，K=8）：
 | 存储 | 独立持久基线库（PG/Doris/本地 redb），**严禁复用窗口 spill** |
 | 生成 | 复用 stats 五原语 + `sumsq`，无新状态机；相位靠 `win_start` 消费侧筛选 |
 | 周期 | 一等公民：同相位窗口集参与对比 |
-| 判定分层 | 近端 B 精确（事件时间）· 远端 A 近似（处理时间，提前刷新）· 壳 C 低频 |
+| 判定分层 | 近端 B 精确（事件时间）· 远端 A 近似（处理时间，提前刷新）；external 壳 C 已排除 |
 | 事实源 | 外部 sink=唯一事实源；引擎内不持有另一份权威态 |
 | 一致性 | B 收盘 append 幂等；A 供给刷新幂等（主键 upsert）；存储不可用降级仅失长程 |
 
