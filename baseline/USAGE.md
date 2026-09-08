@@ -163,6 +163,7 @@ period=240s / bucket=15s（=窗宽），忙时格(8..15) 3000、闲时格(0..7) 
 | 脚本断言 | `scripts/run_*.sh`（见 §3） | 各通道计数/数值/单调/内存 |
 | 对拍脚本 | `scripts/verify_baseline.py` `scripts/verify_m2.py` `scripts/verify_detect.py` | 总量对拍 / 实体与 z / 契约自洽与 dev |
 | 生成器自检 | `scripts/gen_metrics_phase.py --selfcheck` | 单调/均衡/忙闲纯度/spike/周期复现 |
+| 规则同步守卫 | `scripts/check_rules_sync.sh`（挂在 run_loop/run_phase 启动） | rules-loop 组合快照与 canonical 逐字一致（见 models/README.md） |
 | 引擎单测 | `wf-cep baseline::` `wf-runtime baseline_warm_tests` | 分桶/同相位过滤/decay/幂等/裁剪/并发/配置校验 |
 | 基准 | `cargo test --release -p wf-cep baseline_bench -- --ignored --nocapture` | append/deviation_at 每 op 纳秒（规模缩放） |
 

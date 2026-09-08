@@ -72,6 +72,7 @@ if [ "$CONF_PERIOD" != "$GEN_PERIOD" ] || [ "$CONF_BUCKET" != "$GEN_BUCKET" ]; t
   exit 1
 fi
 printf '==> 0. 相位常量一致: period=%ss bucket=%ss（conf == gen）\n' "$CONF_PERIOD" "$CONF_BUCKET"
+./scripts/check_rules_sync.sh >/dev/null   # rules-loop 组合快照一致性（见 models/README.md）
 
 # 种子 provider CSV（占位 μ≈1000，σ=20；detect 通道沿用 loop 语义，本次不断言）
 "$PY" - <<PYEOF

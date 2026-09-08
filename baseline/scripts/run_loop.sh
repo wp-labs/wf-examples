@@ -60,6 +60,7 @@ print("seeded", "$CSV")
 PYEOF
 
 echo "==> 0. start closed-loop daemon (conf=$CONF rounds=$ROUNDS)"
+./scripts/check_rules_sync.sh >/dev/null   # rules-loop 组合快照一致性（见 models/README.md）
 "$WFUSION" daemon --config "$CONF" --work-dir . > data/daemon.log 2>&1 &
 DAEMON_PID=$!
 trap 'kill $DAEMON_PID 2>/dev/null || true' EXIT
