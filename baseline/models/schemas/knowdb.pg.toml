@@ -16,3 +16,6 @@ pool_size = 4
 name = "baseline_ref"
 enabled = true
 refresh = "1s"
+# 供给 = 事实源聚合：不落外部中转表，引擎每次装载/刷新直接对 baseline_records
+# 做可加三元组聚合（records 是 PG 模式的唯一事实源；见 pg/baseline_records.sql）。
+query = "SELECT entity, sum(n) AS n, sum(sum) AS sum, sum(sum_sq) AS sum_sq, sum(sum)/sum(n) AS mu, sqrt(greatest(sum(sum_sq)/sum(n) - power(sum(sum)/sum(n), 2), 0)) AS sigma FROM baseline_records GROUP BY entity"

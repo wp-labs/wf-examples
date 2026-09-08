@@ -72,7 +72,6 @@ METRICS=data/metrics.ndjson
 SAMPLES=data/loop_samples.tsv
 KDB=models/schemas/knowdb.toml
 KDB_PG=models/schemas/knowdb.pg.toml
-PG_SQL=pg/baseline_ref.sql
 PG_REC_SQL=pg/baseline_records.sql
 PG_CID=""
 CONF=conf/loop.wfusion.toml
@@ -114,8 +113,17 @@ if [ "$PG_MODE" = 1 ]; then
     sleep 0.5
   done
   docker exec "$PG_CID" pg_isready -U postgres -d postgres >/dev/null 2>&1 || { echo "ERROR: postgres 未就绪" >&2; exit 1; }
-  docker exec -i "$PG_CID" psql -U postgres -d postgres -v ON_ERROR_STOP=1 < "$PG_SQL" >/dev/null
+  # 事实库（PG sink 落点）建表/清空；供给由引擎每次装载/刷新直接聚合本表
   docker exec -i "$PG_CID" psql -U postgres -d postgres -v ON_ERROR_STOP=1 < "$PG_REC_SQL" >/dev/null
+  # 启动占位种子（win_start='seed' 标记）：boot 即有 5 行可注册 provider；
+  # 首轮收盘后由下方清理，避免污染事实聚合。
+  docker exec "$PG_CID" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "
+INSERT INTO baseline_records (entity, metric, win_start, win_end, n, sum, sum_sq) VALUES
+  ('1号线','flow','seed','seed',1,1000.0,1000400.0),
+  ('2号线','flow','seed','seed',1,1000.0,1000400.0),
+  ('3号线','flow','seed','seed',1,1000.0,1000400.0),
+  ('4号线','flow','seed','seed',1,1000.0,1000400.0),
+  ('5号线','flow','seed','seed',1,1000.0,1000400.0);" >/dev/null
   # 引擎 knowdb 配置切 PG 变体（退出恢复 CSV 变体）；sink 树切 sinks-pg（双写 PG 事实库）
   KDB_BAK=$(mktemp)
   cp "$KDB" "$KDB_BAK"
@@ -150,28 +158,6 @@ echo "   wfusion PID=$WFUSION_PID"
 
 echo "2> 启动注入 + 导出刷新 + 采样后台任务"
 
-# PG 供给刷新：baseline_ref ← baseline_records 聚合（PG 内完成，records 为唯一事实源）。
-# 同一条可加三元组 SQL 随时可重放（等价与 CSV exporter，但不再依赖文件）。
-pg_supply_from_records() {
-  local has
-  has=$(docker exec "$PG_CID" psql -U postgres -d postgres -tAc "SELECT count(*) FROM baseline_records" 2>/dev/null || echo 0)
-  [[ "${has:-0}" =~ ^[0-9]+$ ]] || has=0
-  [ "$has" -gt 0 ] || return 0   # 尚无收盘明细：保留启动种子
-  docker exec -i "$PG_CID" psql -U postgres -d postgres -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
-TRUNCATE baseline_ref;
-INSERT INTO baseline_ref (entity, n, sum, sum_sq, mu, sigma)
-SELECT entity,
-       sum(n)                                     AS n,
-       sum(sum)                                   AS sum,
-       sum(sum_sq)                                AS sum_sq,
-       sum(sum) / sum(n)                          AS mu,
-       sqrt(greatest(sum(sum_sq) / sum(n)
-            - power(sum(sum) / sum(n), 2), 0))    AS sigma
-FROM baseline_records
-GROUP BY entity;
-SQL
-}
-
 # 注入/导出 worker：事件时间每轮 +120s，每轮导出一次（闭环刷新）
 (
   r=0
@@ -183,9 +169,6 @@ SQL
       --addr 127.0.0.1:$PORT --ws models/schemas/metrics.wfs >/dev/null 2>&1 || true
     sleep 3                      # 收盘 → sink 落盘
     "$PY" scripts/export_baseline_ref.py > /dev/null 2>&1 || true   # 聚合 → CSV（看板/审计，两模式都写）
-    if [ "$PG_MODE" = 1 ]; then
-      pg_supply_from_records || true   # 聚合 → PG 供给表 baseline_ref（来源：baseline_records）
-    fi
     sleep "$INJ_INTERVAL"
   done
 ) &
@@ -230,6 +213,11 @@ if [ "$healthy" -ne 1 ]; then
   exit 1
 fi
 echo "   healthy: round-1 closed loop OK (baseline=$R judge=$J alerts=$A)"
+if [ "$PG_MODE" = 1 ]; then
+  # 首轮收盘已把真实聚合写入 provider——清掉启动占位种子（等 2s 覆盖 ≥1 个刷新周期）
+  sleep 2
+  docker exec "$PG_CID" psql -U postgres -d postgres -c "DELETE FROM baseline_records WHERE win_start = 'seed';" >/dev/null || true
+fi
 
 echo "4> 运行中…（每 5s 打印一次）"
 watch_elapsed=0

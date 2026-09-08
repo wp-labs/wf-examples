@@ -1,19 +1,18 @@
 #!/usr/bin/env bash
 # ===========================================================================
-# 全局周期基线 · PG 供给刷新实证（S2-M3c-PG）
+# PG 事实源 → 引擎供给聚合刷新生效实证（供给=records 直接聚合，无中转表）
 #
-#   1. docker compose 起 postgres（docker-compose.yml）
-#   2. 建表 + 种子 5 条线路基线（mu≈1000, sigma=20）→ pg/baseline_ref.sql
+#   1. docker compose 起 postgres → 建 baseline_records（清空）
+#   2. 种子事实行：5 条线路各 1 行（n=1, sum=1000, sum_sq=1000400 → μ≈1000, σ=20）
 #   3. 引擎 daemon（conf/refresh.wfusion.toml + knowdb.pg.toml 替换 knowdb.toml）
-#      —— boot 从 PG 命名 provider(engine_pg) SELECT 装载 baseline_ref，
-#         NamedSql 规格 1s 周期刷新
-#   4. phase1 正常客流注入 → 无告警（mu=1000）
-#   5. UPDATE 5号线 mu→5（等效 CSV 覆盖）→ 等刷新
-#   6. phase2 同批再注入 → 仅 5号线 告警（mu=5, dev≈199）
-#      —— 证明 PG 供给的周期刷新真实生效（判定读到的是更新后的数据库行）
+#      —— boot/每 1s NamedSql 刷新都对 baseline_records 执行聚合 SQL
+#      （SELECT entity, sum(n)…GROUP BY entity），结果直接进 ProviderWindow
+#   4. phase1 正常客流注入 → 无告警（μ≈1000）
+#   5. UPDATE baseline_records 5号线 行（n=1, sum=5, sum_sq=25 → μ=5）
+#   6. phase2 同批注入 → 仅 5号线 告警（mu=5, dev≈199）
+#      —— 证明引擎读到的供给是"运行时对事实源现算"，改明细即改判定
 #
-# 用法: ./scripts/run_pg_refresh.sh    （退出后自动恢复 knowdb.toml 并重种表）
-# 环境: WFUSION/WFGEN/PYTHON/COMPOSE_DIR(默认本目录)
+# 用法: ./scripts/run_pg_refresh.sh
 # ===========================================================================
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -27,7 +26,6 @@ ALERTS=data/detect/alerts.ndjson
 CONF=conf/refresh.wfusion.toml
 KDB=models/schemas/knowdb.toml
 KDB_PG=models/schemas/knowdb.pg.toml
-SQL=pg/baseline_ref.sql
 CSV_BACKUP=$(mktemp)
 
 echo "==> 0. 起 postgres（docker compose）"
@@ -39,8 +37,15 @@ for i in $(seq 1 40); do
 done
 docker exec "$CID" pg_isready -U postgres -d postgres >/dev/null 2>&1 || { echo "ERROR: postgres 未就绪"; exit 1; }
 
-echo "==> 1. 建表 + 种子基线（pg/baseline_ref.sql）"
-docker exec -i "$CID" psql -U postgres -d postgres -v ON_ERROR_STOP=1 < "$SQL" >/dev/null
+echo "==> 1. 建事实表 baseline_records + 种子（μ≈1000 占位，改明细即改供给）"
+docker exec -i "$CID" psql -U postgres -d postgres -v ON_ERROR_STOP=1 < pg/baseline_records.sql >/dev/null
+docker exec "$CID" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "
+INSERT INTO baseline_records (entity, metric, win_start, win_end, n, sum, sum_sq) VALUES
+  ('1号线','flow','seed','seed',1,1000.0,1000400.0),
+  ('2号线','flow','seed','seed',1,1000.0,1000400.0),
+  ('3号线','flow','seed','seed',1,1000.0,1000400.0),
+  ('4号线','flow','seed','seed',1,1000.0,1000400.0),
+  ('5号线','flow','seed','seed',1,1000.0,1000400.0);" >/dev/null
 
 # 备份并替换 knowdb.toml（PG 变体），退出恢复
 cp "$KDB" "$CSV_BACKUP"
@@ -48,19 +53,13 @@ cp "$KDB_PG" "$KDB"
 restore() {
   kill "${DAEMON_PID:-0}" 2>/dev/null || true
   cp "$CSV_BACKUP" "$KDB"; rm -f "$CSV_BACKUP"
-  # 表重种为初始基线（demo 后清场）
-  docker exec -i "$CID" psql -U postgres -d postgres -v ON_ERROR_STOP=1 < "$SQL" >/dev/null 2>&1 || true
 }
 trap restore EXIT
 
 mkdir -p data/logs data/detect
 rm -f "$LOG" "$ALERTS" data/daemon.log data/live.jsonl
 
-# 避免占用 9800 的残留 daemon 干扰（本 case 脚本都用 9800）
-lsof -ti:$PORT 2>/dev/null | xargs kill 2>/dev/null || true
-sleep 1
-
-echo "==> 2. 启动 daemon（PG 供给 + 1s NamedSql 刷新）"
+echo "==> 2. 启动 daemon（供给 = records 聚合查询，1s NamedSql 刷新）"
 "$WFUSION" daemon --config "$CONF" --work-dir . > data/daemon.log 2>&1 &
 DAEMON_PID=$!
 sleep 2
@@ -85,20 +84,20 @@ send_batch() {
 
 alert_count() { [[ -f "$ALERTS" ]] && wc -l < "$ALERTS" | tr -d ' ' || echo 0; }
 
-echo "==> 3. phase1：正常客流注入（mu=1000，预期无告警）"
+echo "==> 3. phase1：正常客流注入（μ≈1000，预期无告警）"
 send_batch 60
 sleep 4
 N1=$(alert_count)
 echo "   alerts = $N1 (expect 0)"
 if [ "$N1" != "0" ]; then
-  echo "FAIL: phase1 不应告警 (mu=1000 时 dev<5%)" >&2
+  echo "FAIL: phase1 不应告警 (μ≈1000 时 dev<5%)" >&2
   exit 1
 fi
 
-echo "==> 4. UPDATE 5号线 mu 1000 -> 5"
+echo "==> 4. UPDATE baseline_records 5号线（sum/sum_sq → μ=5）"
 docker exec "$CID" psql -U postgres -d postgres -c \
-  "UPDATE baseline_ref SET mu = 5.0, n = 1, sum = 5.0, sum_sq = 25.0, sigma = 0.0 WHERE entity = '5号线';" >/dev/null
-sleep 4   # >=3 个 1s NamedSql 刷新周期
+  "UPDATE baseline_records SET n = 1, sum = 5.0, sum_sq = 25.0 WHERE entity = '5号线';" >/dev/null
+sleep 4   # >=3 个 1s 聚合刷新周期
 
 echo "==> 5. phase2：同批客流注入（预期仅 5号线 告警，dev≈199）"
 send_batch 60
@@ -107,13 +106,13 @@ sleep 4
 RELOADS=$(grep -c "provider refresh loaded table=baseline_ref" "$LOG" || true)
 echo "   refresh log count = $RELOADS (expect >=2)"
 if [ "$RELOADS" -lt 2 ]; then
-  echo "FAIL: 未见 PG 周期重载日志" >&2
+  echo "FAIL: 未见供给周期重载日志" >&2
   exit 1
 fi
 N2=$(alert_count)
 echo "   alerts = $N2"
 if [ "$N2" -lt 1 ]; then
-  echo "FAIL: phase2 应有告警 (mu=5 后正常客流即越界)" >&2
+  echo "FAIL: phase2 应有告警 (μ=5 后正常客流即越界)" >&2
   exit 1
 fi
 
@@ -134,7 +133,7 @@ if set(by) != {"5号线"}:
     bad.append(f"告警实体集合不符: {sorted(by)} 期望仅 5号线")
 for a in alerts:
     if float(a.get("mu", 0)) != 5.0:
-        bad.append(f"mu 应来自 PG 更新后值(5.0)，实际 {a.get('mu')}")
+        bad.append(f"mu 应来自对 records 现算的聚合(5.0)，实际 {a.get('mu')}")
     d = float(a.get("deviation", 0))
     if not (150 <= d <= 250):
         bad.append(f"deviation 期望≈199，实际 {d}")
@@ -143,9 +142,9 @@ if bad:
     for b in bad:
         print("  -", b)
     sys.exit(1)
-print(f"PASS: PG 供给刷新生效——UPDATE mu=5 → NamedSql 周期重载 → join 判定用新值 "
+print(f"PASS: 引擎对事实源现算聚合——UPDATE baseline_records → 1s 刷新 → join 判定用新 μ "
       f"({len(alerts)} 条，仅 5号线，mu=5.0，dev≈199)")
 PYEOF
 
 echo ""
-echo "PASS: PG 供给刷新闭环（日志 $RELOADS 次重载）"
+echo "PASS: records 直聚合供给刷新闭环（日志 $RELOADS 次重载）"
