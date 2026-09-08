@@ -149,6 +149,29 @@ fi
 echo "   wfusion PID=$WFUSION_PID"
 
 echo "2> 启动注入 + 导出刷新 + 采样后台任务"
+
+# PG 供给刷新：baseline_ref ← baseline_records 聚合（PG 内完成，records 为唯一事实源）。
+# 同一条可加三元组 SQL 随时可重放（等价与 CSV exporter，但不再依赖文件）。
+pg_supply_from_records() {
+  local has
+  has=$(docker exec "$PG_CID" psql -U postgres -d postgres -tAc "SELECT count(*) FROM baseline_records" 2>/dev/null || echo 0)
+  [[ "${has:-0}" =~ ^[0-9]+$ ]] || has=0
+  [ "$has" -gt 0 ] || return 0   # 尚无收盘明细：保留启动种子
+  docker exec -i "$PG_CID" psql -U postgres -d postgres -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+TRUNCATE baseline_ref;
+INSERT INTO baseline_ref (entity, n, sum, sum_sq, mu, sigma)
+SELECT entity,
+       sum(n)                                     AS n,
+       sum(sum)                                   AS sum,
+       sum(sum_sq)                                AS sum_sq,
+       sum(sum) / sum(n)                          AS mu,
+       sqrt(greatest(sum(sum_sq) / sum(n)
+            - power(sum(sum) / sum(n), 2), 0))    AS sigma
+FROM baseline_records
+GROUP BY entity;
+SQL
+}
+
 # 注入/导出 worker：事件时间每轮 +120s，每轮导出一次（闭环刷新）
 (
   r=0
@@ -160,9 +183,8 @@ echo "2> 启动注入 + 导出刷新 + 采样后台任务"
       --addr 127.0.0.1:$PORT --ws models/schemas/metrics.wfs >/dev/null 2>&1 || true
     sleep 3                      # 收盘 → sink 落盘
     "$PY" scripts/export_baseline_ref.py > /dev/null 2>&1 || true   # 聚合 → CSV（看板/审计，两模式都写）
-    if [ "$PG_MODE" = 1 ] && [ -s "$OUT" ]; then
-      "$PY" scripts/export_baseline_ref_pg.py 2>/dev/null \
-        | docker exec -i "$PG_CID" psql -U postgres -d postgres >/dev/null 2>&1 || true   # 聚合 → PG 供给表
+    if [ "$PG_MODE" = 1 ]; then
+      pg_supply_from_records || true   # 聚合 → PG 供给表 baseline_ref（来源：baseline_records）
     fi
     sleep "$INJ_INTERVAL"
   done
