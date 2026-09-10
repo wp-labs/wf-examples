@@ -1,0 +1,33 @@
+# Baseline window profile for the local TCP benchmark.
+# The benchmark script copies this file per trial and scales the input/global
+# limits from a representative event size, the requested event count,
+# and the host memory budget.
+
+[window_defaults]
+evict_interval = "1s"
+max_window_bytes = "256MB"
+max_total_bytes = "4GB"
+evict_policy = "time_first"
+watermark = "5s"
+allowed_lateness = "30s"
+late_policy = "drop"
+
+[window.sdm_alert]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "0s"
+
+[window.sdm_alert_entity]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "0s"
+
+[window.sdm_evidence]
+mode = "local"
+max_window_bytes = "256MB"
+over_cap = "0s"
+
+[window.sdm_event]
+mode = "local"
+max_window_bytes = "1GB"
+over_cap = "10d"

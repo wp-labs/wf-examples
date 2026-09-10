@@ -1,0 +1,36 @@
+[[connectors]]
+id = "doris_sink"
+type = "doris"
+# 允许通过 sink 的 params 覆盖 Doris 连接和 Stream Load 关键参数
+allow_override = [
+  "endpoint",
+  "database",
+  "table",
+  "user",
+  "password",
+  "timeout_secs",
+  "timeout",
+  "max_retries",
+  "retries",
+  "headers",
+  "protocol",
+  "batch_size"
+]
+
+[connectors.params]
+
+endpoint = "http://10.168.1.145:32286"
+database = "sdm2_log"
+table = "sdm_alert"
+user = "root"
+password = ""
+timeout_secs = 30
+max_retries = 1
+protocol = "text"
+batch_size = 100000
+
+# 可选：自定义 Stream Load 参数
+[connectors.params.headers]
+strip_outer_array = "false"
+max_filter_ratio = "0.1"
+strict_mode = "false"

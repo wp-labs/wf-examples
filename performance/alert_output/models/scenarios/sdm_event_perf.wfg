@@ -1,0 +1,11 @@
+// 帧编码专用场景。
+//
+// replay/diag 使用这个文件只加载 sdm_event 的 schema，实际事件来自
+// models/samples/ngsoc_alert_23.json；stream 模式则按该 schema 实时造数。
+use "../schemas/sdm_event.wfs"
+
+scenario sdm_event_perf<seed=1> {
+  traffic {
+    stream sdm_event gen 100000/s
+  }
+}
