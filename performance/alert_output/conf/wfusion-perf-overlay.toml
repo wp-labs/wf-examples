@@ -1,0 +1,18 @@
+# Explicit local benchmark overlay. Keep it in the startup command so the
+# benchmark always selects the same window and deployment-independent options.
+
+windows = "models/windows-perf.toml"
+
+[runtime]
+# 本机场景调优结果：4 个规则分片在 1M/3M 事件测试中吞吐最佳。
+rule_shards = 4
+
+[admin_api]
+enabled = false
+
+[project_remote]
+enabled = false
+
+[logging]
+level = "info"
+format = "plain"

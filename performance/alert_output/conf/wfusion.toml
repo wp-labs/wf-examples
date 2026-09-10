@@ -1,0 +1,48 @@
+# wf-rules 内置 wfusion 配置 — 可直接运行完整管道
+# mode 由 CLI 控制: wfusion daemon | wfusion batch
+
+sources_dir = "topology/sources"
+sinks = "topology/sinks"
+windows = "models/windows-perf.toml"
+
+[runtime]
+# 同一规则同时执行的 match 数；不是 CPU 核数。当前本机场景实测最优值为 4。
+executor_parallelism = 16
+rule_exec_timeout = "30s"
+schemas = "models/schemas/*.wfs"
+rules = "models/rules/*.wfl"
+
+[admin_api]
+enabled = false
+bind = "0.0.0.0:19080"
+
+[admin_api.auth]
+mode = "bearer_token"
+token_file = "/data/.wfusion/admin_api.token"
+
+[admin_api.tls]
+enabled = true
+cert_file = "/data/.wfusion/tls/server.crt"
+key_file = "/data/.wfusion/tls/server.key"
+
+[project_remote]
+enabled = false
+
+[project_remote.models]
+repo = "http://wp-station-gitea:3000/gitea/wfusion__models.git"
+init_version = "1.0.0"
+
+[project_remote.infra]
+repo = "http://wp-station-gitea:3000/gitea/wfusion__infra.git"
+init_version = "1.0.0"
+
+[logging]
+level = "warn"
+format = "plain"
+#file = "data/wfusion.log"
+
+[metrics]
+console_output = false
+enabled = true
+report_interval = "1s"
+prometheus_listen = "127.0.0.1:9901"
