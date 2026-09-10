@@ -1,0 +1,21 @@
+// Physical contract: references/doris-routes/05_sdm_alert_entity.md
+// Each output row represents exactly one entity attached to one alert.
+window sdm_alert_entity {
+    over = 0
+    fields {
+        tenant_id: chars
+        alert_id: chars
+        entity_id: chars
+        alert_entity_role: chars
+        created_time: digit
+        entity_type: chars
+        event_role_hint: chars
+        entity_value: chars
+        is_primary: bool
+        asset_id: chars
+        used_for_grouping: bool
+        grouping_weight: float
+        valid_until: digit
+        risk_context: object
+    }
+}

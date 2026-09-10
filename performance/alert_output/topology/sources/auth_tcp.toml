@@ -1,0 +1,10 @@
+connect = "tcp_src"
+key = "auth_tcp"
+enable = true
+stream_tag = "sdm_event"
+data_format = "ndjson"
+addr = "127.0.0.1"
+port = 9800
+framing = "line"
+# 与 common_rules_100 配置保持一致：同一 TCP 输入启动 4 个实例。
+instances = 4

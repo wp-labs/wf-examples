@@ -1,0 +1,3 @@
+# Direct bench/verify mode: register the sentinel window without cutting any
+# pipeline stage.  diag.sh supplies its own generated stage ladder.
+mem_sample = false

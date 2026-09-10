@@ -1,0 +1,20 @@
+# perf-diag 哨兵记录的固定业务路由。
+#
+# wfusion daemon --perf-diag 启动后会注册内置 __wf_sentinel 窗口；哨兵任务
+# 将 stage/sentinel 四元组写到这里，wfgen perf-diag 以此完成切档和计时。
+# 没有 --perf-diag 时该窗口不存在，本组不会产生业务输出。
+
+version = "1.0"
+
+[sink_group]
+name = "perf_diag_sentinel"
+windows = ["__wf_sentinel"]
+
+[[sink_group.sinks]]
+name = "perf_diag_sentinel_file"
+connect = "file_json_sink"
+
+[sink_group.sinks.params]
+base = "data"
+file = "perf_sentinel.ndjson"
+sync = false

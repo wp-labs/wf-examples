@@ -1,0 +1,64 @@
+# wfusion_new 性能墙诊断默认档位。
+#
+# diag.sh 会把同一份预编码帧按以下顺序重放；档位由哨兵驱动在同一个
+# daemon 中热切换。warmup 只用于预热，不进入墙差分结论。
+#
+# recv   = TCP 收帧（非哨兵帧不解码）
+# decode = +解码（解码后不 append）
+# floor  = +窗口 append/fanout（规则、输出切掉）
+# rules  = +规则求值（输出切掉）
+# full   = +输出链；是否写文件由 diag.sh --sink 决定
+
+[[stages]]
+name = "warmup"
+cut_rules = false
+cut_output = false
+cut_append = false
+cut_recv = false
+cut_sink_write = false
+rules = ""
+
+[[stages]]
+name = "recv"
+cut_rules = false
+cut_output = false
+cut_append = false
+cut_recv = true
+cut_sink_write = false
+rules = ""
+
+[[stages]]
+name = "decode"
+cut_rules = false
+cut_output = false
+cut_append = true
+cut_recv = false
+cut_sink_write = false
+rules = ""
+
+[[stages]]
+name = "floor"
+cut_rules = true
+cut_output = true
+cut_append = false
+cut_recv = false
+cut_sink_write = false
+rules = ""
+
+[[stages]]
+name = "rules"
+cut_rules = false
+cut_output = true
+cut_append = false
+cut_recv = false
+cut_sink_write = false
+rules = ""
+
+[[stages]]
+name = "full"
+cut_rules = false
+cut_output = false
+cut_append = false
+cut_recv = false
+cut_sink_write = false
+rules = ""

@@ -1,0 +1,89 @@
+use "../schemas/sdm_event.wfs"
+use "../schemas/sdm_alert.wfs"
+
+// Alert admission is controlled only by this exact log_type allowlist.
+// The benchmark keeps one business output: sdm_alert.
+rule sdm_alert {
+    events {
+        s : sdm_event
+        && s.log_type in (
+            "360_active_defense_log",
+            "360_edr_hotpatch_intercept_log",
+            "360_exthost_device_violation_log",
+            "360_exthost_netcontrol_illegal_net_log",
+            "360_exthost_sdmgr_virus_log",
+            "360_gtmaphenixdb_dlp_outfile_audit_log",
+            "360_leakfix_system_log",
+            "ad_ddos_attack_log",
+            "bh_api_risk_log",
+            "bh_system_status_alert",
+            "cs_attack_alert_log",
+            "cs_malware_alert_log",
+            "edr_alert_log",
+            "ngsoc_threat_alert_send",
+            "edr_antivirus_virus",
+            "edr_attack_protection",
+            "edr_net_out_log",
+            "edr_webpage_protection",
+            "fw_antivirus_virus",
+            "fw_botnet_log",
+            "fw_ips_protect_log",
+            "fw_mail_security_log",
+            "fw_web_app_protect",
+            "fw_web_threat",
+            "leadsec_av",
+            "leadsec_ips",
+            "leadsec_vh",
+            "leadsec_vq",
+            "leadsec_waf",
+            "ngsoc_alert_info",
+            "sip_atk_alarm_log",
+            "sip_sec_event_log",
+            "topas_audit_alert_log",
+            "topas_ips_attack",
+            "topas_ips_virus",
+            "topas_topsentry_security_threat",
+            "topas_waf_ads_attack",
+            "topas_waf_attack",
+            "topas_waf_tamper",
+            "topas_waf_virus"
+        )
+    }
+
+    on each s -> score(1.0)
+    entity(alert, s.event_id)
+
+    yield sdm_alert (
+        tenant_id = s.tenant_id,
+        alert_id = join_by("", "alert_", substr(sha256(join_by("|", s.tenant_id, s.event_id)), 0, 24)),
+        created_time = s.ingest_time,
+        alert_display_id = join_by("", "ALT-", substr(sha1(join_by("|", s.tenant_id, s.event_id)), 0, 16)),
+        source_alert_id = s.source_original_event_id,
+        source_product = s.data_src_product,
+        alert_name = coalesce(s.source_finding_obj.title, s.source_finding_title, s.log_name),
+        alert_type = "1",
+        category_code = coalesce(s.source_finding_obj.category_code, s.source_finding_category),
+        event_count = s.source_finding_obj.count,
+        severity =
+            if coalesce(s.source_finding_obj.severity, s.severity) in (
+                "emerg",
+                "alert",
+                "crit"
+            ) then
+                "CRITICAL"
+            else if coalesce(s.source_finding_obj.severity, s.severity) == "error" then
+                "HIGH"
+            else if coalesce(s.source_finding_obj.severity, s.severity) == "warning" then
+                "MEDIUM"
+            else if coalesce(s.source_finding_obj.severity, s.severity) == "notice" then
+                "LOW"
+            else if coalesce(s.source_finding_obj.severity, s.severity) in (
+                "info",
+                "debug"
+            ) then
+                "INFO"
+            else
+                coalesce(s.source_finding_obj.severity, s.severity),
+        workflow_status = "NEW",
+    )
+}

@@ -1,0 +1,9 @@
+connect = "kafka_src"
+key = "kafka"
+enable = false
+brokers = "10.168.1.145:30001"
+topic = "sdm_event"
+group_id = "wfusion_debug_0731"
+config = "auto.offset.reset=earliest"
+data_format = "ndjson"
+stream_tag = "sdm_event"

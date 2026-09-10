@@ -1,0 +1,9 @@
+[[connectors]]
+id = "victoriametrics_sink"
+type = "victoriametrics"
+allow_override = ["endpoint", "api_path", "flush_secs", "timeout_secs"]
+[connectors.params]
+endpoint = "http://127.0.0.1:8428"
+api_path = "/api/v1/import/prometheus"
+flush_secs = 1
+timeout_secs = 5

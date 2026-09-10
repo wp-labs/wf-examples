@@ -1,0 +1,49 @@
+// Physical contract: references/doris-routes/03_sdm_alert.md
+window sdm_alert {
+    over = 0
+    fields {
+        tenant_id: chars
+        alert_id: chars
+        created_time: digit
+        alert_display_id: chars
+        source_alert_id: chars
+        source_product: chars
+        alert_name: chars
+        description: chars
+        alert_type: chars
+        category_code: chars
+        event_count: digit
+        severity: chars
+        detection_confidence: digit
+        detection_risk_score: digit
+        workflow_status: chars
+        verdict: chars
+        closed_time: digit
+        updated_time: digit
+        first_seen: digit
+        last_seen: digit
+        rule_id: chars
+        rule_name: chars
+        rule_version: chars
+        rule_type: chars
+        detection_engine: chars
+        dedup_key: chars
+        merge_id: chars
+        correlation_id: chars
+        case_id: chars
+        primary_entity_id: chars
+        primary_entity_type: chars
+        primary_entity_value: chars
+        primary_entity_role: chars
+        primary_tactic_id: chars
+        primary_technique_id: chars
+        latest_analysis_id: chars
+        latest_analysis_conclusion: chars
+        latest_analysis_confidence: digit
+        latest_analysis_summary: chars
+        latest_analysis_time: digit
+        assignee_id: chars
+        ticket_id: chars
+        extensions: object
+    }
+}

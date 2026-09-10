@@ -1,0 +1,51 @@
+// Unified WParse event input. Every source uses the fixed routing tag "sdm_event";
+// payloads do not carry a stream-tag field.
+// The benchmark sample uses the normalized NGSOC 23-field subset; the other
+// fields remain available for full production-shaped inputs.
+window sdm_event {
+    stream_tag = "sdm_event"
+    time = parse_time
+    over = 10d
+    fields {
+        tenant_id: chars
+        event_id: chars
+        log_id: chars
+        raw_log_id: chars
+        source_original_event_id: chars
+        occur_time: digit
+        ingest_time: digit
+        parse_time: time
+        schema_version: digit
+        mapping_id: chars
+        data_src_vendor: chars
+        data_src_product: chars
+        data_src_category: chars
+        data_src_instance_id: chars
+        log_type: chars
+        log_name: chars
+        log_content: chars
+        record_kind: chars
+        event_domain: chars
+        event_type: chars
+        outcome: chars
+        severity: chars
+        source_ip: chars
+        source_port: digit
+        target_ip: chars
+        target_port: digit
+        target_host: chars
+        source_host: chars
+        observer_product: chars
+        observer_vendor: chars
+        device_ip: chars
+        source_finding_title: chars
+        source_finding_severity: chars
+        source_finding_category: chars
+        source_finding_signature_id: chars
+        source_finding_original_id: chars
+        roles_obj: object
+        facets_obj: object
+        source_finding_obj: object
+        extensions_obj: object
+    }
+}

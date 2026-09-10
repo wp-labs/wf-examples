@@ -1,0 +1,33 @@
+{
+  "_stream": "sdm_event",
+  "_window": "sdm_event",
+  "_timestamp": "2026-01-01T00:00:00.000Z",
+  "tenant_id": "sit5w9o",
+  "log_id": "bwom0g4wera37vs5",
+  "event_id": "__EVENT_ID__",
+  "occur_time": 71007,
+  "parse_time": 1767225600000000000,
+  "schema_version": 81836,
+  "mapping_id": "wafsqbxx",
+  "log_type": "ngsoc_alert_info",
+  "log_name": "NGSOC告警信息",
+  "severity": "error",
+  "source_ip": "11.85.10.58",
+  "target_ip": "11.8.10.71",
+  "observer_vendor": "5ph577p5xx3hm",
+  "observer_product": "novcdpb92v5q",
+  "source_finding_title": "SQL注入攻击",
+  "source_finding_severity": "error",
+  "source_finding_category": "r48t81239u4i9n9o",
+  "source_original_event_id": "__EVENT_ID__",
+  "data_src_product": "ngsoc",
+  "ingest_time": 1767225600000000000,
+  "record_kind": "finding",
+  "source_finding_obj": {
+    "title": "SQL注入攻击",
+    "category_code": "r48t81239u4i9n9o",
+    "severity": "error",
+    "count": 1
+  },
+  "extensions_obj": {}
+}

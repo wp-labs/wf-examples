@@ -1,0 +1,29 @@
+// Physical contract: references/doris-routes/04_sdm_evidence.md
+window sdm_evidence {
+    over = 0
+    fields {
+        tenant_id: chars
+        evidence_id: chars
+        subject_type: chars
+        alert_id: chars
+        case_id: chars
+        evidence_time: digit
+        event_occur_time: digit
+        evidence_type: chars
+        event_id: chars
+        log_id: chars
+        raw_log_id: chars
+        source_alert_original_id: chars
+        external_ref: chars
+        evidence_payload_ref: chars
+        evidence_role: chars
+        event_type: chars
+        evidence_summary: chars
+        chain_id: chars
+        sequence_no: digit
+        parent_evidence_id: chars
+        phase: chars
+        weight: float
+        confidence: digit
+    }
+}
