@@ -5,26 +5,20 @@ use "../../rules/02-alert/nginx_5xx_surge.wfl"
 // wfgen stream 每轮场景跑完后循环会重置事件时间 → stats 固定桶会冻结到事件时间
 // 再次越过上一轮末位。把虚拟时长拉长（2h）后，实际单调推进约 50 分钟才会回绕
 // （实测虚拟≈2.4×真实），演示窗口内累计请求/统计持续增长。
-// 数据构成与 nginx_access_quick 一致: 90% 200 + 10% 同源 4×500。
+// 数据构成与 nginx_access_quick 一致: hit 4×500 + miss 1×200。
+// 旧 `hit<10%>` / `miss<90%>`（100/s × 2h = 720000 配额）按 wfg-design §5.2 折算：
+//   实体数 = floor(round(配额 × pct/100) ÷ ΣN)
 #[duration=2h]
 scenario nginx_access_live<seed=42> {
-  traffic {
+  background {
     stream nginx_access gen 100/s
   }
-  injection {
-    hit<10%> nginx_access {
-      client_ip seq {
-        use(http_status="500") with(4)
-      }
+  inject {
+    hit<18000> for nginx_5xx_surge nginx_access {
+      use(http_status="500") x 4
     }
-    miss<90%> nginx_access {
-      client_ip seq {
-        use(http_status="200") with(1)
-      }
+    miss<648000> for nginx_5xx_surge nginx_access {
+      use(http_status="200") x 1
     }
-  }
-  expect {
-    hit(nginx_5xx_surge) >= 75%
-    miss(nginx_5xx_surge) <= 1%
   }
 }

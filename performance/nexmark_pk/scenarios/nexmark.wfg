@@ -1,7 +1,7 @@
 use "../models/schemas/nexmark.wfs"
 
 scenario nexmark<seed=1> {
-  traffic {
+  background {
     stream person_events gen 100000/s
     stream auction_events gen 100000/s
     stream bid_events gen 100000/s
