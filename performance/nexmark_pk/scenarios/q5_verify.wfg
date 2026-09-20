@@ -1,0 +1,60 @@
+// q5（Hot Items）—— WFL 规则验证语料
+//
+// 规则：models/queries/q5.wfl · `q5_hottest_auction`
+//   权威 SQL：HOP(bid, INTERVAL '2' SECOND, INTERVAL '10' SECOND) 按 auction 计 bid 数，
+//             再取每窗口 bid 数最多的 auction（top-1）
+//   WFL：`match<auction:hop(10s,2s)>` + `and close { n: b | count >= 1 }`
+//        + `conv { sort(-n) | top_ties(1) }`（每收口批取 count 最大），entity = b.auction
+//
+// 判定量是**同一窗口内 count 的排序**，所以三类用例靠"票数高低"构造：
+//   hit       = 20 条 bid（票数最高）→ top-1 → 报警
+//   near_miss = 19 条 bid（**差 1 票**）→ 不是 top-1 → 不报
+//   miss      = 1 条 bid（陪跑）       → 不报
+//
+// 关键写法：三个用例都要 `spread 2s`，把各自的簇压在同一个短时间段里。
+//   否则默认 spread = 规则窗口长度（10s），三个簇会落到**不同窗口**——near_miss 在自己
+//   那个窗口里就是 top-1，反而报警（实测报 INJ2：near_miss 实体 auction=1 命中
+//   close:timeout 路径）。spread 2s < hop size 10s，保证三簇共享窗口、票数才可比。
+//
+// 用法：
+//   ./verify_wfg.sh q5 --with-engine
+//   wfgen lint scenarios/q5_verify.wfg
+//   wfgen gen  --scenario scenarios/q5_verify.wfg --out data/q5_verify
+//
+// 引擎级对拍现状（2026-09-20 实测，如实记录）：`--with-engine` 目前 **FAIL**，
+// 115 条里 **114 条精确配对**，差的那 1 条（entity 0 的**尾部窗口**）不是语义分歧：
+//   期望侧: origin=`close:eos`   @ 00:00:19.999
+//   引擎:   origin=`close:flush` @ 00:00:19.995
+// 数量/实体/分数全一致，只有 ① 收口 reason 的**标签**不同（eos vs flush）、② 时间差 4ms。
+// `wfgen verify` 的分组键含 `origin`，标签不同则永远配不上 → 报 1 missing + 1 unexpected。
+// 属 CHANGELOG 已记的「收尾时间口径」同一类（引擎 `close:flush` 与期望侧收口未对齐）。
+
+use "../models/schemas/nexmark.wfs"
+use "../models/queries/q5.wfl"
+
+#[duration=1m]
+scenario q5_verify<seed=1> {
+  background {
+    stream bid_events gen 1000/s
+  }
+
+  inject {
+    // 票数最高 → 每窗口的 top-1 → 报警
+    hit<1> for q5_hottest_auction bid_events {
+      use(price=100, channel="G", url="u") x 20
+      spread 2s
+    }
+
+    // 临界负样本：只比命中少 1 票 → 不是 top-1
+    near_miss<1> for q5_hottest_auction bid_events {
+      use(price=100, channel="G", url="u") x 19
+      spread 2s
+    }
+
+    // 普通负样本：陪跑票数
+    miss<1> for q5_hottest_auction bid_events {
+      use(price=100, channel="G", url="u") x 1
+      spread 2s
+    }
+  }
+}

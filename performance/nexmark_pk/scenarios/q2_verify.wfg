@@ -1,0 +1,55 @@
+// q2（Selection）—— WFL 规则验证语料
+//
+// 规则：models/queries/q2.wfl · `q2_mod_123`
+//   权威 SQL：SELECT auction, price FROM bid WHERE MOD(auction, 123) = 0;
+//   WFL：`events { b : bid_events && b.auction % 123 == 0 }` → `on each b -> score(5.0)`
+//
+// 与 q1 的差别：q2 的判定条件落在**实体键字段**（`b.auction`）上，由此带出一条硬约束 ——
+//
+//   ⚠ 实体键字段的值由生成器按**实体 id** 分配，`use(...)` 覆盖不了它：
+//     生成期 `build_event_fields_with_predicates` 里 key_overrides 优先级最高
+//     （`use` 的 predicate_overrides 只排第二）→ 写 `use(auction=123)` 会被**静默丢掉**，
+//     数据里根本不是 123。lint 现在用 **VN12** 拦这种写法（无论实体字段是显式写在
+//     用例头、还是从规则推断——两者在生成期等价）。
+//
+//   所以本语料的 hit 依赖生成器的键分配规律：**首个用例的实体键字段 = 0**，
+//   而 `0 % 123 == 0` 恒成立 → hit 必命中；后续用例的键顺延 1、2，
+//   `1 % 123`、`2 % 123` 都 ≠ 0 → near_miss / miss 必不命中。
+//
+//   代价：hit 必须是**第一个**用例。若在它前面插入别的用例，键会顺延、hit 不再命中
+//   —— 但那时 INJ1 会**大声失败**（而不是静默通过），按提示调整即可。
+//
+// 用法：
+//   ./verify_wfg.sh q2 --duration 10s                      # 批量验证入口
+//   wfgen lint scenarios/q2_verify.wfg                     # L0 静态校验（VN*）
+//   wfgen gen --scenario scenarios/q2_verify.wfg --out data/q2_verify
+//       → L1 注入期硬断言（INJ1：hit 必报 + near_miss/miss 必不报）+ L2 期望文件
+//   （规则级人工契约另见 models/queries/q2.wfl 的 `test q2_mod123_*`，由 wfadm check 执行。）
+
+use "../models/schemas/nexmark.wfs"
+use "../models/queries/q2.wfl"
+
+#[duration=1m]
+scenario q2_verify<seed=1> {
+  background {
+    stream bid_events gen 1000/s
+  }
+
+  inject {
+    // 命中：实体键字段 = 0（首个用例），0 % 123 == 0 → 必报警。
+    // 注：这里**不能**写 `use(auction=…)`（VN12）——它的值由生成器分配。
+    hit<1> for q2_mod_123 bid_events {
+      use(price=100, channel="G", url="u") x 1
+    }
+
+    // 临界负样本：实体键字段 = 1，1 % 123 == 1 → 只差 1，不报警。
+    near_miss<1> for q2_mod_123 bid_events {
+      use(price=100, channel="G", url="u") x 1
+    }
+
+    // 普通负样本：实体键字段 = 2，2 % 123 == 2 → 不报警。
+    miss<1> for q2_mod_123 bid_events {
+      use(price=100, channel="G", url="u") x 1
+    }
+  }
+}

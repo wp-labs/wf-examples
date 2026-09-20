@@ -1,0 +1,36 @@
+// q1（Currency conversion）—— WFL 规则验证语料
+//
+// 规则：models/queries/q1.wfl · `q1_bid_passthrough`
+//   `on each b -> score(0.908 * b.price)`，无状态纯投影：**每 bid 输出一行**，
+//   entity = b.auction（digit）。
+//
+// 为什么只有 hit 用例：q1 没有阈值、也没有窗口条件 → 每条 bid 必然命中；
+// near_miss / miss 对「无阈值规则」构造不出语义上有意义的负样本（没有"不命中的 bid"）。
+// 背景流提供非注入事件（不参与实体断言），用于让生成语料贴近真实输入形状。
+//
+// 用法：
+//   wfgen lint scenarios/q1_verify.wfg
+//       → L0 静态校验（VN*：字段/规则/实体/注解 …）；位置参数，无 --scenario
+//   wfgen gen  --scenario scenarios/q1_verify.wfg --out data/q1_verify
+//       → L1 注入期硬断言（INJ1：hit 必报）+ L2 期望文件（.except.jsonl）
+//   wfgen gen  --scenario scenarios/q1_verify.wfg --out /tmp/q1 --duration 10s
+//       → 同场景的快速小样本
+//   （规则级人工契约另见 models/queries/q1.wfl 的 `test q1_passthrough`，由 wfadm check 执行。）
+
+use "../models/schemas/nexmark.wfs"
+use "../models/queries/q1.wfl"
+
+#[duration=1m]
+scenario q1_passthrough_verify<seed=1> {
+  background {
+    stream bid_events gen 1000/s
+  }
+
+  inject {
+    // `on each` = 1 个可注入步骤；每个实体 1 条 bid → 必然命中。
+    // 注入值固定 price=100 → score 期望 0.908×100 = 90.8（对拍时可核）。
+    hit<1000> for q1_bid_passthrough bid_events {
+      use(price=100, channel="G", url="u") x 1
+    }
+  }
+}

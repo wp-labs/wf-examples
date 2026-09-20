@@ -1,0 +1,60 @@
+// q4（Average Price for a Category）—— WFL 规则验证语料（断言目标：**内层 q4a**）
+//
+// 规则：models/queries/q4.wfl（双层聚合）
+//   q4a（内层）：`on each a` + deferred `join bid_events reduce maxrow(price) tie(dateTime asc)
+//                within [a.dateTime, a.expires] emit at a.expires` → yield 到中间窗 `auction_finals`
+//   q4b（外层）：`stats<1d:fixed> group by (f.category) { f | avg(f.final) }` → nexmark_alerts
+//
+// 本语料只考 **q4a**：q4.wfl 自己注明外层 stats 规则的期望「暂不执行（known-diff 列表）」，
+// 所以断言目标取内层。
+//
+// 两类用例（**没有 near_miss**，原因见下）：
+//   hit  = 给 auction 注入一个落在 [dateTime, expires] 内的 bid → reduce 出胜出价 → 有输出
+//   miss = 注入 auction 但**不注入 bid** → deferred join 无右行 → 无输出
+//
+// 为什么没有 near_miss：q4a 的 deferred reduce join **没有阈值**——判定量只有「有右行 /
+// 没右行」两态，没有可"差一点"的量；而右事件（bid）的时刻由**规则形态**决定（deferred
+// 形态由生成器推导），语料无法把它挪到窗外。这与 q1（`on each` 无阈值）同理：只有 hit 有意义。
+//
+// 背景**只生成 auction_events**（不生成 bid_events）：这样只有注入的 bid 能成为胜出价，
+// 内层输出基数 = 注入命中数，完全确定（实测 expected=1）。
+//
+// 用法：
+//   ./verify_wfg.sh q4 --with-engine
+//   wfgen lint scenarios/q4_verify.wfg
+//   wfgen gen  --scenario scenarios/q4_verify.wfg --out data/q4_verify
+//
+// 引擎级对拍现状（2026-09-20 实测，如实记录）：`--with-engine` 目前 **FAIL**，
+// 且不是语料的错，而是 期望 与引擎对**中间窗**的模型差异：
+//   ① 引擎不把内层 yield 到 `auction_finals` 的输出落到 sink（它是内部 relay），
+//      而 期望 把内层 yield 当告警计数 → 报 `missing`（q4a entity 0）。
+//   ② 引擎在 1d 桶收口时输出了 q4b 的 stats 告警，而 q4.wfl 已注明外层 stats 的期望
+//      「暂不执行（known-diff 列表）」→ 报 `unexpected`（q4b category 6224）。
+// L0 + L1（注入断言）不受影响，全通过——本语料的价值在于把内层语义（bid price=500
+// → 胜出价 final=500）压在硬断言下。
+
+use "../models/schemas/nexmark.wfs"
+use "../models/queries/q4.wfl"
+
+#[duration=1m]
+scenario q4_verify<seed=1> {
+  background {
+    stream auction_events gen 1000/s
+  }
+
+  inject {
+    // 命中：auction 生命周期内有 bid → 到期（a.expires）评估出胜出价
+    // 连接键由生成器推导（bid.auction = 左实体键值），故 join 块里不写连接键。
+    hit<1> for q4a_auction_finals auction_events {
+      use(itemName="x") x 1
+      join bid_events as auction {
+        use(price=500) x 1
+      }
+    }
+
+    // 负样本：只注入 auction、不注入 bid → deferred join 无右行 → 无胜出价 → 无输出
+    miss<1> for q4a_auction_finals auction_events {
+      use(itemName="y") x 1
+    }
+  }
+}

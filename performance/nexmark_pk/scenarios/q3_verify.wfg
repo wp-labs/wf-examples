@@ -1,0 +1,63 @@
+// q3（Local Item Suggestion）—— WFL 规则验证语料
+//
+// 规则：models/queries/q3.wfl · `q3_auction_seller`
+//   权威 SQL：SELECT … FROM auction A JOIN person P ON A.seller = P.id
+//             WHERE A.category = 10 AND P.state IN ('OR','ID','CA');
+//   WFL：`events { a : auction_events && a.category == 10 }`（bind filter 下推）
+//        + `match<id:10m>` + `join person_events snapshot on a.seller == person_events.id`
+//        + `where person_events.state in ("OR","ID","CA")`（join 后过滤），entity = a.id
+//
+// 三类用例的构造依据：
+//   hit       = 卖家州**在**白名单（state="OR"）→ join 富化后 where 通过 → 报警
+//   near_miss = 卖家州**不在**白名单（state="XX"）→ where 抑制      → 不报（差一点：州不对）
+//   miss      = **不注入 person**（join miss）→ state 缺失 → where 抑制 → 不报
+//               （对齐 q3.wfl 注释：join miss 时 state 缺失也抑制）
+//
+// 两条必须注意的写法约束：
+//   1) `category` **不能**写进 `use`：规则的 bind filter 是常量等式，生成器会**自动**
+//      施加该约束；重写会报 “use step field 'category' conflicts with rule step filter”。
+//      副作用：本语料构造不出「category ≠ 10」的负样本（生成器会强行写回 10）。
+//   2) join 的连接键是规则 join 的**左侧字段 `a.seller`**（不是实体键 `a.id`）：生成器把
+//      配对 person 的 `id` 设成**左实体键值**，所以这里要写 `use(seller=<该用例的实体键值>)`
+//      —— hit 用 seller=0、near_miss 用 seller=1（首个用例的实体键值 = 0，规律见
+//      q2_verify.wfg；键值由生成器按实体 id 分配，不可指定）。顺序变了会**大声失败**
+//      （INJ1 点名实际键值），不会静默通过。
+//
+// 用法：
+//   ./verify_wfg.sh q3 --with-engine       # 批量入口（含引擎级对拍）
+//   wfgen lint scenarios/q3_verify.wfg     # L0 静态校验
+//   wfgen gen  --scenario scenarios/q3_verify.wfg --out data/q3_verify
+
+use "../models/schemas/nexmark.wfs"
+use "../models/queries/q3.wfl"
+
+#[duration=1m]
+scenario q3_verify<seed=1> {
+  background {
+    // 只生成 auction_events：person_events 只由 join 块产生 → join 结果完全确定
+    stream auction_events gen 1000/s
+  }
+
+  inject {
+    // 卖家州在白名单 → where 通过 → 必报警
+    hit<1> for q3_auction_seller auction_events {
+      use(seller=0) x 1
+      join person_events as id {
+        use(state="OR") x 1
+      }
+    }
+
+    // 临界负样本：州差一点，不在白名单 → where 抑制
+    near_miss<1> for q3_auction_seller auction_events {
+      use(seller=1) x 1
+      join person_events as id {
+        use(state="XX") x 1
+      }
+    }
+
+    // 普通负样本：不注入 person → join miss → state 缺失 → 抑制
+    miss<1> for q3_auction_seller auction_events {
+      use(seller=2) x 1
+    }
+  }
+}

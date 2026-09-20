@@ -2,13 +2,14 @@
 
 本目录是 wfusion 引擎的 **NEXMark 基准套件**：同一份确定性基准数据（Q1~Q22 全量查询），
 对照阿里 Nexmark 白皮书的 OSS Flink / VVR 基线做吞吐 PK，并用真实 WFL 规则引擎 ground truth
-验证输出正确性。三个核心工具：
+验证输出正确性。四个核心工具：
 
 | 工具 | 回答的问题 |
 |---|---|
 | `bench.sh` | **吞吐/内存是多少**（EPS / RSS / CPU，对 Flink PK） |
 | `diag.sh` | **墙在管线哪一段**（性能墙定位） |
-| `verify_daemon.sh` | **输出是否正确**（daemon+TCP 路径 vs oracle 对拍） |
+| `verify_daemon.sh` | **输出是否正确**（daemon+TCP 路径 vs 期望对拍） |
+| `verify_wfg.sh` | **规则/语料本身对不对**（`.wfg` 注入断言：`hit` 必报、`near_miss`/`miss` 必不报；加 `--with-engine` 可升到引擎级对拍） |
 
 背景（事件模型 / 查询语义 / 正确性标准）见 [`docs/NEXMARK.md`](docs/NEXMARK.md)；
 查询覆盖判定见 [`docs/CAPABILITY_GAP_MATRIX.md`](docs/CAPABILITY_GAP_MATRIX.md)；
@@ -21,6 +22,9 @@
 ./bench.sh all replay 30m       # 全量 22 查询吞吐 PK（all=逐个单规则，不含 q6，见下）
 ./bench.sh mix replay 10m       # 混跑：全部规则一个 daemon 同时跑（多规则同跑，对照 all）
 ./verify_daemon.sh all 1m       # 正确性验证：daemon+TCP 路径全量对拍（~2-4 分钟）
+./verify_wfg.sh all --lint-only # 规则/语料 L0 静态校验（22 查询，秒级）
+./verify_wfg.sh q1 q2 --duration 10s # 按 .wfg 语料验证规则语义（注入断言）
+./verify_wfg.sh all --with-engine --duration 10s # 全量 22 查询 + 引擎级对拍（实测 ~5s）
 ./diag.sh q5 10m                # 性能诊断：定位 q5 的墙在哪一段
 ```
 
@@ -96,31 +100,31 @@ q1/replay: EPS=12,881,009 · RSS_peak=3,571MB · CPU 240%avg/382%max · evict=39
 
 1. **数据完整性无丢失** → 结果行 `[clean]`：`appended` 追平（如 30M/30M）且致命计数器
    （append_failed / dropped_late / cursor_gap / channel_full / sink_dispatch_failed）全零。
-2. **输出与确定性 ground truth 一致** → 每规则 EMIT 计数与 oracle 期望逐规则相等。
+2. **输出与确定性 ground truth 一致** → 每规则 EMIT 计数与期望逐规则相等。
 
 **ground truth 从哪来**：`wfgen verify-nexmark` 用**真实 WFL 规则引擎**（非手写模拟器）处理
 与引擎**同一份确定性数据**（同 count+seed 字节级确定）+ **同一套 .wfl 规则**，逐规则算出期望
 `emitted_total`——保证「比的是同一个查询、同一份数据」。对拍是 git-diff 同款分层（L1 哈希 →
-L2 Myers → L3 明细），退出码 0=一致 / 1=有差异。**oracle 的完整定义（处理流程/三档验证
-层级/排除与边界）见 [`docs/ORACLE_VERIFY.md`](docs/ORACLE_VERIFY.md)。**
+L2 Myers → L3 明细），退出码 0=一致 / 1=有差异。**期望的完整定义（处理流程/三档验证
+层级/排除与边界）见 [`docs/EXPECTATION_VERIFY.md`](docs/EXPECTATION_VERIFY.md)。**
 
 **判定层级**（验证输出逐查询）：
 
 | 结果 | 含义 | 处理 |
 |---|---|---|
-| `PASS` | 与 oracle 精确一致 | ✅ |
-| `FAIL` | 有差异（oracle diff） | 看 diff 明细：引擎 bug 待修 / 已知 flaky |
+| `PASS` | 与期望精确一致 | ✅ |
+| `FAIL` | 有差异（期望 diff） | 看 diff 明细：引擎 bug 待修 / 已知 flaky |
 | `DIRTY` | 致命计数器非零 | 测量作废，重跑 |
 | ⚠ known-diff | 已知差异（如 q12 fixed+close 尾桶收口） | 不判失败 |
 
 **当前已知 FAIL**：无——22 查询全 PASS，但注意 **q12 是豁免放行而非一致**（引擎多收尾部桶，
-1M 实测 27,446 vs oracle 10,240，+168%；由 verify-nexmark 内置 known 列表处理不判失败）。其余 21
+1M 实测 27,446 vs 期望 10,240，+168%；由 verify-nexmark 内置 known 列表处理不判失败）。其余 21
 个真一致（L1+L2+L3 全过，含 stats 的 q4b/q15-q19 值级对拍）。历史 FAIL（q3/q5/q7）已修复：q7/q5 =
 close_all 尾桶收口语义，q3 = join 索引与提交前沿竞态。**每个查询「验证正确」的判定逻辑
 （正确语义 + 断言什么 + 覆盖层 + 状态）见 [`docs/QUERY_VERIFY_LOGIC.md`](docs/QUERY_VERIFY_LOGIC.md)。**
 
 **规模口径**：
-- **30M**：逐位对拍（权威）；**100M**：EMIT 与 30M 同比例侧证 + `[clean]`（oracle 工作集
+- **30M**：逐位对拍（权威）；**100M**：EMIT 与 30M 同比例侧证 + `[clean]`（期望工作集
   ~19GB，不跑 100M 对拍）；**特殊口径查询**（q11/q12/q13）：多轮端到端 EMIT 确定性 + `[clean]`。
 - **防误判**：`max_memory` 超限会**静默丢弃事件**（不报错、`[clean]` 照常）→ EMIT 变少，极易
   误判成「引擎正确、对拍基准错」——配置必须按公式预留（见 `docs/NEXMARK.md` §5.6）；多规则
@@ -151,7 +155,7 @@ close_all 尾桶收口语义，q3 = join 索引与提交前沿竞态。**每个�
   `data/alerts/benchmark.ndjson` → L1/L2/L3 三层对拍。
 - **逐查询单跑**（每查询 rules = 该查询 .wfl）：多规则同跑存在规则间交互差异，单规则保真。
 - **双口径交叉**：`metrics.ndjson` 的 `emitted_total`（权威引擎计数）+ 输出文件
-  `data/alerts/benchmark.ndjson` 逐行计数，再与 oracle 对拍；致命计数器非零 → `[dirty]` 作废。
+  `data/alerts/benchmark.ndjson` 逐行计数，再与期望对拍；致命计数器非零 → `[dirty]` 作废。
 - **指标口径脏检测（2026-08-30 加固）**：残留 wfusion 进程可能往 metrics.ndjson 写外来 label
   → 循环前清残留进程 + 校验 emitted_total label 恰为当前 query 规则集合，脏则自动重跑一次。
 - 覆盖 batch 文件源路径跑不到的注入/收口形态：TCP 注入 + 常驻进程 + 关机 flush 尾批收口
@@ -160,9 +164,9 @@ close_all 尾桶收口语义，q3 = join 索引与提交前沿竞态。**每个�
 - **已知尾批丢失/竞态均已修复**（wp-reactor 2026-08-28~30）：on-each 关机尾批、q13 中间管道
   竞态、q6/q20 snapshot join 竞态、q8/q11/q7 多规则交互。
 - **当前状态**：22/22 显示 PASS，但 q12 为**豁免放行**（fixed+close 收口多收尾部桶，
-  1M 引擎 27,446 vs oracle 10,240，+168%，known 列表剔除不判失败）；其余 21 个 L1+L2+L3
+  1M 引擎 27,446 vs 期望 10,240，+168%，known 列表剔除不判失败）；其余 21 个 L1+L2+L3
   真一致（历史 q3/q5/q7 FAIL 已修复：close_all 尾桶收口语义 + join 索引/提交前沿竞态），
-  如实记录于 docs/ORACLE_VERIFY.md 与 docs/QUERY_VERIFY_LOGIC.md。
+  如实记录于 docs/EXPECTATION_VERIFY.md 与 docs/QUERY_VERIFY_LOGIC.md。
 
 ### bench.sh --verify（daemon 路径，仅 L1）
 
@@ -171,6 +175,71 @@ close_all 尾桶收口语义，q3 = join 索引与提交前沿竞态。**每个�
 ```
 
 30M 全量多规则对拍（q6=872,913 / q20=196,517）已 4/4 轮精确。
+
+### verify_wfg.sh（`.wfg` 语料，L0+L1+L2）
+
+上面两条路径验证的是「同一份 benchmark 数据下引擎输出对不对」；`verify_wfg.sh` 验证的是
+**规则 + 语料本身**——用定向构造的实体跑 wfgen 场景，把规则语义压在硬断言下：
+
+```bash
+./verify_wfg.sh all --lint-only     # L0：全量静态校验（LN* / VN*），快、不落数据
+./verify_wfg.sh q1 q2 --duration 10s # 单/多查询：L0 + L1 注入断言 + L2 期望文件
+./verify_wfg.sh all                 # 全量（有语料走 curated，没有自动落 smoke）
+./verify_wfg.sh q3 --scaffold       # 为缺语料的查询**写出** scenarios/q3_verify.wfg 骨架
+./verify_wfg.sh q1 --with-engine    # 额外做**引擎级**对拍：gen → dump-frames → wfusion batch → wfgen verify
+```
+
+**两级语料**：
+
+| 档 | 来源 | 证明了什么 |
+|---|---|---|
+| `curated` | `scenarios/<q>_verify.wfg`（人工写） | 有语义断言：`hit` 必报、`near_miss`/`miss` 必不报（`gen` 内置 **INJ1/INJ2** 硬断言） |
+| `smoke` | 自动生成背景-only 场景（跑完删除） | 仅「规则/schema 未漂移」，**不含语义断言** |
+
+- **curated 必须是真语料**：只有 `background`、没有 `inject` 的 curated 文件会被判 **`NOINJ` 失败**
+  （跑了但什么都没验证 = 静默失效）；想要只测漂移就删掉该文件回落 `smoke`。
+- **源流自动推导**：从规则的 `events { alias : WINDOW }` ∩ schema 里声明了 `stream_tag` 的源流
+  （链式查询的中间窗会被自然过滤）。
+- **现有语料**（每个文件头都写了构造依据与注意事项）：
+
+| 语料 | 规则形态 | 能构造的用例 | `--with-engine` |
+|---|---|---|---|
+| `q1_verify.wfg` | `on each` 无阈值 | 仅 hit | ✅ PASS（11000/11000） |
+| `q2_verify.wfg` | bind filter 落在**实体键字段** | hit / near_miss / miss | ✅ PASS（79/79） |
+| `q3_verify.wfg` | bind filter + snapshot join + join 后 `where` | hit / near_miss / miss（州不在白名单 / join miss） | ✅ PASS |
+| `q4_verify.wfg` | 链式（内层 deferred reduce join） | hit / miss（**无** near_miss：无阈值） | ⚠ 见文件头：期望 与引擎对**中间窗**的模型差异（known-diff，2 条） |
+| `q5_verify.wfg` | 滑动窗 hop + `and close` + `conv top_ties(1)` | hit / near_miss（差 1 票）/ miss | ✅ PASS（115/115） |
+
+  `q4` 的 ⚠ 是 **期望 与引擎的模型差异**（不是语料 bug）：① 期望把内层 yield 当告警，
+  引擎把它当中间窗（不落 sink）→ 1 条 missing；② 引擎对 1d 桶收口输出 `q4b` stats 告警，
+  而 `q4.wfl` 自注外层是 known-diff → 1 条 unexpected。已在脚本 `KNOWN_DIFF` 表里登记（不计失败），
+  详见 `q4_verify.wfg` 文件头。
+- 退出码：`0` 全通过（`--with-engine` 下已登记的「已知差异」不计失败）/ `1` 有失败
+  （lint·gen·NOINJ·engine）/ `2` 用法或环境错误。
+
+**`--with-engine`：把证据从「期望级」升到「引擎级」**
+
+默认只跑 L0+L1 —— L1 比的是「作者意图 vs 期望求值」，**不碰真引擎**。加 `--with-engine` 多跑一橙：
+
+```
+gen 产物 JSONL --wfgen dump-frames--> events.arrow_framed
+  → wfusion batch（mode="batch" + 文件源，跑完输入自动退出）
+  → wfgen verify --expected/--actual/--meta 对拍
+```
+
+- **file + batch 形态**（与仓库自己的 gen↔engine 对拍 `crates/wfgen/tests/*` 同形）：不起 daemon、
+  不占端口、不发 SIGTERM，也不需要「追平启发式」——`wfusion batch` 跑完输入即退出。
+  全量 22 查询（5 个 curated 跑引擎 + 17 个 smoke）实测 **~5s**。
+- ⚠ **只对含 `inject` 的语料有意义**：`gen` 的期望由注入用例驱动 —— 场景里没有
+  `inject` 时 `Expected: 0`（期望文件为空），无可比对。实测：同一个场景加一条 `inject` 后
+  `Expected` 从 `0` 变 `5001`。所以 smoke 档一律记 **N/A**（不是通过），也不会白跑引擎。
+- 两侧都是 0 条时也会记 N/A（**空对空不算证据**）；裁定不看 `status` 字段，而是按
+  `missing` / `unexpected` / `field_mismatch` 全为 0 从计数重算。
+- 需要 `wfusion` / `python3`；不需要 `nc`，也不需要 daemon。报告落 `<out>/<q>/engine_verify.json`，
+  引擎日志落 `<out>/<q>/engine_batch.log`（单查询 batch 上限 `ENGINE_TIMEOUT`s，默认 300）。
+- **已知差异**（`KNOWN_DIFF`，现仅 `q4`）：已定位且已记录的「期望 ↔ 引擎」模型差异，报
+  `FAIL(已知差异，不计失败)` 并计入汇总；未登记的查询 engine FAIL 一律判失败——不允许把差异
+  悄悄变成通过。差异被修好后脚本会提示把它从表里删掉。
 
 ## 3. 性能诊断：diag.sh
 
@@ -229,7 +298,8 @@ GATE=conf/perf-gate.toml ./diag.sh q1 10m
 ```
 bench.sh                 # 基准驱动（生成/复用帧 → 起 daemon → send-arrow 回放 → 采样）
 diag.sh                  # 性能墙定位驱动（perf-diag 三档墙梯 → 每段增量成本 + 墙判定）
-verify_daemon.sh         # 正确性验证（daemon TCP 注入 → benchmark.ndjson → oracle 对拍）
+verify_daemon.sh         # 正确性验证（daemon TCP 注入 → benchmark.ndjson → 期望对拍）
+verify_wfg.sh            # 规则/语料验证（.wfg 语料 → wfgen lint/gen 注入断言）
 conf/wfusion.toml        # daemon 配置（parse/rule 并行度等）
 conf/perf-diag.toml      # 诊断模式·无档（bench.sh：哨兵精确 EPS 口径）
 conf/perf-diag-wall.toml # 诊断模式·三档墙梯（diag.sh）
@@ -240,7 +310,8 @@ topology/                # source/sink 拓扑（send-arrow 源、blackhole 汇�
 scripts/                 # metrics 工具（extract_emitted / read_metrics / compare-metrics / verify_file_lib）
 side_input/              # q13 有界侧输入 CSV（models/schemas/knowdb.toml 引用）
 scenarios/nexmark.wfg    # 数据生成场景定义
-docs/                    # 背景/口径/结果归档（NEXMARK、BENCH_RESULTS、CAPABILITY_GAP、ORACLE_VERIFY 等 10 篇）
+scenarios/qN_verify.wfg  # 逐查询验证语料（hit/near_miss/miss，verify_wfg.sh 的 curated 档）
+docs/                    # 背景/口径/结果归档（NEXMARK、BENCH_RESULTS、CAPABILITY_GAP、EXPECTATION_VERIFY 等 10 篇）
 data/                    # 运行产物（gitignore）：帧文件、bench 结果、metrics、ground truth
 ```
 
