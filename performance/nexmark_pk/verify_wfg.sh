@@ -312,7 +312,7 @@ has_inject_assert() { grep -qE '^[[:space:]]*(hit|near_miss|miss)[[:space:]]*<' 
 # 差异被修好后这里会变成 PASS，脚本会提示把它从表里删掉（自清理）。
 known_diff_reason() {
     case "$1" in
-        q4) printf '%s' "期望把内层 yield 当告警（引擎当中间窗，不落 sink）→ missing；更长 duration 下还会出现 1d 桶收口告警（unexpected）" ;;
+        q4) printf '%s' "引擎不把 relay 的中间窗行喂给绑定该窗的 stats（oracle 会喂）→ q4b 的 1d 桶收口告警缺失（期望 1 条 q4b，引擎 0 条）" ;;
         *)  printf '' ;;
     esac
 }
@@ -325,7 +325,6 @@ known_diff_reason() {
 # 未登记的原因一律按普通 smoke/N-A 处理。
 known_gap_reason() {
     case "$1" in
-        q13) printf '%s' "q13a 的中间窗 relay 不落 sink（同 q4 ①）+ q13b 需 provider(side_input) 不可注入" ;;
         *) printf '' ;;
     esac
 }

@@ -220,7 +220,7 @@ q7/q11/q14 的 `detail`、q13a 的 `mod_key`、q21/q22 的解包结果。
   （跑了但什么都没验证 = 静默失效）；想要只测漂移就删掉该文件回落 `smoke`。
 - **源流自动推导**：从规则的 `events { alias : WINDOW }` ∩ schema 里声明了 `stream_tag` 的源流
   （链式查询的中间窗会被自然过滤）。
-- **现有语料**（21 条 curated；每个文件头都写了判定量、构造依据与注意事项）：
+- **现有语料**（22 条 curated——每一个查询都有真语料；每个文件头都写了判定量、构造依据与注意事项）：
 
 | 语料 | 规则形态 | 能构造的用例 | L3 引擎级对拍 |
 |---|---|---|---|
@@ -236,7 +236,7 @@ q7/q11/q14 的 `detail`、q13a 的 `mod_key`、q21/q22 的解包结果。
 | `q10_verify.wfg` | `on each` 纯投影 | 仅 hit | ✅ 60003/60003 |
 | `q11_verify.wfg` | `session(10s)` + `and close` | 仅 hit（会话内计数是二元结论） | ✅ 849/849 |
 | `q12_verify.wfg` | `10s:fixed` + `and close` | 仅 hit | ✅ 2856/2856（**钉** `#[duration=55s]`） |
-| `q13_verify.wfg` | 链式 + **provider** `side_input` snapshot join | ⛔ 不可注入 | ⛔ 缺口（见下） |
+| `q13_verify.wfg` | **双规则链**：`on each` → 中间窗 `bid_mod` → `on each` + provider snapshot join | hit（两段都是二元存在性） | ✅ 12001/12001（比对的是 q13b；q13a 的中间行被剔除） |
 | `q14_verify.wfg` | 价格区间过滤（开区间 `0.908×price ∈ (1e6, 5e7)`） | hit（界内）/ near_miss（界外差 1 元）/ miss | ✅ 3/3 |
 | `q15_verify.wfg` | `stats<1d:fixed>` 空键全局桶 + 12 度量 | 仅 hit（常量实体，见下） | ✅ 1/1 |
 | `q16_verify.wfg` | `stats<1d:fixed> group by (channel)` | 仅 hit（常量实体） | ✅ 5/5 |
@@ -247,7 +247,7 @@ q7/q11/q14 的 `detail`、q13a 的 `mod_key`、q21/q22 的解包结果。
 | `q21_verify.wfg` | `on each` + `channel_id != ""` | hit / miss（非空过滤，无 near_miss） | ✅ 60002/60002 |
 | `q22_verify.wfg` | `on each` 纯投影（`split(url,/')` 解包） | 仅 hit | ✅ 60003/60003 |
 
-  17 条 curated 跑引擎全部**精确配对**（`missing`/`unexpected`/`field_mismatch` 均为 0）。
+  22 条 curated 跑引擎：**21 条精确配对**（`missing`/`unexpected`/`field_mismatch` 均为 0）+ q4 一条已知差异。
   窗口/桶切分敏感的语料都把 `#[duration]` 钉住并在文件头说明理由。
 
   ⚠ **q15/q16 的注入断言是空转的**（脚本会明确标出 `inject: N/A（注入断言空转…）`）：这两条规则的
@@ -256,20 +256,26 @@ q7/q11/q14 的 `detail`、q13a 的 `mod_key`、q21/q22 的解包结果。
   因此它们的证据**只到 L3**（两侧独立算出同一行），**不含逐实体 hit/miss 断言**——
   要补 L1 得把规则改成字段实体（那会改基准语义，不建议）。
 
-**已知缺口：q13 目前写不出可注入语料**（脚本记 N/A 并打印原因，**不判失败**）：
+**已知差异：只剩 q4 一条**（引擎侧待查，不计失败）：
 
-- q13a 的输出落到**中间窗** `bid_mod`（引擎侧是内部 relay、不落 sink，同 q4 ①），而 q13b 要 join
-  **provider 静态表** `side_input`（knowdb CSV）——语料的 `join` 块只能为**流窗**造右行。
-  → 保留 smoke（只证 lint/gen 未漂移），瓶颈原因由脚本打印（`known_gap_reason`）。
+- q4（双规则链 q4a→`auction_finals`→q4b）的期望里有一条 **q4b 的 1d 桶收口告警**
+  （从 relay 进去的中间窗行算出），而**引擎一条都没出** → `missing`。
+  待查方向：引擎是否把 relay 的中间窗行喂给了绑定该窗的 stats task（oracle 会喂），
+  以及 shutdown flush 对**由 relay 供数**的 1d 桶是否收口。
+  （q15 这类由**源流**供数的 stats 桶在 shutdown flush 下确实会收口——已实测 PASS。）
 
-**stats 家族（q15–q19）原本也在这里，2026-09-20 已打开**（现已是正常 curated）：
-wfgen 曾把 stats 规则的可注入步骤数定为 `0`（`validate/syntax.rs::injectable_step_count`），
-而注入至少要 1 个 `use … x N` 组（VN21）⇒ 与 VN24 交集为空。现给 stats 合成 1 个步骤
-（`inject_gen::extract_rule_structure` / `dispatch.rs` 同口径），并对齐了期望侧 stats 收口
-与引擎的三处口径差中的两处（`oracle::StatsOracleEngine::close_window` 的 `entity_id` 改为
-求值规则的 `entity(...)`（常量→字面量、字段→分组键列值），`origin` 改为 `close:timeout`）。
-**仍存的缺口**：期望侧 stats 路径的 `fields` 恒为空（yield 字段未求值）→ payload 字段不参与对拍
-（`wfgen verify` 本来也不比字段，不影响当前结论）。
+**之前的两条链式查询缺口已排查并修复**（改动在 wfgen，不是 sink 配置）：
+
+- 引擎 `emit()` 对**中间管道输出**（yield target 被下游规则 bind 的窗，如 `auction_finals`/
+  `bid_mod`）提前 `return`：只回灌窗口给下游规则、**不落 sink**（`windows = ["*"]` 这样
+  的全量 sink 组也拿不到）——改 sink 配置无解。
+- 而期望侧原有两个**作用域错误**（都在 `crates/wfgen/src/oracle/mod.rs`）：
+  ① 「中间窗」集合按 `injected_rules` 过滤 ⇒ 只给 q4a 写用例时，`auction_finals` 被当成
+  **最终告警**写进期望 → 永远 `missing`（q4 的旧 known-diff 根源）；
+  ② oracle 只评估**被注入的规则** ⇒ 链式查询里下游规则（q13b）的 sink 可见告警变成
+  `unexpected`（实测：引擎 12001 条、oracle 0 条）。
+  现两者均与引擎对齐（都在**全部已加载规则**上算），且 `wfgen verify` 剔除带
+  `intermediate: true` 的期望行 → **q13 已有真语料且 12001/12001 精确配对**。
 - **`--duration` 会覆盖语料自带的 `#[duration]`**，而窗口切分敏感的语料靠这个值成立：`q5` 的
   `near_miss` 是「差 1 票」构造（`top_ties(1)` 对**并列最高**全输出），只在原切分下严格成立。
   实测把 q5 的 20s 覆盖成 1m：簇起点从 9.0s 抬到 29.0s，切片把 20 条/19 条重新切开 →
@@ -302,7 +308,7 @@ gen 产物 JSONL --wfgen dump-frames--> events.arrow_framed
 
 - **file + batch 形态**（与仓库自己的 gen↔engine 对拍 `crates/wfgen/tests/*` 同形）：不起 daemon、
   不占端口、不发 SIGTERM，也不需要「追平启发式」——`wfusion batch` 跑完输入即退出。
-  全量 22 查询（21 个 curated 跑引擎 + 1 个 smoke）实测 **~25s**（按各语料声明的 `#[duration]`；
+  全量 22 查询（22 条 curated，无 smoke）实测 **~26s**（按各语料声明的 `#[duration]`；
   用 `--duration 10s` 压时长可更快），退出码 0。
 - ⚠ **只对含 `inject` 的语料有意义**：`gen` 的期望由注入用例驱动 —— 场景里没有
   `inject` 时 `Expected: 0`（期望文件为空），无可比对。实测：同一个场景加一条 `inject` 后

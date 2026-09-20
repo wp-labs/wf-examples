@@ -1,0 +1,48 @@
+// q13（Side Input Join）—— WFL 规则验证语料
+//
+// 规则：models/queries/q13.wfl（**双规则链**）
+//   q13a_bid_mod：`on each b` → yield 到中间窗 `bid_mod`（每 bid 一行，预计算
+//                 mod_key = b.auction % 10000）——**中间管道输出**：被 q13b 的
+//                 `events { m : bid_mod }` 消费 ⇒ 引擎 `emit()` 提前 return、只回灌窗口、
+//                 **不落 sink**（所以它不会出现在告警文件里，也不能作为对拍对象）。
+//   q13b_side_input_join：`on each m` + `join side_input snapshot on m.mod_key == side_input.key`
+//                 → yield 到 `nexmark_alerts`（**sink 可见**）。snapshot 外联语义：provider
+//                 没命中也保留事件（不富化）。
+//
+// ── 判定量是什么 ──────────────────────────────────────────────────────────────
+// 本链有两个可观察量，语料只对第一个下逐实体断言，两个都靠 L3 对拍：
+//   1) q13a 的中间输出行数 = 每个 bid 一行（`bid_mod`）——**L1**（`hit`）在它上面；
+//   2) q13b 的 sink 可见告警 = 每个 `bid_mod` 行一条（`on each` + 外联 join）——**L3**。
+//
+// ── 用例为什么这么构造 ────────────────────────────────────────────────────────
+//   hit = 注入 1 条 bid → 经 q13a 产 1 行 `bid_mod` → q13b 产 1 条告警（外联，provider
+//         缺命中也不抑制）。near_miss / miss = **构造不出来**：两段都是二元存在性
+//         （on each 无阈值；外联 join 不会因 miss 而抑制），与 q1/q10 同族。
+//
+// ── 注意事项（写这份语料踩到的两个工具行为）───────────────────────────────────
+//   · 只写 q13a 的用例**不代表只验证 q13a**：oracle 现在评估**整个 .wfl 的所有规则**
+//     （与引擎一致），所以期望流里会同时出现 q13a（`intermediate`，比对时被剔除）与
+//     q13b（被比对）。不要试图给 q13b 写 `hit … for q13b_side_input_join <流>`：
+//     它的 `events` 窗是派生窗 `bid_mod`，既不能进 `background`（VN10）也映射不到步骤。
+//   · 期望里的 q13a 行带 `intermediate: true` → `wfgen verify` 会剔除（引擎不落 sink）。
+//     改 sink 配置没用：`emit()` 的早退在 sink fanout **之前**。
+
+use "../models/schemas/nexmark.wfs"
+use "../models/queries/q13.wfl"
+
+#[duration=1m]
+scenario q13_verify<seed=1> {
+  background {
+    // 源流（q13 的驱动流）；`auction` 走实体池 → 背景噪声不碰注入实体
+    stream bid_events gen 200/s
+    entity bid_events.auction zipf(pool=1000)
+  }
+
+  inject {
+    // 命中：1 条 bid → q13a 产出 1 行 bid_mod → q13b 产出 1 条 sink 可见告警。
+    // 逐实体断言（INJ1）落在 q13a 上；q13b 的那条由 L3 与引擎逐条对拍。
+    hit<1> for q13a_bid_mod bid_events {
+      use(price=100) x 1
+    }
+  }
+}
