@@ -24,7 +24,7 @@
 ./verify_daemon.sh all 1m       # 正确性验证：daemon+TCP 路径全量对拍（~2-4 分钟）
 ./verify_wfg.sh all --lint-only # 规则/语料 L0 静态校验（22 查询，秒级）
 ./verify_wfg.sh q1 q2 --duration 10s # 按 .wfg 语料验证规则语义（注入断言）
-./verify_wfg.sh all --with-engine --duration 10s # 全量 22 查询 + 引擎级对拍（实测 ~5s）
+./verify_wfg.sh all --with-engine   # 全量 22 查询 + 引擎级对拍（用各语料自带的 #[duration]）
 ./diag.sh q5 10m                # 性能诊断：定位 q5 的墙在哪一段
 ```
 
@@ -204,16 +204,21 @@ close_all 尾桶收口语义，q3 = join 索引与提交前沿竞态。**每个�
 
 | 语料 | 规则形态 | 能构造的用例 | `--with-engine` |
 |---|---|---|---|
-| `q1_verify.wfg` | `on each` 无阈值 | 仅 hit | ✅ PASS（11000/11000） |
-| `q2_verify.wfg` | bind filter 落在**实体键字段** | hit / near_miss / miss | ✅ PASS（79/79） |
-| `q3_verify.wfg` | bind filter + snapshot join + join 后 `where` | hit / near_miss / miss（州不在白名单 / join miss） | ✅ PASS |
+| `q1_verify.wfg` | `on each` 无阈值 | 仅 hit | ✅ PASS（61000/61000，声明 1m） |
+| `q2_verify.wfg` | bind filter 落在**实体键字段** | hit / near_miss / miss | ✅ PASS（474/474，声明 1m） |
+| `q3_verify.wfg` | bind filter + snapshot join + join 后 `where` | hit / near_miss / miss（州不在白名单 / join miss） | ✅ PASS（1/1，声明 1m） |
 | `q4_verify.wfg` | 链式（内层 deferred reduce join） | hit / miss（**无** near_miss：无阈值） | ⚠ 见文件头：期望 与引擎对**中间窗**的模型差异（known-diff，2 条） |
-| `q5_verify.wfg` | 滑动窗 hop + `and close` + `conv top_ties(1)` | hit / near_miss（差 1 票）/ miss | ✅ PASS（115/115） |
+| `q5_verify.wfg` | 滑动窗 hop + `and close` + `conv top_ties(1)` | hit / near_miss（差 1 票）/ miss | ✅ PASS（115/115；语料**钉住** `#[duration=20s]`，原因见下） |
 
   `q4` 的 ⚠ 是 **期望 与引擎的模型差异**（不是语料 bug）：① 期望把内层 yield 当告警，
   引擎把它当中间窗（不落 sink）→ 1 条 missing；② 引擎对 1d 桶收口输出 `q4b` stats 告警，
   而 `q4.wfl` 自注外层是 known-diff → 1 条 unexpected。已在脚本 `KNOWN_DIFF` 表里登记（不计失败），
   详见 `q4_verify.wfg` 文件头。
+- **`--duration` 会覆盖语料自带的 `#[duration]`**，而窗口切分敏感的语料靠这个值成立：`q5` 的
+  `near_miss` 是「差 1 票」构造（`top_ties(1)` 对**并列最高**全输出），只在原切分下严格成立。
+  实测把 q5 的 20s 覆盖成 1m：簇起点从 9.0s 抬到 29.0s，切片把 20 条/19 条重新切开 →
+  `INJ2`（near_miss 反而报警）。所以语料把 duration **钉住**；gen 失败时脚本会提醒这一点，
+  `wfgen gen` 自身也会打 `Duration override: 20s -> 60s`。
 - 退出码：`0` 全通过（`--with-engine` 下已登记的「已知差异」不计失败）/ `1` 有失败
   （lint·gen·NOINJ·engine）/ `2` 用法或环境错误。
 
@@ -229,7 +234,8 @@ gen 产物 JSONL --wfgen dump-frames--> events.arrow_framed
 
 - **file + batch 形态**（与仓库自己的 gen↔engine 对拍 `crates/wfgen/tests/*` 同形）：不起 daemon、
   不占端口、不发 SIGTERM，也不需要「追平启发式」——`wfusion batch` 跑完输入即退出。
-  全量 22 查询（5 个 curated 跑引擎 + 17 个 smoke）实测 **~5s**。
+  全量 22 查询（5 个 curated 跑引擎 + 17 个 smoke）实测 **~9s**（按各语料声明的 `#[duration]`；
+  用 `--duration 10s` 压时长的约 5s），退出码 0。
 - ⚠ **只对含 `inject` 的语料有意义**：`gen` 的期望由注入用例驱动 —— 场景里没有
   `inject` 时 `Expected: 0`（期望文件为空），无可比对。实测：同一个场景加一条 `inject` 后
   `Expected` 从 `0` 变 `5001`。所以 smoke 档一律记 **N/A**（不是通过），也不会白跑引擎。

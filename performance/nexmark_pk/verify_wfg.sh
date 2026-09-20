@@ -9,6 +9,8 @@
 #   ./verify_wfg.sh all --lint-only    # 只做 L0 静态校验（快，不落数据）
 #   ./verify_wfg.sh q3 --scaffold      # 为缺语料的查询**写出** scenarios/q3_verify.wfg 模板（含 TODO），不执行
 #   ./verify_wfg.sh all --duration 10s --out data/wfg_verify   # 压时长 + 指定输出根
+#        注：--duration 会覆盖语料自带的 #[duration]；窗口切分敏感的语料（如 q5 的 top-N
+#        near_miss「差 1 票」）只在原切分下成立，gen 失败时会提醒这一点。
 #   ./verify_wfg.sh q3 --keep          # 保留自动生成的 smoke 场景（默认跑完删除）
 #   ./verify_wfg.sh q1 --with-engine   # 额外做引擎级对拍：gen → dump-frames → wfusion batch → wfgen verify
 #
@@ -240,6 +242,9 @@ query_source_streams() {
 
 query_rules() { sed -n 's/^rule \([A-Za-z_][A-Za-z0-9_]*\).*/\1/p' "$1"; }
 
+# 语料自带的 #[duration=...]（脚本的 --duration 会覆盖它）。
+scenario_declared_duration() { sed -n 's/^#\[duration=\([^]]*\)\].*/\1/p' "$1" | head -1; }
+
 # curated 语料必须真的含注入用例；只有 background 的文件"跑得通但什么都没验证"。
 has_inject_assert() { grep -qE '^[[:space:]]*(hit|near_miss|miss)[[:space:]]*<' "$1"; }
 
@@ -414,6 +419,14 @@ for q in $EXPANDED; do
         fi
         row "$q" "$kind" "$lint_cell" "$gen_cell" "$out_dir" "$note"
         [ "$gen_cell" = "FAIL" ] && printf '%s\n' "$(printf '%s' "$gen_out" | sed 's/^/        | /')"
+        # --duration 覆盖语料的 #[duration] 会改窗口切分：top-N 类语料的 near_miss（差 1 票）
+        # 只在原切分下成立——实话实说，避免把「覆盖参数」当成「语料坏了」。
+        if [ "$gen_cell" = "FAIL" ] && [ -n "$DURATION" ]; then
+            declared="$(scenario_declared_duration "$scenario")"
+            if [ -n "$declared" ] && [ "$declared" != "$DURATION" ]; then
+                echo "        | 注：--duration ${DURATION} 覆盖了语料的 #[duration=${declared}]；窗口切分敏感的语料（如 q5 的 top-N near_miss）可能因此不再成立" >&2
+            fi
+        fi
 
         # ---- 引擎级对拍（--with-engine）：gen 产物 → wfusion batch → wfgen verify ----
         # ⚠ gen 的期望由 `inject` 驱动：场景里没有注入用例时 `Expected: 0`，
