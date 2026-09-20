@@ -21,7 +21,7 @@
 #     SKIP_BIN_CHECK=1 / BIN_CHECK_STRICT=1   二进制新鲜度自检开关
 #
 # 输出: 每查询一行摘要（stdout + data/verify_daemon_all.txt）；逐查询明细
-#   data/verify_daemon_<Q>.txt（文件/指标双口径计数 + oracle 报告）。
+#   data/verify_daemon_<Q>.txt（文件/指标双口径计数 + 期望报告）。
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
@@ -202,7 +202,7 @@ SUMMARY="data/verify_daemon_all.txt"
 : > "$SUMMARY"
 PASS_ALL=1
 BASE_CONF="conf/wfusion.toml"   # daemon 基线（TCP 源 + 哨兵；sinks 逐查询覆盖为 sinks_file）
-echo "== verify_daemon: query=$QUERY total=$TOTAL frames=$(basename "$FRAMES") 注入=daemon(TCP+flush) oracle=wfgen verify-nexmark $TOTAL_N =="
+echo "== verify_daemon: query=$QUERY total=$TOTAL frames=$(basename "$FRAMES") 注入=daemon(TCP+flush) 期望=wfgen verify-nexmark $TOTAL_N =="
 
 # ---- 每查询：临时配置（sinks_file 落盘 + 单查询 rules）→ daemon 注入 → 收口 → 三层对拍 ----
 for Q in "${QUERIES[@]}"; do
@@ -267,7 +267,7 @@ for Q in "${QUERIES[@]}"; do
   # ---- 交叉检查：文件输出 vs metrics（尾批丢失 → ⚠ 警告不判失败）----
   CROSS=$("$PY" "$VFLIB" cross "$CNT_FILE")
 
-  # ---- oracle 对拍（--detail-diff 字段级对拍；q13/q6 例外见 docs/ORACLE_VERIFY.md §6）----
+  # ---- 期望对拍（--detail-diff 字段级对拍；q13/q6 例外见 docs/EXPECTATION_VERIFY.md §6）----
   ORACLE_LOG="data/verify_daemon_oracle_${Q}.log"
   DETAIL_DIFF="--detail-diff data/alerts/benchmark.ndjson"
   if [ "$Q" = "q13" ] || [ "$Q" = "q6" ]; then
@@ -292,9 +292,9 @@ for Q in "${QUERIES[@]}"; do
 
   LINE="$Q | $VERDICT | daemon=OK | fatal=${FATAL}"
   if [ "$VRC" = "0" ]; then
-    LINE="${LINE} | oracle=identical ✅"
+    LINE="${LINE} | 期望=identical ✅"
   else
-    LINE="${LINE} | oracle=diff ❌（见 ${ORACLE_LOG}）"
+    LINE="${LINE} | 期望=diff ❌（见 ${ORACLE_LOG}）"
   fi
   if [ "$CONTENT" = "ok" ]; then
     LINE="${LINE} | 内容断言 ✅"
@@ -312,7 +312,7 @@ for Q in "${QUERIES[@]}"; do
     cat "$CNT_FILE"
     echo "== alert 内容断言 =="
     echo "$CONTENT"
-    echo "== oracle 对拍（wfgen verify-nexmark --query $Q --engine-emit）=="
+    echo "== 期望对拍（wfgen verify-nexmark --query $Q --engine-emit）=="
     cat "$ORACLE_LOG"
   } > "data/verify_daemon_${Q}.txt"
 done

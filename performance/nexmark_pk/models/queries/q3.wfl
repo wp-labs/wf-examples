@@ -17,7 +17,7 @@ use "nexmark.wfs"
 // 输出 = 满足 category=10 ∧ 卖家州∈{OR,ID,CA} 的 auction 数（对齐权威）。
 //
 // 注：inline test 无法断言本规则（harness 无 WindowLookup，join 全 miss →
-// where 全抑制，hits==0 会假通过）——由引擎级 where 测试 + oracle/引擎
+// where 全抑制，hits==0 会假通过）——由引擎级 where 测试 + 期望/引擎
 // 对拍验证。
 rule q3_auction_seller {
     events { a : auction_events && a.category == 10 }

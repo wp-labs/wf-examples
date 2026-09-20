@@ -16,7 +16,7 @@ use "nexmark.wfs"
 // 输出基数 = category=10 的 bid 数（对齐权威）。展开字段受 sink 四列限制省略。
 //
 // 注：inline test 无法断言本规则（on each + join + where 需 WindowLookup）——
-// 由引擎级 where 测试 + oracle/引擎对拍验证。
+// 由引擎级 where 测试 + 期望/引擎对拍验证。
 rule q20_expand_bid {
     events { b : bid_events }
     on each b -> score(10.0)

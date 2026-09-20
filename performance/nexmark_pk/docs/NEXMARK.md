@@ -98,23 +98,23 @@ NEXMark 标准数据的要求，本实现（`wfgen gen-nexmark`）全部满足�
 
 ### 5.1 确定性 ground truth（权威标准）
 
-`wfgen verify-nexmark` 用**真实 WFL 规则引擎**（wf_engine，经 oracle 管线）处理与
+`wfgen verify-nexmark` 用**真实 WFL 规则引擎**（wf_engine，经期望管线）处理与
 引擎同一份确定性数据、同一套 .wfl 规则，逐规则算出期望 `emitted_total`（规则名即
 引擎 EMIT 名，identity 对拍）：
 
 - 与 `gen-nexmark` 相同的 30s 桶序喂入——与引擎 daemon 收到的帧序一致，窗口过期
   语义对拍才成立（每规则独立 CepStateMachine + RuleExecutor）。
-- oracle 的完整定义（处理流程 / 计数·内容·字段级三档验证 / 排除与边界 / known 差异）
-  见 `ORACLE_VERIFY.md`。
+- 期望的完整定义（处理流程 / 计数·内容·字段级三档验证 / 排除与边界 / known 差异）
+  见 `EXPECTATION_VERIFY.md`。
 - 覆盖全部规则（含 q1 on-each / q11/q12/q14/q22 等早期模拟器未建模项）。
 - **已知差异**：Q12（fixed+close 尾桶收口，引擎实现面非确定，标 ⚠ 不判失败）；q21 已随
   数据侧 `channel_id` 对齐（官方 95% 输出量）由 verify 覆盖。其余规则与引擎 EMIT 精确相等
-  （stats 规则 2026-08-27 起接入 oracle：q4b/q15~q19 10M 对拍逐条 identical）。
+  （stats 规则 2026-08-27 起接入期望：q4b/q15~q19 10M 对拍逐条 identical）。
 - 对拍在 wfgen 内完成（`--engine-emit data`）：git-diff 同款分层（L1 哈希 →
   L2 Myers/降级 → L3 明细），退出码 0=一致 / 1=有差异。
 
 **各查询 30M 期望 / 实测 EMIT 状态**（Q1~Q22 全量 30M replay 全部 `[clean]`；
-Q8/Q9 已与 oracle 对拍一致，Q19 等 stats 规则已随 oracle stats 接入（2026-08-27）覆盖）：
+Q8/Q9 已与期望对拍一致，Q19 等 stats 规则已随期望 stats 接入（2026-08-27）覆盖）：
 见 `CAPABILITY_GAP_MATRIX.md` §一·§二（含已解决历史与 known-diff 登记）。
 
 ### 5.2 数据完整性（`[clean]`）
@@ -130,7 +130,7 @@ Q8/Q9 已与 oracle 对拍一致，Q19 等 stats 规则已随 oracle stats 接�
   q9=6,000,000 = 1.8M × 100/30）。
 - **特殊口径查询**（q11 per-shard 会话 / q12 处理时间近似 / q13 形状对齐）：以多轮
   端到端 EMIT 确定性 + `[clean]` 验证，已知差异见 `CAPABILITY_GAP_MATRIX.md`
-  §一·§二（q21 已随 `channel_id` 对齐由 verify 覆盖；stats 规则已由 oracle 覆盖）。
+  §一·§二（q21 已随 `channel_id` 对齐由 verify 覆盖；stats 规则已由期望覆盖）。
 - **新旧二进制回归**：Q2/Q3/Q7/Q9 必须逐位一致；Q4/Q5 在**既存波动带**内（区间重叠
   而非单值相等）。
 
@@ -139,13 +139,13 @@ Q8/Q9 已与 oracle 对拍一致，Q19 等 stats 规则已随 oracle stats 接�
 `bench.sh <q> replay 30m --verify`：`wfgen verify-nexmark --engine-emit data` 用真实
 规则引擎逐规则对拍引擎 EMIT（git-diff 同款分层：L1 哈希 → L2 Myers/降级 → L3 明细），
 退出码 0=一致 / 1=有差异（Q12 fixed+close 尾桶 known-diff ⚠ 不判失败；stats 规则
-2026-08-27 起 oracle 已覆盖）。逐 alert 明细对拍
+2026-08-27 起期望已覆盖）。逐 alert 明细对拍
 （旧 28k 探针 `alerts.ndjson` 方案）随引擎 sink 改造已不再产生该文件，由计数级对拍替代。
 
 ### 5.5 已知波动（正确性的诚实边界）
 
 - **Q4**（avg-of-max 双规则链）：内层 deferred reduce maxrow（Q9 同款）确定性；外层
-  stats avg 的 oracle 对拍待接入（known-diff，见 `CAPABILITY_GAP_MATRIX.md` §一 Q4）。
+  stats avg 的期望对拍待接入（known-diff，见 `CAPABILITY_GAP_MATRIX.md` §一 Q4）。
 - **Q5**（HOP + conv top_ties）：窗口形状/基数与权威一致（30M 1500 窗 vs 旧 fixed 300 桶，
   5× 修正）；EMIT 除 scan_timeouts 墙钟级微差外无已知波动带。
 - 判定标准：**区间重叠**而非单值相等；`[clean]` + ground truth 才是正确性权威。
@@ -221,7 +221,7 @@ q5 30m 432MB < 512MB 不触发 ✅——这就是 30m 对拍只有 q17/q19/q20 �
 | **EPS** | 哨兵四元组 `Σn/(max_emit−min_start)` | metrics-append / TIMEOUT 兑底 | 引擎侧精确墙钟窗，无轮询粒度误差 |
 | **RSS_peak** | 采样峰值（100ms，全生命周期） | — | `ps rss`，macOS footprint 回退 |
 | **CPU avg/max** | 哨兵活跃窗内样本（核占数，可 >100%） | 无哨兵时 [T0,T2] / 全样本 | 100ms cputime 差分 |
-| **正确性** | `wfgen verify-nexmark` oracle 对拍 | — | 逐规则 EMIT 计数一致 + known-diff 清单 |
+| **正确性** | `wfgen verify-nexmark` 期望对拍 | — | 逐规则 EMIT 计数一致 + known-diff 清单 |
 
 **读数第一条**：先看结果行的 `eps_mode=`——`sentinel` = 精确口径；`metrics-append` /
 `⚠TIMEOUT` = 兑底值，只作量级参考。
@@ -263,15 +263,15 @@ q5 30m 432MB < 512MB 不触发 ✅——这就是 30m 对拍只有 q17/q19/q20 �
 
 ### 7.4 正确性验证口径（verify-nexmark）
 
-- **oracle = 真实 WFL 规则引擎**逐事件求值（非性能引擎）：规则按 yield-bind 依赖并查集分组，
+- **期望 = 真实 WFL 规则引擎**逐事件求值（非性能引擎）：规则按 yield-bind 依赖并查集分组，
   每组一线程独立吃完整事件流（非分片，慢是预期的）。
 - 对拍：归一化两侧为 `规则名 计数` 文本行（Myers 对齐），git-diff 式逐规则报告；退出码
   0=一致 / 1=有差异。`bench.sh --verify` 串接同一对拍。
-- **known-diff（对拍时已知，非回归）**：Q12 fixed+close 尾桶收口（10M oracle=102,400 vs
+- **known-diff（对拍时已知，非回归）**：Q12 fixed+close 尾桶收口（10M 期望=102,400 vs
   引擎=282,514）；30M 按 5% 容差；stats 规则 fixed 窗口（q4b/q15~q19）2026-08-27 起接入
-  oracle，session/sliding stats 仍不接入；all-10m verify 的 oracle 工作集 ~19GB，stats 规则
+  期望，session/sliding stats 仍不接入；all-10m verify 的期望工作集 ~19GB，stats 规则
   建议单查询 10m 对拍 + all 用 1m 端到端。
-- 引擎侧取 oracle 覆盖的规则，单查询验证时其它查询残留 EMIT 是历史噪音，不计入。
+- 引擎侧取期望覆盖的规则，单查询验证时其它查询残留 EMIT 是历史噪音，不计入。
 
 ### 7.5 测量纪律（执行版）
 
@@ -289,7 +289,7 @@ q5 30m 432MB < 512MB 不触发 ✅——这就是 30m 对拍只有 q17/q19/q20 �
 ```sh
 ./bench.sh all replay 10m          # 22 查询全量吞吐 + RSS + CPU（哨兵 EPS 口径；all=逐个单规则）
 ./bench.sh mix replay 10m           # 混跑：全部规则一个 daemon 同跑（多规则合并吞吐，不含 q6）
-./bench.sh all replay 10m --verify # 同上 + 每查询 oracle 对拍（~40min 量级；mix 不支持 --verify）
+./bench.sh all replay 10m --verify # 同上 + 每查询期望对拍（~40min 量级；mix 不支持 --verify）
 ./bench.sh q2 replay 10m           # 单查询
 ./diag.sh q5 10m                   # 性能墙定位（六档墙梯 + 每段 CPU/RSS）
 python3 scripts/extract_emitted.py data/metrics.ndjson  # 消费侧计数器

@@ -47,16 +47,16 @@
 
 - **生成语义（比例/时间轴/ID 体系/引用窗口/热点/价格/有效期/值域/字符串字段）——符合**：
   与官方默认配置逐项对齐（含 name/email/creditCard/itemName/description 随机生成与
-  extra 补齐到 avgByteSize）。这是正确性对拍（oracle vs 引擎）与白皮书/VVR **数字对比
+  extra 补齐到 avgByteSize）。这是正确性对拍（期望 vs 引擎）与白皮书/VVR **数字对比
   可比性**的共同基础：
   - Q1/Q2/Q3/Q9（无状态/join 面）可比性高；
   - Q4/Q5/Q7/Q17（价格阈值/窗口/join 面）命中面与官方口径一致（官方 Q7 阈值 10000
     在价格对数均匀下按官方概率命中，本地 q7 阈值 200/500/1000 的命中面亦按官方分布）；
   - Q12（bidder 窗口计数）活跃 bidder 域 = 官方 numActivePeople=1000 口径。
-- **验证口径**：`--check`（值域+引用窗口+乱序+指纹）与 `verify-nexmark`（oracle 对拍）
+- **验证口径**：`--check`（值域+引用窗口+乱序+指纹）与 `verify-nexmark`（期望对拍）
   验证的是「同一份数据的生成正确性与引擎一致性」；RNG 为 StdRng（非官方
   SplittableRandom），**不做与 Flink 的字节级逐事件一致**（不同 RNG 算法无法逐字节
-  复现，分布语义一致即可，VVR 对比用独立 oracle 对拍）。
+  复现，分布语义一致即可，VVR 对比用独立期望对拍）。
 
 ## 四、数据口径变更记录
 
@@ -68,7 +68,7 @@
 （官方 `random.nextInt(10)>0`，10% 无参数）、URL 目录可含 '_'。**数据跨度随
 count 线性增长**（30M → 3000s ≈ 50min），30s 时间桶数动态；30M 帧指纹
 `25e75749…` 再次变化，`../data/bench_30m_v2.frames` 与 `verify_*.txt` 锚点需重新
-生成。oracle 对拍（`verify-nexmark`）的 eos 水位与桶序同步改为动态跨度口径。
+生成。期望对拍（`verify-nexmark`）的 eos 水位与桶序同步改为动态跨度口径。
 Q21 输出量随 cold 无参 10% 调整为 **95%** 的 bid（官方 WHERE 语义，`q21.wfl`
 加 `channel_id != ""` 过滤）。
 

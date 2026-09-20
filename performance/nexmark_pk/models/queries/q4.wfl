@@ -25,9 +25,9 @@ use "nexmark.wfs"
 //   （旧 `match<category:10m:fixed>` 直接 avg(窗口内 bid 价) 为度量错，已废）。
 // - 输出基数：外层每 category 一行（有界 1d 桶 + EOS 收口），对齐官方无界
 //   per-category 输出在 benchmark 下的形态。
-// - 验证：内层输出（每 auction 胜出价，10k → 455 条 = q9 同款计数）oracle
-//   可对拍；外层 stats 规则 oracle 暂不执行（known-diff 列表），daemon 级
-//   串联对拍待 stats oracle 接入。
+// - 验证：内层输出（每 auction 胜出价，10k → 455 条 = q9 同款计数）期望
+//   可对拍；外层 stats 规则期望暂不执行（known-diff 列表），daemon 级
+//   串联对拍待 stats 期望接入。
 rule q4a_auction_finals {
     events { a : auction_events }
     on each a -> score(20.0)

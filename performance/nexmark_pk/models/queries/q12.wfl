@@ -10,7 +10,7 @@ use "nexmark.wfs"
 // —— 按 bidder 计**10 秒处理时间固定窗口**内的 bid 数，全量输出（无 Top-N）。
 //
 // ★标准 vs 验证（2026-08-23 双形态整理）：CEP/stats 双版实测持平
-// （12.87M vs 12.81M）；选 CEP 为标准 = 可 oracle 对拍（oracle 不执行 stats
+// （12.87M vs 12.81M）；选 CEP 为标准 = 可期望对拍（期望不执行 stats
 // 规则），stats 版已改名 q12-verify.wfl 交叉验算。
 //
 // wfusion 表达：事件时间 10s 固定桶近似处理时间窗口（wfusion 为事件时间引擎，
