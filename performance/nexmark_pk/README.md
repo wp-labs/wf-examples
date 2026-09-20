@@ -308,7 +308,7 @@ gen 产物 JSONL --wfgen dump-frames--> events.arrow_framed
 
 - **file + batch 形态**（与仓库自己的 gen↔engine 对拍 `crates/wfgen/tests/*` 同形）：不起 daemon、
   不占端口、不发 SIGTERM，也不需要「追平启发式」——`wfusion batch` 跑完输入即退出。
-  全量 22 查询（22 条 curated，无 smoke）实测 **~26s**（按各语料声明的 `#[duration]`；
+  全量 22 查询（22 条 curated，无 smoke）实测 **~22s**（按各语料声明的 `#[duration]`；
   用 `--duration 10s` 压时长可更快），退出码 0。
 - ⚠ **只对含 `inject` 的语料有意义**：`gen` 的期望由注入用例驱动 —— 场景里没有
   `inject` 时 `Expected: 0`（期望文件为空），无可比对。实测：同一个场景加一条 `inject` 后
