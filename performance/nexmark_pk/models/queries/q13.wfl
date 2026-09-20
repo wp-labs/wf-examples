@@ -55,6 +55,11 @@ test q13a_mod_key for q13a_bid_mod {
   expect { hits == 1; }
 }
 
+// ⚠ `q13b_*` 两条在 `wfl test` 下永远报错，且**不是**断言失败：harness 不带 WindowLookup，
+//    所有 join 必 miss，所以它**故意拒绝**给 on-each+join 规则断言命中数（见 wp-reactor
+//    `wf-engine/src/match_engine/contract.rs` 的 P1 guard）。`verify_wfg.sh` 把这类记成
+//    「不适用」而不是失败；本规则的实际行为由 E2E/引擎级路径覆盖，不要把这两条改成
+//    `hits == 0` 之类去“跑绿”（那只是把真实断言变成空洞断言）。
 test q13b_hit for q13b_side_input_join {
   input {
     row(m, id = 5, auction = 2345, price = 100, dateTime = 0, mod_key = 2345);

@@ -26,6 +26,11 @@ rule q5_hottest_auction {
     limits { max_memory = "512MB" }
 }
 
+// ⚠ 下面两条断言的 `hits` 是**几何量**：size/slide = 10s/2s = **5**（每个事件扇入 5 个覆盖
+// 窗，每窗收口各输出一次 top-1）。不要改回 1 —— 那是旧 `fixed(10s)`（单桶）形态的期望；
+// 规则改成 `hop(10s,2s)` 后输出基数就是 ×5。2026-09-20 实测：写 1 时这两条常年红灯
+// （`expected hits == 1, got 5`）＝零信号；写成 5 后几何偏离立刻报错
+// （`hop(20s,2s)` → got 7）。
 test q5_top1 for q5_hottest_auction {
   input {
     row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
@@ -33,8 +38,8 @@ test q5_top1 for q5_hottest_auction {
     row(b, auction = 2, bidder = 1, price = 100, channel = "G", url = "u");
     tick(11s);
   }
-  // 同一 10s 收口批：auction 1 count=2 > auction 2 count=1 → top-1 = auction 1
-  expect { hits == 1; hit[0].entity_id == "1"; }
+  // 每个覆盖窗口的收口批里：1 的票数（2）> 2 的票数（1）→ top-1 恒为 1
+  expect { hits == 5; hit[0].entity_id == "1"; hit[0].origin == "close:timeout"; }
 }
 
 test q5_top1_single for q5_hottest_auction {
@@ -42,5 +47,6 @@ test q5_top1_single for q5_hottest_auction {
     row(b, auction = 7, bidder = 1, price = 100, channel = "G", url = "u");
     tick(11s);
   }
-  expect { hits == 1; hit[0].entity_id == "7"; }
+  // 单实体：它在每个覆盖窗口里都是唯一候选 → top-1；request_count 验证 yield 字段确实求值落盘
+  expect { hits == 5; hit[0].entity_id == "7"; hit[0].origin == "close:timeout"; hit[0].field("request_count") == 1; }
 }

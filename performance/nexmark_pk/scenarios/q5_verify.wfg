@@ -24,6 +24,11 @@
 //   即窗口切分敏感的语料应把 duration 钉在它被验证过的值上；用 `--duration` 覆盖
 //   （脚本会提示）等于换了一套切分，near_miss 可能不再成立。
 //
+// 关键写法 ③ 本语料链不住**几何量**（size/slide、扇出）——那两个可观察量在
+//   `models/queries/q5.wfl` 的内联 `test` 块里钉（`hits == size/slide == 5`，
+//   `verify_wfg.sh` 会跑）。实测：把规则改成 `hop(20s,2s)` 时本语料的期望与引擎输出
+//   **逐字节相同**（115 条）而全绿，只有内联用例报 `got 7`——即几何偏离必须靠内联用例。
+//
 // 用法：
 //   ./verify_wfg.sh q5 --with-engine
 //   wfgen lint scenarios/q5_verify.wfg

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# verify_wfg.sh — 按查询批量跑「.wfg 语料」的 WFL 验证（L0 静态校验 + L1 注入断言 + L2 期望文件）
-#                可选 --with-engine：把证据升到引擎级（真引擎实际输出 vs 期望对拍）
+# verify_wfg.sh — 按查询批量跑「.wfg 语料」的 WFL 验证
+#                层次：L0 静态校验 · L0' 规则内联手写用例 · L1 注入断言 · L2 期望文件 ·
+#                      可选 --with-engine：L3 引擎级对拍（真引擎输出 vs 期望）
 #
 # 用法：
 #   ./verify_wfg.sh q1                 # 单查询
 #   ./verify_wfg.sh q1 q3 q13          # 多查询
 #   ./verify_wfg.sh all                # models/queries/q*.wfl 全部（含 q6，验证口径与吞吐口径无关）
-#   ./verify_wfg.sh all --lint-only    # 只做 L0 静态校验（快，不落数据）
+#   ./verify_wfg.sh all --lint-only    # 只做 L0 + L0'（快，不落数据）
 #   ./verify_wfg.sh q3 --scaffold      # 为缺语料的查询**写出** scenarios/q3_verify.wfg 模板（含 TODO），不执行
 #   ./verify_wfg.sh all --duration 10s --out data/wfg_verify   # 压时长 + 指定输出根
 #        注：--duration 会覆盖语料自带的 #[duration]；窗口切分敏感的语料（如 q5 的 top-N
@@ -21,7 +22,19 @@
 #             跑得出 lint/gen 但**没有注入断言**——只作"规则/ schema 未漂移"的烟枪测试。
 #
 # 退出码：0 = 全部通过（`--with-engine` 下已登记的「已知差异」不计失败）；
-#         1 = 有查询失败（lint / gen / NOINJ / engine）；2 = 用法/环境错误。
+#         1 = 有查询失败（lint / 规则内联用例 / gen / NOINJ / engine）；2 = 用法/环境错误。
+#
+# L0'：规则内联手写用例（`test` 块）——现成的「手写小表」。
+#   只对含 `test` 块的规则文件跑（本仓 10 个规则文件、19 条可跑用例）；跑的是**真引擎的
+#   match-engine**（`wf_engine::match_engine::contract::run_test`），不需要生成数据，
+#   `--lint-only` 下也跑。能力：`hits cmp N` / `hit[i].{score,origin,entity_type,entity_id,field(名字)}`
+#   / `close_trigger {timeout,flush,eos}` / `permutation` / `runs`。
+#   为什么需要它：它是唯一能钉住**几何量**的一层（如 q5 的 `hits == size/slide`）——
+#   引擎级对拍只证明「同一份规则的两套实现一致」，看不到规则本身偏离权威语义
+#   （实测：`hop(10s,2s)`→`hop(20s,2s)` 引擎级 PASS，而内联用例报 `got 7`）。
+#   harness **刻意拒绝**的用例（无 WindowLookup 的 join 类，错误文本含 `cannot assert hit counts`）
+#   记为「不适用」而不是失败——它们永远红，当失败等于把红灯当信号（需 E2E 覆盖）。
+#   缺 wfl 二进制时会在启动时响亮提醒（可用 WFL=/path/to/wfl 指定）。
 #
 # --with-engine：把该查询的证据从「期望级」升到「引擎级」——
 #   gen 产物 JSONL --wfgen dump-frames--> events.arrow_framed
@@ -44,7 +57,7 @@ SCAFFOLD=0
 KEEP=0
 WITH_ENGINE=0
 
-usage() { sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { awk 'NR>1 && /^# 语料来源/ {exit} NR>1 {sub(/^# ?/, ""); print}' "${BASH_SOURCE[0]}"; exit "${1:-0}"; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -84,6 +97,25 @@ esac
 SCHEMA="models/schemas/nexmark.wfs"
 [ -f "$SCHEMA" ] || { echo "缺少 $SCHEMA" >&2; exit 2; }
 
+SCHEMA="models/schemas/nexmark.wfs"
+[ -f "$SCHEMA" ] || { echo "缺少 $SCHEMA" >&2; exit 2; }
+
+# ---- wfl 解析（规则内联手写用例 `test` 块；同 wfgen 口径）----
+WFL="${WFL:-}"
+if [ -z "$WFL" ] && [ -x "../../../warp-fusion/target/release/wfl" ]; then
+    WFL="../../../warp-fusion/target/release/wfl"
+fi
+[ -n "$WFL" ] || WFL="$(command -v wfl 2>/dev/null || true)"
+[ -z "$WFL" ] && echo "⚠ 未找到 wfl → 规则内联用例（\`test\` 块）**未跑**（手写小表是唯一能钉几何量的一层）；(cd ../../../warp-fusion && cargo build --release -p wfl) 或设 WFL=/path/to/wfl" >&2
+
+# python3：内联用例回执解析 + 引擎对拍报告解析
+PY="${PYTHON:-python3}"
+HAVE_PY=0
+command -v "$PY" >/dev/null 2>&1 && HAVE_PY=1
+
+# 临时目录：内联用例的 json/err 回执（不动数据目录，--lint-only 也不落数据）
+OUT_TMP="$(mktemp -d "${TMPDIR:-/tmp}/wfg_verify.XXXXXX")"
+
 # ---- 引擎级对拍（--with-engine）需要的前置文件与工具 ----
 # 形态 = **生成文件 → batch 模式**（不起 daemon、不占端口、不发 SIGTERM）：
 #   gen 产物 JSONL --wfgen dump-frames--> events.arrow_framed
@@ -102,8 +134,7 @@ if [ "$WITH_ENGINE" = "1" ]; then
         exit 2
     }
     [ -x "$WFUSION" ] || { echo "WFUSION 不可执行：$WFUSION" >&2; exit 2; }
-    PY="${PYTHON:-python3}"
-    command -v "$PY" >/dev/null 2>&1 || { echo "--with-engine 需要 python3（解析对拍报告）" >&2; exit 2; }
+    [ "$HAVE_PY" = "1" ] || { echo "--with-engine 需要 python3（解析对拍报告）" >&2; exit 2; }
     [ -d topology/sinks_file ] || { echo "缺少 topology/sinks_file（batch 的 sink 配置）" >&2; exit 2; }
     [ -f models/schemas/windows.toml ] || { echo "缺少 models/schemas/windows.toml" >&2; exit 2; }
 fi
@@ -215,7 +246,8 @@ else:
 }
 
 cleanup() {
-    if [ -n "$TMP_FILES" ] && [ "$KEEP" != "1" ]; then rm -f $TMP_FILES; fi
+    [ -n "${OUT_TMP:-}" ] && [ -d "$OUT_TMP" ] && rm -rf "$OUT_TMP"
+    if [ -n "${TMP_FILES:-}" ] && [ "${KEEP:-0}" != "1" ]; then rm -f $TMP_FILES; fi
 }
 trap cleanup EXIT INT TERM HUP
 
@@ -276,6 +308,68 @@ expand_queries() {
     [ "${#out[@]}" -gt 0 ] && printf '%s\n' "${out[@]}"
 }
 
+# 规则内联手写用例（`test` 块）——现成的「手写小表」。
+# 为什么单独跑它：它是唯一能钉住**几何量**的地方（如 q5 的 `hits == size/slide`）；
+# 引擎级对拍比的是「同一份规则的两套实现是否一致」，看不到规则本身偏离权威语义。
+#
+# 粒度：只在规则文件含 `test` 块时跑（无 test 块 = 无可断言，不输出）。
+# 裁定：真断言失败 → FAILED=1；harness **刻意拒绝**的用例（无 WindowLookup 的
+# join 类，错误文本含 `cannot assert hit counts`）记为「不适用」——它们永远红，
+# 当成失败等于把红灯当信号（需 E2E 覆盖，见 wp-reactor contract.rs 的 P1 guard）。
+run_rule_inline_tests() {
+    q="$1"; rule="$2"
+    grep -qE '^[[:space:]]*test[[:space:]]' "$rule" || return 0
+    if [ -z "$WFL" ]; then
+        echo "  [${q}] wfl test: N/A（未找到 wfl 二进制 → 规则内联用例未跑；设 WFL=/path/to/wfl）"
+        return 0
+    fi
+    if [ "$HAVE_PY" != "1" ]; then
+        echo "  [${q}] wfl test: N/A（未找到 python3 → 无法解析回执）"
+        return 0
+    fi
+    json="$OUT_TMP/${q}_wfl_test.json"
+    err="$OUT_TMP/${q}_wfl_test.err"
+    "$WFL" test "$rule" -s "$SCHEMA" --format json > "$json" 2>"$err"
+    out="$("$PY" - "$json" "$err" <<'PY'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    tests = d.get("tests", [])
+except Exception:
+    detail = ""
+    try:
+        lines = [l.rstrip() for l in open(sys.argv[2]) if l.strip()]
+        detail = lines[0] if lines else ""
+    except Exception:
+        pass
+    print(f"FAIL（回执解析失败：{detail or '空回执'}）")
+    sys.exit(1)
+real, unsup, ok = [], [], 0
+for t in tests:
+    if t.get("passed"):
+        ok += 1; continue
+    fs = t.get("failures", [])
+    # harness 刻意拒绝（无 WindowLookup → join 必 miss）不是断言失败，见 contract.rs 的 P1 guard
+    (unsup if any("cannot assert hit counts" in f for f in fs) else real).append(
+        (t.get("name", "?"), fs[0] if fs else ""))
+parts = [f"{ok}/{len(tests)} 通过"]
+if unsup:
+    parts.append(f"{len(unsup)} 条不适用（harness 无 WindowLookup，join 类无法内联断言命中数 → 需 E2E）")
+if real:
+    print("FAIL（" + " · ".join(parts) + "）")
+    for n, f in real[:3]:
+        print(f"        | {n}: {f}")
+    sys.exit(1)
+print("PASS（" + " · ".join(parts) + "）")
+sys.exit(0)
+PY
+)"
+    rc=$?
+    printf '%s\n' "$out" | sed "1s|^|  [${q}] wfl test: |"
+    [ "$rc" -eq 0 ] || FAILED=1
+    N_UTEST=$((N_UTEST + 1))
+}
+
 # 表格：Q KIND LINT GEN OUT NOTE
 # NOTE 放**最后一列且不补位**：它可能含多字节字符/变长文本，printf 按字节补位会串列。
 row() { printf '%-5s %-8s %-6s %-5s %-22s %s\n' "$1" "$2" "$3" "$4" "$5" "$6"; }
@@ -301,6 +395,7 @@ N_SMOKE=0
 N_ENGINE=0
 N_ENGINE_NA=0
 N_KNOWN=0
+N_UTEST=0
 for q in $EXPANDED; do
     rule="models/queries/$q.wfl"
     scenario="scenarios/${q}_verify.wfg"
@@ -390,8 +485,13 @@ for q in $EXPANDED; do
         FAILED=1
     fi
 
+    # ---- L0' 规则内联手写用例（`test` 块）：跑真引擎 match-engine ----
+    # 这是现成的「手写小表」：输入行 + `hits` / `hit[i].{entity_id,origin,field(...)}` 硬断言。
+    # 不需要生成数据，所以在 --lint-only 下也跑（静态层）。
+
     if [ "$LINT_ONLY" = "1" ] || [ "$lint_cell" = "FAIL" ]; then
         row "$q" "$kind" "$lint_cell" - - "$lint_msg"
+        run_rule_inline_tests "$q" "$rule"
     else
         out_dir="${OUT_ROOT}/${q}"
         mkdir -p "$OUT_ROOT"      # 仅真正落数据时才建（--lint-only 不留空目录）
@@ -418,6 +518,7 @@ for q in $EXPANDED; do
             [ -n "$DURATION" ] && note="$note · dur=$DURATION"
         fi
         row "$q" "$kind" "$lint_cell" "$gen_cell" "$out_dir" "$note"
+        run_rule_inline_tests "$q" "$rule"
         [ "$gen_cell" = "FAIL" ] && printf '%s\n' "$(printf '%s' "$gen_out" | sed 's/^/        | /')"
         # --duration 覆盖语料的 #[duration] 会改窗口切分：top-N 类语料的 near_miss（差 1 票）
         # 只在原切分下成立——实话实说，避免把「覆盖参数」当成「语料坏了」。
@@ -503,4 +604,7 @@ if [ "$N_SMOKE" -gt 0 ]; then
 fi
 if [ "$N_KNOWN" -gt 0 ]; then
     echo "   注：已知差异 ${N_KNOWN} 条（已定位 + 已记录，不计失败，见脚本 KNOWN_DIFF 与 README 语料表）。"
+fi
+if [ "$N_UTEST" -gt 0 ]; then
+    echo "   注：规则内联用例（\`test\` 块，真引擎 match-engine）已跑 ${N_UTEST} 个规则文件；断言失败即判失败。"
 fi
