@@ -21,5 +21,6 @@ test q10_all for q10_log_all {
     row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
     row(b, auction = 2, bidder = 1, price = 100, channel = "G", url = "u");
   }
-  expect { hits == 2; }
+  // entity = b.auction（每笔一条）；score 是规则字面量，一并钉住（防止 score 丢/null）
+  expect { hits == 2; hit[0].entity_id == "1"; hit[1].entity_id == "2"; hit[0].score == 5.0; }
 }

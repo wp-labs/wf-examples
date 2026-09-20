@@ -20,9 +20,13 @@ test q1_passthrough for q1_bid_passthrough {
         row(b, auction = 1, bidder = 1, price = 100, channel = "G", url = "u");
         row(b, auction = 2, bidder = 2, price = 200, channel = "G", url = "u");
     }
+    // score 是 q1 **唯一的语义决定**（权威 SQL 的 0.908 换算；换算放 score 而不放 detail 是本地口径取舍）。
+    // 它恰好是 L3 引擎级对拍**看不见**的：两侧读同一份规则，0.908 改成 0.9 照样全绿 —— 只能在这里钉住。
     expect {
         hits == 2;
         hit[0].entity_id == "1";
         hit[1].entity_id == "2";
+        hit[0].score == 90.8;    // 0.908 × 100（未触顶）
+        hit[1].score == 100.0;   // 0.908 × 200 = 181.6 → 被引擎的 score 语义 clamp(0,100) 截到 100
     }
 }

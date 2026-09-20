@@ -9,7 +9,7 @@
 | `bench.sh` | **吞吐/内存是多少**（EPS / RSS / CPU，对 Flink PK） |
 | `diag.sh` | **墙在管线哪一段**（性能墙定位） |
 | `verify_daemon.sh` | **输出是否正确**（daemon+TCP 路径 vs 期望对拍） |
-| `verify_wfg.sh` | **规则/语料本身对不对**（四层：L0 静态校验 · L0' 规则内联用例 · L1 注入断言 hit/near_miss/miss · 可选 --with-engine 引擎级对拍） |
+| `verify_wfg.sh` | **规则/语料本身对不对**（五层：L0 静态校验 · L0' 规则内联用例 · L1 注入断言 hit/near_miss/miss · L2 期望文件 · **L3 引擎级对拍**——L3 默认开） |
 
 背景（事件模型 / 查询语义 / 正确性标准）见 [`docs/NEXMARK.md`](docs/NEXMARK.md)；
 查询覆盖判定见 [`docs/CAPABILITY_GAP_MATRIX.md`](docs/CAPABILITY_GAP_MATRIX.md)；
@@ -25,6 +25,7 @@
 ./verify_wfg.sh all --lint-only # L0 + L0' 静态层（22 查询，秒级；含规则内联用例）
 ./verify_wfg.sh q1 q2 --duration 10s # 按 .wfg 语料验证规则语义（注入断言）
 ./verify_wfg.sh all --with-engine   # 全量 22 查询 + 引擎级对拍（用各语料自带的 #[duration]）
+./verify_wfg.sh all --no-engine      # 只要期望级（L0/L0'/L1/L2），不跑真引擎
 ./diag.sh q5 10m                # 性能诊断：定位 q5 的墙在哪一段
 ```
 
@@ -176,17 +177,17 @@ close_all 尾桶收口语义，q3 = join 索引与提交前沿竞态。**每个�
 
 30M 全量多规则对拍（q6=872,913 / q20=196,517）已 4/4 轮精确。
 
-### verify_wfg.sh（`.wfg` 语料，L0/L0'/L1/L2，可选 L3）
+### verify_wfg.sh（`.wfg` 语料，L0/L0'/L1/L2 + L3 默认开）
 
 上面两条路径验证的是「同一份 benchmark 数据下引擎输出对不对」；`verify_wfg.sh` 验证的是
 **规则 + 语料本身**——用定向构造的实体跑 wfgen 场景，把规则语义压在硬断言下：
 
 ```bash
 ./verify_wfg.sh all --lint-only     # L0 静态校验 + L0' 规则内联用例（快、不落数据）
-./verify_wfg.sh q1 q2 --duration 10s # 单/多查询：L0 + L0' + L1 注入断言 + L2 期望文件
+./verify_wfg.sh q1 q2 --duration 10s # 单/多查询：L0 + L0' + L1 注入断言 + L2 期望文件（+ L3 引擎级）
 ./verify_wfg.sh all                 # 全量（有语料走 curated，没有自动落 smoke）
 ./verify_wfg.sh q3 --scaffold       # 为缺语料的查询**写出** scenarios/q3_verify.wfg 骨架
-./verify_wfg.sh q1 --with-engine    # 额外做**引擎级**对拍：gen → dump-frames → wfusion batch → wfgen verify
+./verify_wfg.sh q1 --no-engine      # 关掉 L3（L3 **默认开**；--lint-only 也自动关）
 ```
 
 **五个层次（各答不同的问题）**：
@@ -197,11 +198,15 @@ close_all 尾桶收口语义，q3 = join 索引与提交前沿竞态。**每个�
 | **L0'** | **规则内联手写用例（`test` 块，跑真引擎 match-engine）** | **规则本身的语义/几何** |
 | L1 | 注入断言 INJ1/INJ2（hit 必报 / near_miss·miss 必不报） | 语料的意图实现了吗 |
 | L2 | 期望文件（`.except.jsonl` + meta） | 给出了可对拍的期望 |
-| L3 | `--with-engine`：引擎输出 vs 期望逐条全等 | 两套实现是否一致 |
+| L3 | 引擎输出 vs 期望逐条全等（**默认开**，`--no-engine` 关） | 两套实现是否一致 |
 
 **L0'（规则内联手写用例）**：本仓 10 个规则文件带 `test` 块（共 21 条：19 条可跑 + q13 的 2 条
 harness 刻意拒绝）、`verify_wfg.sh` 会逐个跑。它不需要生成数据，`--lint-only` 下也跑；缺 `wfl`
 二进制时启动会响亮提醒（`WFL=/path/to/wfl` 可指定）。
+
+断言里**算出来的值**才算真锚（字面量只能防字段丢失）：本仓已钉住 q1 的 `0.908 × price`、
+**score 的 `clamp(0,100)` 语义**（price=100 → 90.8；price=200 → 181.6 被截到 **100**）、
+q7/q11/q14 的 `detail`、q13a 的 `mod_key`、q21/q22 的解包结果。
 
 **两级语料**：
 
@@ -233,8 +238,7 @@ harness 刻意拒绝）、`verify_wfg.sh` 会逐个跑。它不需要生成数�
   实测把 q5 的 20s 覆盖成 1m：簇起点从 9.0s 抬到 29.0s，切片把 20 条/19 条重新切开 →
   `INJ2`（near_miss 反而报警）。所以语料把 duration **钉住**；gen 失败时脚本会提醒这一点，
   `wfgen gen` 自身也会打 `Duration override: 20s -> 60s`。
-- 退出码：`0` 全通过（`--with-engine` 下已登记的「已知差异」不计失败）/ `1` 有失败
-  （lint·gen·NOINJ·engine）/ `2` 用法或环境错误。
+- 退出码：`0` 全通过（已登记的「已知差异」不计失败）/ `1` 有失败（lint · 规则内联用例 · gen · NOINJ · engine）/ `2` 用法或环境错误（含显式 `--with-engine` 但跑不了）。
 
 **为什么还需要 L0'（内联用例）**：`--with-engine` 只证明「同一份规则的**两套实现**一致」，
 看不到规则本身偏离权威语义（两套实现都读同一份规则）。实测（2026-09-20）：
@@ -249,9 +253,9 @@ harness 刻意拒绝）、`verify_wfg.sh` 会逐个跑。它不需要生成数�
 L1 的 hit/near_miss/miss 只钉得动「会改二元结论」的偏离。所以 `test` 块不是可选项，
 而是规则自己的**规范锚**；`verify_wfg.sh` 把它们跑起来（实测 10 个规则文件 / 19 条可跑用例全绿）。
 
-**`--with-engine`：把证据从「期望级」升到「引擎级」**
+**L3（引擎级对拍，默认开）**：把证据从「期望级」升到「引擎级」——
 
-默认只跑 L0+L1 —— L1 比的是「作者意图 vs 期望求值」，**不碰真引擎**。加 `--with-engine` 多跑一橙：
+默认就跑 L3；`--no-engine` 关掉只跑期望级（L1 比的是「作者意图 vs 期望求值」，**不碰真引擎**）：
 
 ```
 gen 产物 JSONL --wfgen dump-frames--> events.arrow_framed
@@ -268,8 +272,9 @@ gen 产物 JSONL --wfgen dump-frames--> events.arrow_framed
   `Expected` 从 `0` 变 `5001`。所以 smoke 档一律记 **N/A**（不是通过），也不会白跑引擎。
 - 两侧都是 0 条时也会记 N/A（**空对空不算证据**）；裁定不看 `status` 字段，而是按
   `missing` / `unexpected` / `field_mismatch` 全为 0 从计数重算。
-- 需要 `wfusion` / `python3`；不需要 `nc`，也不需要 daemon。报告落 `<out>/<q>/engine_verify.json`，
-  引擎日志落 `<out>/<q>/engine_batch.log`（单查询 batch 上限 `ENGINE_TIMEOUT`s，默认 300）。
+- 需要 `wfusion` / `python3`（起 L3 时）；不需要 `nc`，也不需要 daemon。缺 `wfusion`
+  时**响亮降级**（默认开着但跑不了：警告 + 汇总里也如实说），只有显式 `--with-engine` 才硬失败。
+  报告落 `<out>/<q>/engine_verify.json`，引擎日志落 `<out>/<q>/engine_batch.log`（单查询 batch 上限 `ENGINE_TIMEOUT`s，默认 300）。
 - **已知差异**（`KNOWN_DIFF`，现仅 `q4`）：已定位且已记录的「期望 ↔ 引擎」模型差异，报
   `FAIL(已知差异，不计失败)` 并计入汇总；未登记的查询 engine FAIL 一律判失败——不允许把差异
   悄悄变成通过。差异被修好后脚本会提示把它从表里删掉。

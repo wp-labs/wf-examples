@@ -38,9 +38,10 @@ rule q14_calculation {
 
 test q14_price_hit for q14_calculation {
   input {
-    row(b, auction = 1, bidder = 1, price = 5000000, channel = "G", url = "u", extra = "abaccc");
+    row(b, auction = 1, bidder = 1, price = 5000000, channel = "G", url = "u", extra = "abaccc", dateTime = 0);
   }
-  expect { hits == 1; hit[0].entity_id == "1"; }
+  // detail = 时段桶 + extra 里 'c' 的个数（extra="abaccc" → c=3）；默认时间 0 → hour 00 → nightTime
+  expect { hits == 1; hit[0].entity_id == "1"; hit[0].field("detail") == "nightTime c=3"; }
 }
 
 test q14_price_below for q14_calculation {

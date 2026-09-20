@@ -44,6 +44,6 @@ test q11_two_sessions for q11_bidder_session {
     row(b, auction = 2, bidder = 5, price = 200, channel = "G", url = "u");
     tick(11s);
   }
-  // 两个会话各自收口 → 2 条，各 count=1
-  expect { hits == 2; }
+  // 两个会话各自收口 → 2 条，各 count=1（detail = 收口时该会话的 bid 数）
+  expect { hits == 2; hit[0].field("detail") == "1"; hit[1].field("detail") == "1"; }
 }

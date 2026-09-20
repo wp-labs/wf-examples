@@ -51,8 +51,9 @@ test q13a_mod_key for q13a_bid_mod {
   input {
     row(b, auction = 12345, bidder = 5, price = 100, channel = "G", url = "u");
   }
-  // mod(12345, 10000) = 2345 → 中间窗口 mod_key 字段
-  expect { hits == 1; }
+  // mod(12345, 10000) = 2345 → 中间窗口 mod_key 字段（join 条件只支持字段引用，mod 先物化）；
+  // entity 取 b.bidder，yield id 也是 bidder（数值字段，按数字比）
+  expect { hits == 1; hit[0].field("mod_key") == 2345; hit[0].field("id") == 5; }
 }
 
 // ⚠ `q13b_*` 两条在 `wfl test` 下永远报错，且**不是**断言失败：harness 不带 WindowLookup，

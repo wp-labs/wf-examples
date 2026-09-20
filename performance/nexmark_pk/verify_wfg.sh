@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
 # verify_wfg.sh — 按查询批量跑「.wfg 语料」的 WFL 验证
-#                层次：L0 静态校验 · L0' 规则内联手写用例 · L1 注入断言 · L2 期望文件 ·
-#                      可选 --with-engine：L3 引擎级对拍（真引擎输出 vs 期望）
+# 层次：L0 静态校验 · L0' 规则内联手写用例 · L1 注入断言 · L2 期望文件 ·
+#       L3 引擎级对拍（**默认开**，`--no-engine` 关）
 #
 # 用法：
-#   ./verify_wfg.sh q1                 # 单查询
+#   ./verify_wfg.sh q1                 # 单查询（默认含 L3 引擎级对拍）
 #   ./verify_wfg.sh q1 q3 q13          # 多查询
 #   ./verify_wfg.sh all                # models/queries/q*.wfl 全部（含 q6，验证口径与吞吐口径无关）
-#   ./verify_wfg.sh all --lint-only    # 只做 L0 + L0'（快，不落数据）
+#   ./verify_wfg.sh all --lint-only    # 只做 L0 + L0'（快，不落数据；引擎自动关）
 #   ./verify_wfg.sh q3 --scaffold      # 为缺语料的查询**写出** scenarios/q3_verify.wfg 模板（含 TODO），不执行
 #   ./verify_wfg.sh all --duration 10s --out data/wfg_verify   # 压时长 + 指定输出根
 #        注：--duration 会覆盖语料自带的 #[duration]；窗口切分敏感的语料（如 q5 的 top-N
 #        near_miss「差 1 票」）只在原切分下成立，gen 失败时会提醒这一点。
 #   ./verify_wfg.sh q3 --keep          # 保留自动生成的 smoke 场景（默认跑完删除）
-#   ./verify_wfg.sh q1 --with-engine   # 额外做引擎级对拍：gen → dump-frames → wfusion batch → wfgen verify
+#   ./verify_wfg.sh all --no-engine    # 只要期望级（L0/L0'/L1/L2），不跑真引擎
+#
+# L3（引擎级对拍）**默认开**：gen 产物 → dump-frames → wfusion batch（跑完自退）→ wfgen verify。
+#   缺 wfusion/python3/sink 配置时**响亮降级**（默认开着但跑不了）——显式 --with-engine
+#   才是硬失败；不想跑就 --no-engine / --lint-only。
 #
 # 语料来源（两级）：
 #   curated = scenarios/<q>_verify.wfg 已存在（人工写好的 hit/near_miss/miss 用例）→ 直接用；
@@ -55,7 +59,9 @@ OUT_ROOT="data/wfg_verify"
 LINT_ONLY=0
 SCAFFOLD=0
 KEEP=0
-WITH_ENGINE=0
+WITH_ENGINE=1          # 默认就做引擎级对拍（L3）；--no-engine 关，--lint-only 自动关
+ENGINE_EXPLICIT=0      # 显式 --with-engine：环境不具备时硬失败而不是响亮降级
+ENGINE_DEGRADED=0      # 默认开着但环境不具备 → 响亮降级（汇总里也要如实说）
 
 usage() { awk 'NR>1 && /^# 语料来源/ {exit} NR>1 {sub(/^# ?/, ""); print}' "${BASH_SOURCE[0]}"; exit "${1:-0}"; }
 
@@ -65,7 +71,8 @@ while [ $# -gt 0 ]; do
         --lint-only) LINT_ONLY=1 ;;
         --scaffold) SCAFFOLD=1 ;;
         --keep) KEEP=1 ;;
-        --with-engine) WITH_ENGINE=1 ;;
+        --with-engine) WITH_ENGINE=1; ENGINE_EXPLICIT=1 ;;
+        --no-engine) WITH_ENGINE=0 ;;
         --duration) shift; DURATION="${1:-}" ;;
         --out) shift; OUT_ROOT="${1:-}" ;;
         -*) echo "unknown option: $1" >&2; usage 2 ;;
@@ -75,6 +82,8 @@ while [ $# -gt 0 ]; do
 done
 [ "${#QUERIES[@]}" -gt 0 ] || usage 2
 [ -n "$OUT_ROOT" ] || { echo "--out 不能为空" >&2; exit 2; }
+# 静态层不跑引擎（没生成数据；引擎级对拍只对含 inject 的语料有意义）
+[ "$LINT_ONLY" = "1" ] && WITH_ENGINE=0
 
 # ---- wfgen 解析（同 bench.sh 口径：优先本地 warp-fusion release 产物，否则 PATH）----
 WFGEN="${WFGEN:-}"
@@ -123,20 +132,36 @@ OUT_TMP="$(mktemp -d "${TMPDIR:-/tmp}/wfg_verify.XXXXXX")"
 #     --> wfgen verify 对拍。
 # 与仓库自己的 gen↔engine 对拍同形态（crates/wfgen/tests/common、e2e_datagen）。
 ENGINE_TIMEOUT="${ENGINE_TIMEOUT:-300}"   # 单查询 batch 上限（秒）；正常情况下 batch 自己退出
+
+# 默认开启但环境不具备 → **响亮降级**（不是静默跳过）；显式 --with-engine 则硬失败。
+skip_engine() {
+    if [ "$ENGINE_EXPLICIT" = "1" ]; then
+        echo "--with-engine（显式）：$1" >&2
+        exit 2
+    fi
+    echo "⚠ $1" >&2
+    echo "  → **本轮 L3 引擎级对拍未跑**（默认开启）；修好环境，或显式 --no-engine / --lint-only 只跑期望级。" >&2
+    WITH_ENGINE=0
+    ENGINE_DEGRADED=1
+}
+
 if [ "$WITH_ENGINE" = "1" ]; then
     WFUSION="${WFUSION:-}"
     if [ -z "$WFUSION" ] && [ -x "../../../warp-fusion/target/release/wfusion" ]; then
         WFUSION="../../../warp-fusion/target/release/wfusion"
     fi
     [ -n "$WFUSION" ] || WFUSION="$(command -v wfusion 2>/dev/null || true)"
-    [ -n "$WFUSION" ] || {
-        echo "--with-engine 需要 wfusion：设置 WFUSION=/path/to/wfusion，或 (cd ../../../warp-fusion && cargo build --release -p wfusion)" >&2
-        exit 2
-    }
-    [ -x "$WFUSION" ] || { echo "WFUSION 不可执行：$WFUSION" >&2; exit 2; }
-    [ "$HAVE_PY" = "1" ] || { echo "--with-engine 需要 python3（解析对拍报告）" >&2; exit 2; }
-    [ -d topology/sinks_file ] || { echo "缺少 topology/sinks_file（batch 的 sink 配置）" >&2; exit 2; }
-    [ -f models/schemas/windows.toml ] || { echo "缺少 models/schemas/windows.toml" >&2; exit 2; }
+    if [ -z "$WFUSION" ]; then
+        skip_engine "找不到 wfusion：设置 WFUSION=/path/to/wfusion，或 (cd ../../../warp-fusion && cargo build --release -p wfusion)"
+    elif [ ! -x "$WFUSION" ]; then
+        skip_engine "WFUSION 不可执行：$WFUSION"
+    elif [ "$HAVE_PY" != "1" ]; then
+        skip_engine "找不到 python3（解析对拍报告）"
+    elif [ ! -d topology/sinks_file ]; then
+        skip_engine "缺少 topology/sinks_file（batch 的 sink 配置）"
+    elif [ ! -f models/schemas/windows.toml ]; then
+        skip_engine "缺少 models/schemas/windows.toml"
+    fi
 fi
 
 # 生成的临时 smoke 场景：异常中断也要清理（dotfile 被 .gitignore 忽略 → 残留不会在 git status 里暴露）
@@ -384,7 +409,7 @@ row Q KIND LINT GEN OUT NOTE
 printf '%s\n' '---------------------------------------------------------------------------------------------------------'
 echo '  GEN 档 NOTE = 注入实体数/期望事件数/实生成事件数；FAIL 档 NOTE = lint/gen 报错。'
 if [ "$WITH_ENGINE" = "1" ]; then
-    echo '  --with-engine：额外的引擎级对拍（gen → dump-frames → wfusion batch → wfgen verify）。'
+    echo '  L3（默认开）：引擎级对拍（gen → dump-frames → wfusion batch → wfgen verify）——--no-engine 关。'
     echo '    ⚠ gen 的期望由 inject 驱动：场景无注入用例时 Expected=0，无可比对 → 记 N/A（不是通过）。'
 fi
 
@@ -607,4 +632,7 @@ if [ "$N_KNOWN" -gt 0 ]; then
 fi
 if [ "$N_UTEST" -gt 0 ]; then
     echo "   注：规则内联用例（\`test\` 块，真引擎 match-engine）已跑 ${N_UTEST} 个规则文件；断言失败即判失败。"
+fi
+if [ "$ENGINE_DEGRADED" = "1" ]; then
+    echo "   注：L3 引擎级对拍**本轮未跑**（环境不具备，见上方警告）——结论只到期望级。" >&2
 fi
