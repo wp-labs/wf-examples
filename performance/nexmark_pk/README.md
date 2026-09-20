@@ -260,7 +260,7 @@ q7/q11/q14 的 `detail`、q13a 的 `mod_key`、q21/q22 的解包结果。
 
 - q4（双规则链 q4a→`auction_finals`→q4b）的期望里有一条 **q4b 的 1d 桶收口告警**
   （从 relay 进去的中间窗行算出），而**引擎一条都没出** → `missing`。
-  待查方向：引擎是否把 relay 的中间窗行喂给了绑定该窗的 stats task（oracle 会喂），
+  待查方向：引擎是否把 relay 的中间窗行喂给了绑定该窗的 stats task（期望侧会喂），
   以及 shutdown flush 对**由 relay 供数**的 1d 桶是否收口。
   （q15 这类由**源流**供数的 stats 桶在 shutdown flush 下确实会收口——已实测 PASS。）
 
@@ -272,8 +272,8 @@ q7/q11/q14 的 `detail`、q13a 的 `mod_key`、q21/q22 的解包结果。
 - 而期望侧原有两个**作用域错误**（都在 `crates/wfgen/src/oracle/mod.rs`）：
   ① 「中间窗」集合按 `injected_rules` 过滤 ⇒ 只给 q4a 写用例时，`auction_finals` 被当成
   **最终告警**写进期望 → 永远 `missing`（q4 的旧 known-diff 根源）；
-  ② oracle 只评估**被注入的规则** ⇒ 链式查询里下游规则（q13b）的 sink 可见告警变成
-  `unexpected`（实测：引擎 12001 条、oracle 0 条）。
+  ② 期望侧只评估**被注入的规则** ⇒ 链式查询里下游规则（q13b）的 sink 可见告警变成
+  `unexpected`（实测：引擎 12001 条、期望侧 0 条）。
   现两者均与引擎对齐（都在**全部已加载规则**上算），且 `wfgen verify` 剔除带
   `intermediate: true` 的期望行 → **q13 已有真语料且 12001/12001 精确配对**。
 - **`--duration` 会覆盖语料自带的 `#[duration]`**，而窗口切分敏感的语料靠这个值成立：`q5` 的
@@ -318,9 +318,12 @@ gen 产物 JSONL --wfgen dump-frames--> events.arrow_framed
 - 需要 `wfusion` / `python3`（起 L3 时）；不需要 `nc`，也不需要 daemon。缺 `wfusion`
   时**响亮降级**（默认开着但跑不了：警告 + 汇总里也如实说），只有显式 `--with-engine` 才硬失败。
   报告落 `<out>/<q>/engine_verify.json`，引擎日志落 `<out>/<q>/engine_batch.log`（单查询 batch 上限 `ENGINE_TIMEOUT`s，默认 300）。
-- **已知差异**（`KNOWN_DIFF`，现仅 `q4`）：已定位且已记录的「期望 ↔ 引擎」模型差异，报
-  `FAIL(已知差异，不计失败)` 并计入汇总；未登记的查询 engine FAIL 一律判失败——不允许把差异
-  悄悄变成通过。差异被修好后脚本会提示把它从表里删掉。
+- 输出形态：**一行一查询**（`Q KIND LINT GEN UNIT L3 NOTE`），问题细节不在表格中间打断、
+  集中到表末的「需关注」块；L3 列取值 `OK` 精确配对 / `KNOWN` 已知差异 / `N-A` 无可比对 /
+  `FAIL` 失败 / `-` 未跑。
+- **已知差异**（`KNOWN_DIFF`，现仅 `q4`）：已定位且已记录的「期望 ↔ 引擎」模型差异，L3 列记
+  `KNOWN`（不计失败）并计入汇总，同时在表末「需关注」块里写明原因；未登记的查询 L3 `FAIL`
+  一律判失败——不允许把差异悄悄变成通过。差异被修好后脚本会提示把它从表里删掉。
 
 ## 3. 性能诊断：diag.sh
 

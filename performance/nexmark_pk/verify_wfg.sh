@@ -106,9 +106,6 @@ esac
 SCHEMA="models/schemas/nexmark.wfs"
 [ -f "$SCHEMA" ] || { echo "缺少 $SCHEMA" >&2; exit 2; }
 
-SCHEMA="models/schemas/nexmark.wfs"
-[ -f "$SCHEMA" ] || { echo "缺少 $SCHEMA" >&2; exit 2; }
-
 # ---- wfl 解析（规则内联手写用例 `test` 块；同 wfgen 口径）----
 WFL="${WFL:-}"
 if [ -z "$WFL" ] && [ -x "../../../warp-fusion/target/release/wfl" ]; then
@@ -180,7 +177,7 @@ run_batch_engine() {
         i=$((i + 1)); sleep 0.5
     done
     if kill -0 "$bpid" 2>/dev/null; then
-        echo "    错误: wfusion batch 超时（${ENGINE_TIMEOUT}s）——已终止（见 $log）" >&2
+        echo "wfusion batch 超时（${ENGINE_TIMEOUT}s）——已终止" >> "$log" 2>/dev/null
         kill -9 "$bpid" 2>/dev/null
         wait "$bpid" 2>/dev/null
         return 1
@@ -201,8 +198,9 @@ run_engine_verify() {
     # 1) JSONL → 引擎的 arrow_framed 输入（与 send / bench 同一套帧编码）
     "$WFGEN" dump-frames --scenario "$scenario" --input "$out_dir/$stem.jsonl" \
         --output "$frames" > "$out_dir/engine_dump.log" 2>&1 || {
-        echo "    错误: wfgen dump-frames 失败（见 $out_dir/engine_dump.log）" >&2
-        return 1
+        { echo "wfgen dump-frames 失败"; tail -5 "$out_dir/engine_dump.log"; } \
+            >> "$out_dir/engine_batch.log" 2>/dev/null
+        echo "ERROR"; return 1
     }
 
     # 2) batch 配置：mode=batch + 文件源；sinks 复用 topology/sinks_file
@@ -235,10 +233,10 @@ EOF
 
     # 3) batch 跑完自动退出（超时兜底见 run_batch_engine）
     rm -rf "$abs_out/data"
+    # 失败细节不在这里回显（会被表格打断）：run_batch_engine 已把原因写进日志，
+    # 由调用方的 engine_failure_detail 在末尾「需关注」块统一呈现。
     if ! run_batch_engine "$conf" "$out_dir/engine_batch.log"; then
-        echo "    错误: wfusion batch 未正常结束（见 $out_dir/engine_batch.log）" >&2
-        tail -10 "$out_dir/engine_batch.log" >&2
-        return 1
+        echo "ERROR"; return 1
     fi
     # 未产出 alerts 文件不当成错误：建个空文件让 verify 如实报 missing（可能确实是“一条都没输出”）。
     [ -f "$alerts" ] || { mkdir -p "$(dirname "$alerts")"; : > "$alerts"; }
@@ -267,7 +265,35 @@ elif bad == 0:
     print("PASS")
 else:
     print("FAIL")
+sys.exit(0)
 ' "$out_dir/engine_verify.json" 2>/dev/null
+}
+
+# L3 失败细节（计数 + 每类前 3 条），末尾「需关注」块用。
+# 报告不可解析时退到引擎日志末尾——两种情况都有话说，不留空口。
+engine_failure_detail() {
+    dir="$1"; rep="$dir/engine_verify.json"
+    body=""
+    if [ -f "$rep" ]; then
+        # 注：这里的 python 刻意写成**无嵌套缩进**（编辑工具会归一化行首空白）
+        body="$("$PY" -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+s = d["summary"]
+keys = ("expected_total", "actual_total", "matched", "missing", "unexpected", "field_mismatch")
+pairs = (("missing", "missing_details"), ("unexpected", "unexpected_details"), ("mismatch", "mismatch_details"))
+print("counts: " + " ".join(k + "=" + str(s[k]) for k in keys))
+print("\n".join(k + ": " + a["rule_name"] + " " + a["entity_type"] + "=" + a["entity_id"] + " @" + str(a.get("expected_time") or a.get("time", "")) for k, key in pairs for a in d.get(key, [])[:3]))
+' "$rep" 2>/dev/null || true)"
+    fi
+    if [ -n "$body" ]; then
+        printf '%s\n' "$body" | sed 's/^/      | /'
+    else
+        printf '%s\n' "      | 报告不可解析：${rep}"
+        printf '%s\n' "      | 引擎日志末尾："
+        tail -5 "$dir/engine_batch.log" 2>/dev/null | sed 's/^/      | /'
+    fi
+    printf '%s\n' "      报告：${rep} · 引擎日志：${dir}/engine_batch.log"
 }
 
 cleanup() {
@@ -312,7 +338,7 @@ has_inject_assert() { grep -qE '^[[:space:]]*(hit|near_miss|miss)[[:space:]]*<' 
 # 差异被修好后这里会变成 PASS，脚本会提示把它从表里删掉（自清理）。
 known_diff_reason() {
     case "$1" in
-        q4) printf '%s' "引擎不把 relay 的中间窗行喂给绑定该窗的 stats（oracle 会喂）→ q4b 的 1d 桶收口告警缺失（期望 1 条 q4b，引擎 0 条）" ;;
+        q4) printf '%s' "引擎不把 relay 的中间窗行喂给绑定该窗的 stats（期望侧会喂）→ q4b 的 1d 桶收口告警缺失（期望 1 条 q4b，引擎 0 条）" ;;
         *)  printf '' ;;
     esac
 }
@@ -321,7 +347,7 @@ known_diff_reason() {
 # 有的查询在当前工具链下写不出可注入语料：不是"懒得写"，是硬约束。这些查询的证据
 # 只能走别的路径（如 q13 的 provider join）。
 # 注：stats 家族（q15–q19）曾在这里（可注入步骤数 = 0），2026-09-20 已给 stats
-# 合成 1 个步骤、并开了 oracle 的实体/收口口径 → 它们现在是正常 curated。
+# 合成 1 个步骤、并开了期望侧的实体/收口口径 → 它们现在是正常 curated。
 # 未登记的原因一律按普通 smoke/N-A 处理。
 known_gap_reason() {
     case "$1" in
@@ -355,13 +381,18 @@ expand_queries() {
 # 当成失败等于把红灯当信号（需 E2E 覆盖，见 wp-reactor contract.rs 的 P1 guard）。
 run_rule_inline_tests() {
     q="$1"; rule="$2"
-    grep -qE '^[[:space:]]*test[[:space:]]' "$rule" || return 0
+    grep -qE '^[[:space:]]*test[[:space:]]' "$rule" || { UNIT_CELL="-"; return 0; }
     if [ -z "$WFL" ]; then
-        echo "  [${q}] wfl test: N/A（未找到 wfl 二进制 → 规则内联用例未跑；设 WFL=/path/to/wfl）"
+        UNIT_CELL="-"
+        # 只报一次：每查询都报一遍会把表格淹掉（启动时已有响亮提醒）
+        if [ -z "${WFL_WARNED:-}" ]; then
+            WFL_WARNED=1
+            problem "  ! 规则内联用例（L0' 手写小表）**未跑**：未找到 wfl 二进制（设 WFL=/path/to/wfl）"
+        fi
         return 0
     fi
     if [ "$HAVE_PY" != "1" ]; then
-        echo "  [${q}] wfl test: N/A（未找到 python3 → 无法解析回执）"
+        UNIT_CELL="-"
         return 0
     fi
     json="$OUT_TMP/${q}_wfl_test.json"
@@ -402,28 +433,47 @@ sys.exit(0)
 PY
 )"
     rc=$?
-    printf '%s\n' "$out" | sed "1s|^|  [${q}] wfl test: |"
-    [ "$rc" -eq 0 ] || FAILED=1
+    UNIT_CELL="OK"
+    if [ "$rc" -ne 0 ]; then
+        UNIT_CELL="FAIL"
+        FAILED=1
+        # out 的第 1 行是 `FAIL（1/2 通过…）`，第 2–4 行是 `        | 用例: 失败原因`
+        summary="$(printf '%s' "$out" | sed -n '1p' | sed 's/^FAIL（//; s/）$//')"
+        rows="$(printf '%s' "$out" | sed -n '2,4p' | sed 's/^[[:space:]]*| */      | /')"
+        problem "  ✖ ${q}  规则内联用例失败：${summary:-回执解析失败}
+${rows}
+      报告：${rule}（\`wfl test\` 可复跑）"
+    fi
     N_UTEST=$((N_UTEST + 1))
 }
 
-# 表格：Q KIND LINT GEN OUT NOTE
-# NOTE 放**最后一列且不补位**：它可能含多字节字符/变长文本，printf 按字节补位会串列。
-row() { printf '%-5s %-8s %-6s %-5s %-22s %s\n' "$1" "$2" "$3" "$4" "$5" "$6"; }
+# 表格：Q KIND LINT GEN UNIT L3 NOTE
+# 补位列**全部 ASCII**（printf 按字节补位，CJK 会串列）；中文只允许出现在最后一列（不补位）。
+# 有问题的那几个查询，细节集中到末尾的「需关注」块，让表格保持连续可读。
+row() { printf '%-5s %-8s %-6s %-5s %-5s %-6s %s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7"; }
+PROBLEMS=""
+problem() { PROBLEMS="${PROBLEMS}$1
+"; }
 
 EXPANDED="$(expand_queries)"
 [ -n "$EXPANDED" ] || {
     echo "没有匹配到任何查询：${QUERIES[*]}（models/queries/q*.wfl 是否存在？）" >&2
     exit 2
 }
+NQ="$(printf '%s\n' $EXPANDED | wc -l | tr -d ' ')"
 
-row Q KIND LINT GEN OUT NOTE
-printf '%s\n' '---------------------------------------------------------------------------------------------------------'
-echo '  GEN 档 NOTE = 注入实体数/期望事件数/实生成事件数；FAIL 档 NOTE = lint/gen 报错。'
+echo "== verify_wfg · ${NQ} 查询 · L0 静态 · L0' 规则内联用例 · L1/L2 注入断言+期望 · L3 引擎级对拍 =="
 if [ "$WITH_ENGINE" = "1" ]; then
-    echo '  L3（默认开）：引擎级对拍（gen → dump-frames → wfusion batch → wfgen verify）——--no-engine 关。'
-    echo '    ⚠ gen 的期望由 inject 驱动：场景无注入用例时 Expected=0，无可比对 → 记 N/A（不是通过）。'
+    echo "   L3（默认开，--no-engine 关）：gen → dump-frames → wfusion batch（跑完自退）→ wfgen verify"
+elif [ "$ENGINE_DEGRADED" = "1" ]; then
+    echo "   L3 本轮未跑（环境不具备 → 已响亮降级，见上方告警）：结论只到期望级"
+else
+    echo "   L3 本轮未跑（--no-engine 或 --lint-only）：结论只到期望级"
 fi
+echo "   L3 判定：OK 精确配对 · KNOWN 已知差异(不计失败) · N-A 无可比对 · FAIL 失败 · '-' 未跑"
+echo
+row Q KIND LINT GEN UNIT L3 NOTE
+printf '%s\n' '-------------------------------------------------------------------------------------------------'
 
 FAILED=0
 SCAFFOLDED=0
@@ -435,21 +485,23 @@ N_KNOWN=0
 N_UTEST=0
 N_GAP=0
 N_INERT=0
+
 for q in $EXPANDED; do
+    UNIT_CELL="-"          # 每个查询重置：否则会串上一个查询的 L0' 结论
     rule="models/queries/$q.wfl"
     scenario="scenarios/${q}_verify.wfg"
     kind="curated"
     tmp_scenario=""
 
     if [ ! -f "$rule" ]; then
-        row "$q" - - - - "缺少规则 ${rule}"
+        row "$q" - - - - - "缺少规则 ${rule}"
         FAILED=1
         continue
     fi
 
     streams="$(query_source_streams "$rule")"
     if [ -z "$streams" ]; then
-        row "$q" - - - - "无法从规则推出源流（events 块里没有 schema 的 stream_tag 窗口）"
+        row "$q" - - - - - "无法从规则推出源流（events 块里没有 schema 的 stream_tag 窗口）"
         FAILED=1
         continue
     fi
@@ -499,7 +551,7 @@ for q in $EXPANDED; do
             echo "}"
         } > "$scenario"
         if [ "$kind" = "scaffold" ]; then
-            row "$q" "$kind" - - - "已写出 ${scenario}（补完 TODO 后重跑）"
+            row "$q" "$kind" - - - - "已写出 ${scenario}（补完 TODO 后重跑）"
             SCAFFOLDED=1
             continue
         fi
@@ -512,11 +564,12 @@ for q in $EXPANDED; do
     # 并把原因写在语料文件头——不是"跑了但没验证"的放羊，而是工具限制。
     if [ "$kind" = "curated" ] && ! has_inject_assert "$scenario"; then
         if [ -n "$(known_gap_reason "$q")" ]; then
-            row "$q" "$kind" GAP - "$scenario" "规则不可注入（$(known_gap_reason "$q")）→ 语料只能背景-only"
+            row "$q" "$kind" - - - - "GAP：规则不可注入（$(known_gap_reason "$q")）→ 语料只能背景-only；证据到不了 L3"
             N_GAP=$((N_GAP + 1))
         else
-            row "$q" "$kind" NOINJ - "$scenario" "curated 语料无注入用例 → 等于未验证；补 inject 或删掉该文件回落 smoke"
+            row "$q" "$kind" - - - - "NOINJ：curated 语料无注入用例 → 等于未验证；补 inject 或删掉该文件回落 smoke"
             FAILED=1
+            problem "  ✖ ${q}  curated 语料无注入用例（NOINJ）—— 跑得通但什么都没验证；补 inject，或删掉 ${scenario} 回落 smoke"
         fi
         continue
     fi
@@ -538,8 +591,9 @@ for q in $EXPANDED; do
     # 不需要生成数据，所以在 --lint-only 下也跑（静态层）。
 
     if [ "$LINT_ONLY" = "1" ] || [ "$lint_cell" = "FAIL" ]; then
-        row "$q" "$kind" "$lint_cell" - - "$lint_msg"
+        [ "$lint_cell" = "FAIL" ] && problem "  ✖ ${q}  L0 静态校验未通过：${lint_msg}"
         run_rule_inline_tests "$q" "$rule"
+        row "$q" "$kind" "$lint_cell" - "$UNIT_CELL" - "$lint_msg"
     else
         out_dir="${OUT_ROOT}/${q}"
         mkdir -p "$OUT_ROOT"      # 仅真正落数据时才建（--lint-only 不留空目录）
@@ -560,85 +614,81 @@ for q in $EXPANDED; do
         # `entity(...)` 的字段 → 计入 unasserted）。此时 INJ1/INJ2 **空转**：语料里有 hit 用例，
         # 但没任何东西被断言——必须说出来，不能与真 smoke 混为一谈。
         skip_warn="$(printf '%s' "$gen_out" | sed -n 's/^Warning: *\(.*\)$/\1/p' | head -1)"
+        inert_note=""
         note="${inj:-gen 失败}"
         if [ -n "$events" ]; then
             if [ -n "$inj" ]; then
                 note="entities ${inj%% *} · expected=${expected} · events=${events}"
             elif [ -n "$skip_warn" ]; then
-                note="注入断言未生效（${skip_warn}）· expected=${expected} · events=${events}"
-                INERT_NOTE="$skip_warn"
+                note="注入断言空转 · expected=${expected} · events=${events}"
+                inert_note="$skip_warn"
             else
                 note="无注入断言（smoke）· events=${events}"
             fi
             [ -n "$DURATION" ] && note="$note · dur=$DURATION"
         fi
-        row "$q" "$kind" "$lint_cell" "$gen_cell" "$out_dir" "$note"
-        if [ -n "${INERT_NOTE:-}" ]; then
-            echo "  [${q}] inject: N/A（注入断言空转：${INERT_NOTE}）——实体是常量 → INJ1/INJ2 断言不到它；本查询的证据只到 L3（两侧独立算出同一行）"
-            N_INERT=$((N_INERT + 1))
-            INERT_NOTE=""
-        fi
-        run_rule_inline_tests "$q" "$rule"
-        [ "$gen_cell" = "FAIL" ] && printf '%s\n' "$(printf '%s' "$gen_out" | sed 's/^/        | /')"
-        # --duration 覆盖语料的 #[duration] 会改窗口切分：top-N 类语料的 near_miss（差 1 票）
-        # 只在原切分下成立——实话实说，避免把「覆盖参数」当成「语料坏了」。
-        if [ "$gen_cell" = "FAIL" ] && [ -n "$DURATION" ]; then
-            declared="$(scenario_declared_duration "$scenario")"
-            if [ -n "$declared" ] && [ "$declared" != "$DURATION" ]; then
-                echo "        | 注：--duration ${DURATION} 覆盖了语料的 #[duration=${declared}]；窗口切分敏感的语料（如 q5 的 top-N near_miss）可能因此不再成立" >&2
-            fi
-        fi
 
-        # ---- 引擎级对拍（--with-engine）：gen 产物 → wfusion batch → wfgen verify ----
+        run_rule_inline_tests "$q" "$rule"
+
+        # ---- L3 引擎级对拍：gen 产物 → dump-frames → wfusion batch → wfgen verify ----
         # ⚠ gen 的期望由 `inject` 驱动：场景里没有注入用例时 `Expected: 0`，
         #   期望文件是空的 → 无可比对。smoke 场景天然如此，不去白跑引擎。
+        L3_CELL="-"
         if [ "$WITH_ENGINE" = "1" ] && [ "$gen_cell" = "OK" ]; then
             if ! has_inject_assert "$scenario"; then
-                gap="$(known_gap_reason "$q")"
-                if [ -n "$gap" ]; then
-                    echo "  [$q] engine: N/A（已知缺口：${gap}）"
-                else
-                    echo "  [$q] engine: N/A（场景无 inject 用例 → gen 的期望为空，无可比对；要引擎级证据请写 curated 语料）"
-                fi
+                L3_CELL="N-A"        # 无注入用例 → 期望为空，无可比对（不是通过）
                 N_ENGINE_NA=$((N_ENGINE_NA + 1))
             else
-                echo "  [$q] engine: dump-frames → wfusion batch（文件源，跑完自退）→ wfgen verify"
                 verdict="$(run_engine_verify "$q" "$scenario" "$out_dir")"
                 known="$(known_diff_reason "$q")"
                 case "$verdict" in
                     PASS)
-                        echo "  [$q] engine: PASS（报告 $out_dir/engine_verify.json）"
+                        L3_CELL="OK"
                         N_ENGINE=$((N_ENGINE + 1))
-                        [ -n "$known" ] && echo "    注：$q 在已知差异表里却 PASS 了 —— 差异可能已修复，请从 KNOWN_DIFF 与 README 删掉。"
+                        [ -n "$known" ] && problem "  ! ${q}  L3 通过了，但它还挂在「已知差异」表里 —— 差异可能已修好，请从 known_diff_reason 与 README 语料表删掉"
                         ;;
                     NA)
-                        echo "  [$q] engine: N/A（期望与引擎实际都是 0 条，空对空不算证据）"
+                        L3_CELL="N-A"
                         N_ENGINE_NA=$((N_ENGINE_NA + 1))
+                        problem "  ! ${q}  L3 期望与引擎实际都是 0 条（空对空不算证据）：语料里的 inject 没有真的产出期望"
+                        ;;
+                    ERROR)
+                        L3_CELL="FAIL"; FAILED=1
+                        problem "  ✖ ${q}  L3 未跑成（dump-frames / batch 出错）
+$(engine_failure_detail "$out_dir")"
                         ;;
                     *)
-                        "$PY" -c '
-import json, sys
-d = json.load(open(sys.argv[1]))
-s = d["summary"]
-print("        | " + " ".join(f"{k}={s[k]}" for k in
-      ("expected_total", "actual_total", "matched", "missing", "unexpected", "field_mismatch")))
-for kind, key in (("missing", "missing_details"), ("unexpected", "unexpected_details"),
-                  ("mismatch", "mismatch_details")):
-    for a in d.get(key, [])[:3]:
-        t = a.get("expected_time") or a.get("time", "")
-        name, etype, eid = a["rule_name"], a["entity_type"], a["entity_id"]
-        print(f"        | {kind}: {name} {etype}={eid} @{t}")
-' "$out_dir/engine_verify.json" >&2 || true
                         if [ -n "$known" ]; then
-                            echo "  [$q] engine: FAIL(已知差异，不计失败) —— ${known}（README 语料表）" >&2
+                            L3_CELL="KNOWN"
                             N_KNOWN=$((N_KNOWN + 1))
+                            problem "  ! ${q}  L3 与引擎不一致（**已登记的已知差异**，不计失败）：${known}"
                         else
-                            echo "  [$q] engine: FAIL（报告 $out_dir/engine_verify.json，引擎日志 $out_dir/engine_batch.log）" >&2
-                            FAILED=1
+                            L3_CELL="FAIL"; FAILED=1
+                            problem "  ✖ ${q}  L3 对拍未通过（期望 ↔ 引擎）
+$(engine_failure_detail "$out_dir")"
                         fi
                         ;;
                 esac
             fi
+        fi
+
+        row "$q" "$kind" "$lint_cell" "$gen_cell" "$UNIT_CELL" "$L3_CELL" "$note"
+
+        if [ "$gen_cell" = "FAIL" ]; then
+            problem "  ✖ ${q}  gen 失败（注入断言 INJ1/INJ2 未通过，或生成/校验报错）
+$(printf '%s' "$gen_out" | sed 's/^/      | /')"
+            # --duration 覆盖语料的 #[duration] 会改窗口切分：top-N 类语料的 near_miss（差 1 票）
+            # 只在原切分下成立——实话实说，避免把「覆盖参数」当成「语料坏了」。
+            if [ -n "$DURATION" ]; then
+                declared="$(scenario_declared_duration "$scenario")"
+                if [ -n "$declared" ] && [ "$declared" != "$DURATION" ]; then
+                    problem "      | 注：--duration ${DURATION} 覆盖了语料的 #[duration=${declared}]；窗口切分敏感的语料（如 q5 的 top-N near_miss）可能因此不再成立"
+                fi
+            fi
+        fi
+        if [ -n "$inert_note" ]; then
+            N_INERT=$((N_INERT + 1))
+            problem "  ! ${q}  注入断言空转（${inert_note}）—— 实体是常量，INJ1/INJ2 断言不到它；本查询的证据只到 L3"
         fi
     fi
 
@@ -648,6 +698,13 @@ for kind, key in (("missing", "missing_details"), ("unexpected", "unexpected_det
 done
 
 echo
+if [ -n "$PROBLEMS" ]; then
+    # 只数标题行（`  ✖` / `  !`）：细节行以 6 空格开头，不计入
+    n_prob="$(printf '%s' "$PROBLEMS" | grep -c '^  [^ ]' || true)"
+    echo "-- 需关注（${n_prob} 条）--"
+    printf '%s' "$PROBLEMS"
+    echo
+fi
 if [ "$SCAFFOLDED" = "1" ]; then
     echo "已生成容器（scaffold）：补完 TODO 后重跑本脚本即可按 curated 口径执行。"
 fi
@@ -659,25 +716,17 @@ if [ $((N_CURATED + N_SMOKE)) -eq 0 ]; then
     echo "== 结果：未执行验证（仅写出骨架）=="
     exit 0
 fi
+stats="curated ${N_CURATED} · smoke ${N_SMOKE}"
+[ "$N_UTEST" -gt 0 ] && stats="${stats} · L0' 内联用例 ${N_UTEST} 个规则"
+[ "$N_GAP" -gt 0 ] && stats="${stats} · 不可注入 GAP ${N_GAP}"
+[ "$N_INERT" -gt 0 ] && stats="${stats} · 注入断言空转 ${N_INERT}"
 if [ "$WITH_ENGINE" = "1" ]; then
-    echo "== 结果：全部通过 ==（curated ${N_CURATED} · smoke ${N_SMOKE} · engine PASS ${N_ENGINE} / 已知差异 ${N_KNOWN} / N/A ${N_ENGINE_NA}）"
+    echo "== 结果：全部通过 ==（${stats} · L3 OK ${N_ENGINE} / 已知差异 ${N_KNOWN} / N-A ${N_ENGINE_NA}）"
 else
-    echo "== 结果：全部通过 ==（curated ${N_CURATED} · smoke ${N_SMOKE}）"
+    echo "== 结果：全部通过 ==（${stats}）"
 fi
 if [ "$N_SMOKE" -gt 0 ]; then
     echo "   注：smoke 档只证明规则/schema 未漂移，**不含语义断言**。"
-fi
-if [ "$N_KNOWN" -gt 0 ]; then
-    echo "   注：已知差异 ${N_KNOWN} 条（已定位 + 已记录，不计失败，见脚本 KNOWN_DIFF 与 README 语料表）。"
-fi
-if [ "$N_GAP" -gt 0 ]; then
-    echo "   注：已知缺口 ${N_GAP} 条（规则不可注入 → 语料只能背景-only，不计失败，见脚本 known_gap_reason 与 README）。"
-fi
-if [ "$N_INERT" -gt 0 ]; then
-    echo "   注：${N_INERT} 条语料的**注入断言空转**（实体是常量 → 生成器计入 unasserted）：它们的证据只到 L3，不包含逐实体断言。"
-fi
-if [ "$N_UTEST" -gt 0 ]; then
-    echo "   注：规则内联用例（\`test\` 块，真引擎 match-engine）已跑 ${N_UTEST} 个规则文件；断言失败即判失败。"
 fi
 if [ "$ENGINE_DEGRADED" = "1" ]; then
     echo "   注：L3 引擎级对拍**本轮未跑**（环境不具备，见上方警告）——结论只到期望级。" >&2
