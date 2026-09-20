@@ -1,0 +1,71 @@
+// q8（Monitor New Users）—— WFL 规则验证语料
+//
+// 规则：models/queries/q8.wfl · `q8_monitor_new_user`
+//   权威 SQL：person TUMBLE(10s) ⋈ auction TUMBLE(10s)（ON P.id = A.seller AND 同窗口）
+//            —— 「10s 窗口内注册**且**创建了拍卖的人」。
+//   WFL：`on each p -> score(10.0)`（person 驱动，每事件挂起、不即时输出）
+//        + deferred `join auction_events within [p.dateTime, <bucket_end(p.dateTime, 10s)]`
+//          `on p.id == auction_events.seller` `emit at bucket_end(p.dateTime, 10s)`，
+//        entity = `p.id`。
+//   join 形态 = **deferred**（inner + `within` + `emit at`）——`on each` 驱动是引擎支持的那一种
+//   （设计 §9.4：deferred 只支持 on-each 驱动；`match` + deferred 会在引擎编译期报错）。
+//
+// 判定量 = **存在性**（该 person 的 10s 桶内有没有 seller == p.id 的 auction）：二值，没有
+// 「差一点」的中间量 —— 与 q4a 同理，所以本语料**只有 hit 与 miss，不写 near_miss**
+// （near_miss 与 miss 在「无阈值」形态下同义，见场景文档「`on each` 上两者同义」）。
+// 而且右行（auction）的时间由**规则形态**决定（deferred → 与左行**同刻**），
+// 语料无法把它挪到 `within` 区间之外去凑一个临界样本。
+//
+// 三类写法要点：
+//   1) 实体字段：`on each` 规则没有 match 键，生成器把 `entity(...)` 的单字段 `id` 当键写
+//      （本文件用推断值 `hit<1>`，等价于 `hit<id: 1>`）→ `use(id=…)` 会报 VN12。
+//   2) join 块 `as seller` 的 `seller` 必须等于规则 `on p.id == auction_events.seller` 的
+//      **右侧字段**（VN30 据此唯一匹配到该 join 子句）；**连接键（左侧 `p.id`）由生成器自动写入**
+//      （右行 `seller` = 左实体键值），花括号里只写目标窗字段。
+//   3) 背景**只生成 person_events**：一旦背景里出现 auction_events，随机 auction 的 `seller`
+//      可能与某条注入 person 的 id 撞上 → 给 miss 实体凭空配出一个 auction（INJ2 误报）。
+//      只让注入的 join 块产生 auction 行，负样本才是确定的。
+//
+// 时间口径（实测值，不是猜的）：
+//   · `on each` 规则编译出的 match plan 是占位形态（sliding 1s）→ 注入簇起点 = `(duration − 1s) / 2`
+//     = **29.5s**（duration=1m）；
+//   · person 的 `dateTime` = 事件时间（29.5s）→ `emit at bucket_end(dateTime, 10s)`
+//     = `floor(dateTime/10s)*10s + 10s` = **30.0s**（桶末；`<…]` 的上界是**开**的）；
+//   · 水位（= 最后一条驱动 person 事件时间）推到 30.0s 后到期评估：区间内存在
+//     seller == p.id 的 auction → 输出（origin `deferred`，fired_at = 到期时刻 = 30.0s）。
+//   背景 person 事件持续到场景末尾（≈60s），保证上述水位推进真实发生（不是靠收尾 flush 凑出来）。
+//   看数据核对：注入 person 行 `{"_window":"person_events",…,"id":0,"name":"n"}` @29.500s，
+//   紧跟着注入 auction 行 `{"id":0,"seller":0}` @29.500s；期望告警 emit_time = 30.000s。
+//
+// 用法：
+//   ./verify_wfg.sh q8                 # 批量入口（L3 引擎级对拍默认开）
+//   wfgen lint scenarios/q8_verify.wfg # L0 静态校验（VN*）
+//   wfgen gen --scenario scenarios/q8_verify.wfg --out data/q8_verify
+//       → L1 注入期硬断言（INJ1：hit 必报；INJ2：miss 必不报）+ L2 期望文件
+
+use "../models/schemas/nexmark.wfs"
+use "../models/queries/q8.wfl"
+
+#[duration=1m]
+scenario q8_verify<seed=1> {
+  background {
+    // 只出 person（驱动流）；auction 行只由注入的 join 块产生 → join 结果完全确定
+    stream person_events gen 200/s
+  }
+
+  inject {
+    // 命中：person 事件 + 同刻一条 seller == p.id 的 auction（deferred 右行与左行同刻，
+    // 正好落在 `within` 闭/开区间的下界上）→ 桶末到期评估时存在 → 报警。
+    hit<1> for q8_monitor_new_user person_events {
+      use(name="n") x 1
+      join auction_events as seller {
+        use({}) x 1
+      }
+    }
+
+    // 负样本：只注入 person、**不补发 auction** → 桶末到期时区间内无右行 → 无输出。
+    miss<1> for q8_monitor_new_user person_events {
+      use(name="m") x 1
+    }
+  }
+}

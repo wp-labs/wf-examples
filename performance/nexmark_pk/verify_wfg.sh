@@ -317,6 +317,18 @@ known_diff_reason() {
     esac
 }
 
+# ---- 已知缺口（**不可验证**的原因，与 KNOWN_DIFF 区分）----
+# 有的查询在当前工具链下写不出可注入语料：不是"懒得写"，是硬约束。这些查询的
+# 期望级/引擎级证据只能走别的路径（stats 家族 → `wfgen verify-nexmark` / verify_daemon.sh）。
+# 未登记的原因一律按普通 smoke/N-A 处理。
+known_gap_reason() {
+    case "$1" in
+        q13) printf '%s' "q13a 的中间窗 relay 不落 sink（同 q4 ①）+ q13b 需 provider(side_input) 不可注入" ;;
+        q15|q16|q17|q18|q19) printf '%s' "stats 规则不可注入（可注入步骤数 = 0）" ;;
+        *) printf '' ;;
+    esac
+}
+
 # 展开查询列表
 expand_queries() {
     local out=() q
@@ -421,6 +433,7 @@ N_ENGINE=0
 N_ENGINE_NA=0
 N_KNOWN=0
 N_UTEST=0
+N_GAP=0
 for q in $EXPANDED; do
     rule="models/queries/$q.wfl"
     scenario="scenarios/${q}_verify.wfg"
@@ -492,9 +505,18 @@ for q in $EXPANDED; do
     fi
 
     # ---- curated 必须是真语料：没有 hit/near_miss/miss 就等于"没验证" ----
+    # 例外：**规则本身不可注入**时（stats 规则的可注入步骤数 = 0，见 wfgen
+    # `validate/syntax.rs::injectable_step_count`：VN21 要求 ≥1 组、VN24 要求 ≤0 → 交集为空），
+    # curated 只能写成 background-only。这不是"跑了但没验证"的放羊，而是工具限制；
+    # 记 GAP（可见、计入汇总、不判失败），并把原因写在语料文件头。
     if [ "$kind" = "curated" ] && ! has_inject_assert "$scenario"; then
-        row "$q" "$kind" NOINJ - "$scenario" "curated 语料无注入用例 → 等于未验证；补 inject 或删掉该文件回落 smoke"
-        FAILED=1
+        if grep -qE '^[[:space:]]*stats<' "$rule"; then
+            row "$q" "$kind" GAP - "$scenario" "规则不可注入（stats 可注入步骤数 = 0）→ 语料只能背景-only；期望级证据走 verify-nexmark（见 README）"
+            N_GAP=$((N_GAP + 1))
+        else
+            row "$q" "$kind" NOINJ - "$scenario" "curated 语料无注入用例 → 等于未验证；补 inject 或删掉该文件回落 smoke"
+            FAILED=1
+        fi
         continue
     fi
 
@@ -559,7 +581,12 @@ for q in $EXPANDED; do
         #   期望文件是空的 → 无可比对。smoke 场景天然如此，不去白跑引擎。
         if [ "$WITH_ENGINE" = "1" ] && [ "$gen_cell" = "OK" ]; then
             if ! has_inject_assert "$scenario"; then
-                echo "  [$q] engine: N/A（场景无 inject 用例 → gen 的期望为空，无可比对；要引擎级证据请写 curated 语料）"
+                gap="$(known_gap_reason "$q")"
+                if [ -n "$gap" ]; then
+                    echo "  [$q] engine: N/A（已知缺口：${gap}）"
+                else
+                    echo "  [$q] engine: N/A（场景无 inject 用例 → gen 的期望为空，无可比对；要引擎级证据请写 curated 语料）"
+                fi
                 N_ENGINE_NA=$((N_ENGINE_NA + 1))
             else
                 echo "  [$q] engine: dump-frames → wfusion batch（文件源，跑完自退）→ wfgen verify"
@@ -629,6 +656,9 @@ if [ "$N_SMOKE" -gt 0 ]; then
 fi
 if [ "$N_KNOWN" -gt 0 ]; then
     echo "   注：已知差异 ${N_KNOWN} 条（已定位 + 已记录，不计失败，见脚本 KNOWN_DIFF 与 README 语料表）。"
+fi
+if [ "$N_GAP" -gt 0 ]; then
+    echo "   注：已知缺口 ${N_GAP} 条（规则不可注入 → 语料只能背景-only，不计失败，见脚本 known_gap_reason 与 README）。"
 fi
 if [ "$N_UTEST" -gt 0 ]; then
     echo "   注：规则内联用例（\`test\` 块，真引擎 match-engine）已跑 ${N_UTEST} 个规则文件；断言失败即判失败。"

@@ -1,0 +1,72 @@
+// q7（Highest Bid）—— WFL 规则验证语料
+//
+// 规则：models/queries/q7.wfl · `q7_highest_bid`
+//   权威 SQL：TUMBLE(bid, dateTime, 10s) 每窗 MAX(price)，再取价格 == 窗口最高价的 bid。
+//   WFL：`match<auction:10s:fixed>`（每 auction×10s 桶一个实例）
+//        + `on event { b | count >= 1 }`（标记 event_ok）
+//        + `and close { m: b.price | max >= 1 }`（桶收口时按 max(price) 判定 close_ok）
+//        + `conv { sort(-m) | top_ties(1) }`（**收口批内**取 max 最大的实体，并列最高全出），
+//        entity = `b.auction`。
+//
+// 判定量 = **同一 10s 桶收口批内各实体 max(price) 的 top-1（rank 排序，不是阈值）**。
+// 三类用例靠"最高价的名次"构造，且必须落在**同一个桶**里才可比：
+//   hit       = 价格 900000（**最高价**，rank 1）→ top-1 → 报警
+//   near_miss = 价格 899999（**差 1**，rank 2）→ 被 top_ties(1) 丢掉 → 不报警
+//   miss      = 价格 100（陪跑，rank 末位）→ 不报警
+// 三者价格都远高于背景噪声的价格上界（`digit` 随机值 `0..100_000`）——否则背景会挤进 rank 1，
+// 语料的二元结论就跟背景 RNG 挂钩了。
+//
+// 关键写法 ①：`and close` 存在 → `CloseMode::And` → **事件路径不发射**
+//   （`emit_phase`：close_steps 非空且 And 时只置 `event_ok`），发射只发生在桶收口，
+//   因此「报警与否」完全由收口批内的 rank 决定——这正是我们要钉的语义。
+//
+// 关键写法 ②：`spread 2s` + 钉住 `#[duration=18s]`。三个用例的簇要用**同一个 10s 桶**：
+//   · 簇起点 = `(duration − spread) / 2`（单实体取中点）→ 18s / 2s 时 = **8.0s**（hit / near_miss）；
+//   · `miss` 走 non-hit 路径，事件落在 `duration / 2` = **9.0s**（不走 spread）；
+//   · 两者都在桶 `[0, 10)` 内 → 同批收口（桶 0 在首个事件 ≥ 10s 时**自然到期**，两侧 reason 都是
+//     `close:timeout`）。
+//   换 duration 会改这套切分：例如 20s 时 hit/near_miss 落到 9.0s、而 miss 落到 10.0s（跨进
+//   下一个桶），三者的"同桶排序"就不成立了。所以与 q5 同口径：**duration 是钉住的**，
+//   别用 `--duration` 覆盖（脚本会给提示）。
+//   尾部桶 `[10, 20)`（数据只覆盖到 ≈18s）：窗口终点 20s 晚于数据末尾 → 由收尾 flush 收口
+//   （两侧都是 `close:flush`），只装背景实体 —— 它在两侧都存在且由同一份数据算出，
+//   不参与注入断言（这就是 gen 报 `Expected: 2` 的原因：桶 0 的 hit + 尾桶的背景 rank 1）。
+//
+// 关键写法 ③：本语料只钉**二元结论**（报警 / 不报警），不钉 `detail` 的 `max N` 文本与
+//   扇出几何量——那些在 q7.wfl 的内联 `test` 块里钉（`detail == "max 500"` 等）。
+//
+// 用法：
+//   ./verify_wfg.sh q7                 # 批量入口（L3 引擎级对拍默认开）
+//   wfgen lint scenarios/q7_verify.wfg # L0 静态校验（VN*）
+//   wfgen gen --scenario scenarios/q7_verify.wfg --out data/q7_verify
+//       → L1 注入期硬断言（INJ1：hit 必报；INJ2：near_miss/miss 必不报）+ L2 期望文件
+
+use "../models/schemas/nexmark.wfs"
+use "../models/queries/q7.wfl"
+
+#[duration=18s]
+scenario q7_verify<seed=1> {
+  background {
+    // 背景噪声：价格上界 100_000，够不上注入用例的 `rank`；速率只影响噪声规模
+    stream bid_events gen 200/s
+  }
+
+  inject {
+    // 最高价（rank 1）→ 本桶 top-1 → 报警
+    hit<1> for q7_highest_bid bid_events {
+      use(price=900000, channel="G", url="u") x 1
+      spread 2s
+    }
+
+    // 临界负样本：只比最高价少 1（rank 2）→ 被 top_ties(1) 丢掉
+    near_miss<1> for q7_highest_bid bid_events {
+      use(price=899999, channel="G", url="u") x 1
+      spread 2s
+    }
+
+    // 普通负样本：陪跑价（rank 末位）
+    miss<1> for q7_highest_bid bid_events {
+      use(price=100, channel="G", url="u") x 1
+    }
+  }
+}

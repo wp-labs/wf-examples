@@ -1,0 +1,71 @@
+// q9（Winning Bids）—— WFL 规则验证语料
+//
+// 规则：models/queries/q9.wfl · `q9_winning_bid`
+//   权威 SQL：auction A ⋈ bid B ON A.id = B.auction AND B.dateTime BETWEEN
+//             A.dateTime AND A.expires，按 (A.id) 取 row_number() ≤ 1
+//             （ORDER BY B.price DESC, B.dateTime ASC）——每 auction 生命周期内
+//             恰输出一条胜出 bid。
+//   WFL：`events { a : auction_events }` + `on each a` + deferred
+//        `join bid_events reduce maxrow(price) tie(dateTime asc) within [a.dateTime, a.expires]
+//         emit at a.expires as winner`，entity = a.id；yield 到**顶层** nexmark_alerts
+//        （不是 q4a 那样的中间窗 → 本查询的引擎级对拍应当能对上）。
+//
+// 判定量 = **有没有右行**（二元），不是阈值：
+//   hit  = 给 auction 的 [dateTime, expires] 内注入一笔 bid → 到期（a.expires）评估出胜者 → 顶层 yield 一条
+//   miss = 注入 auction 但不注入 bid → reduce 无右行 → 无胜者 → 无输出
+//
+// 为什么没有 near_miss：`reduce maxrow(...)` **没有阈值**——「有右行 / 没右行」两态之间
+// 没有可"差一点"的量（q4a 同款结论）。时间上把 bid 挪到窗外也做不到：右事件的时间由
+// **规则形态**决定（deferred → 右行与左行**同刻**，见 inject_gen::extract 的
+// DEFERRED_OFFSET_NANOS=0），语料侧无法把它推出 `within` 区间。这与 q1（`on each` 无阈值）
+// 同理：只有 hit 有意义。
+//
+// （该结论 2026-09-20 **实测复核**过，不是纸面推断：临时加一个 `miss` 用例、在 join 块里把
+//   右行的 `dateTime` 覆写成 1ns（1970，远在 `[a.dateTime, a.expires]` 之外）→ `wfgen gen`
+//   报 INJ2：该实体**照样**从 deferred 路径报警（emit_time = 左事件时刻）。即 `within` 区间
+//   的判定用的是**行的时刻**（由规则形态钉住），覆写右行的 time 字段并不能把右行挪到窗外
+//   ——"有右行但在窗外"这个临界样本在语料层不可构造。探针已回退，本文件未因此改动。）
+//
+// 两点构造依据：
+//   1) 背景**只生成 auction_events**（不生成 bid_events）：这样 bid_events 里只有 join 块
+//      造出来的那笔 bid，胜出价完全确定、内层输出基数 = 注入命中数（对齐 q4 的做法：
+//      背景 bid 的 `auction` 有概率撞上注入实体键，会污染「有/无右行」的口径）。
+//   2) 连接键由生成器写（`join bid_events as auction` 里的 `auction` = 左侧 `a.id` 的值，
+//      即规则 `on a.id == bid_events.auction` 的驱动侧字段），**不要**在 join 块里写它（VN12）。
+//      实体键 `id` 由生成器按实体 id 分配（首个用例 = 0；此后顺延），同样不能写 `use(id=…)`。
+//
+// 关于 a.dateTime / a.expires：两者都是 `time` 字段，生成器对 time 字段一律写**事件时刻**，
+// 因此注入 auction 的 `[dateTime, expires]` 退化为一个**点** [t, t]；deferred 的右行也在 t，
+// 正好压在闭区间下界上（这条边界正是两侧精确整数口径的回归护栏，见 q4_verify.wfg 与
+// extract.rs 的 DEFERRED_OFFSET_NANOS 注释）。
+//
+// 用法：
+//   wfgen lint scenarios/q9_verify.wfg
+//   wfgen gen  --scenario scenarios/q9_verify.wfg --out /tmp/q9_gen
+//   ./verify_wfg.sh q9                           # L0/L0'/L1/L2 + L3 引擎级对拍（默认开）
+
+use "../models/schemas/nexmark.wfs"
+use "../models/queries/q9.wfl"
+
+#[duration=1m]
+scenario q9_verify<seed=1> {
+  background {
+    // 只生成 auction_events：bid_events 只由 join 块产生 → 胜出价 / 输出基数完全确定
+    stream auction_events gen 1000/s
+  }
+
+  inject {
+    // 命中：auction 生命周期内有 bid → 到期评估出胜者（price=500）→ 顶层 yield 一条告警
+    hit<1> for q9_winning_bid auction_events {
+      use(itemName="x") x 1
+      join bid_events as auction {
+        use(price=500) x 1
+      }
+    }
+
+    // 负样本：只注入 auction、不注入 bid → deferred reduce join 无右行 → 无胜者 → 无输出
+    miss<1> for q9_winning_bid auction_events {
+      use(itemName="y") x 1
+    }
+  }
+}

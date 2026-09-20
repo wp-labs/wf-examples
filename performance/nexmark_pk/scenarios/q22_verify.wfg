@@ -1,0 +1,65 @@
+// q22（Get URL Directories）—— WFL 规则验证语料
+//
+// 规则：models/queries/q22.wfl · `q22_url_dirs`
+//   权威 SQL：SELECT auction, bidder, price, channel,
+//                    SPLIT_INDEX(url, '/', 3) AS dir1,
+//                    SPLIT_INDEX(url, '/', 4) AS dir2,
+//                    SPLIT_INDEX(url, '/', 5) AS dir3
+//             FROM bid;   —— 每 bid 按 '/' 切 url（0 基索引 3/4/5）取三段目录，纯投影无状态
+//   WFL：`events { b : bid_events }` + `let parts = split(b.url, "/")` + `on each b -> score(10.0)`，
+//        entity = `b.auction`（digit）；yield 的 detail 把 `mvindex(parts,3/4/5)` 拼成 `dir1/dir2/dir3`。
+//
+// 判定量 = **无**（纯投影）：规则没有阈值、没有窗口条件、没有比较/排序，任何一条 bid 都会
+//   输出一行 —— 与 q1/q10 同族。所以**只有 hit**：`near_miss` / `miss` 在语义上不存在
+//   （构造不出"不命中的 bid"）。语料的价值因此落在**钉住投影几何量**上：注入的 url 段数与
+//   各段取值让 `mvindex(parts, 3/4/5)` 的 0 基索引位置被引擎级对拍逐字段比住。
+//
+// 关键写法 ①：注入 url 至少要有 **6 段**（这样索引 3/4/5 都有值；`split` 0 基，
+//   `"https://www.nexmark.com/aaaaa/bbbbb/ccccc/item.htm?query=1"` →
+//   `["https:", "", "www.nexmark.com", "aaaaa", "bbbbb", "ccccc", "item.htm?query=1"]`
+//   → detail = `"aaaaa/bbbbb/ccccc"`，与 q22.wfl 的内联 `test q22_dir_hit` 同值）。
+//   三条 hit 用不同的段值，把 3/4/5 三个索引位分别钉住（而不是只钉一处巧合）。
+//
+// 关键写法 ②：实体键字段是 `auction`（`on each` 无 match 键，生成器把 `entity(...)` 的单字段
+//   当键写；首个用例实体值 = 0，之后顺延）→ **不能**写 `use(auction=…)`（VN12）。
+//
+// 为什么不需要 `entity … zipf(…)`：规则无过滤 ⇒ 背景 bid 也全部报警，但本语料**没有**
+//   near_miss / miss 实体，背景不可能"污染"断言（INJ1 只要求 hit 必报，背景只会帮忙）。
+//   背景事件同时把"每笔 bid 一次 split 的无状态投影面"一并压在引擎级对拍下
+//   （期望基数 = 背景 bid 数 + 注入 bid 数，与 q10 同口径）。
+//
+// 用法：
+//   wfgen lint scenarios/q22_verify.wfg
+//   wfgen gen  --scenario scenarios/q22_verify.wfg --out /tmp/q22_gen
+//   ./verify_wfg.sh q22                          # L0/L0'/L1/L2 + L3 引擎级对拍（默认开）
+
+use "../models/schemas/nexmark.wfs"
+use "../models/queries/q22.wfl"
+
+#[duration=1m]
+scenario q22_verify<seed=1> {
+  background {
+    // 源流（q22 的驱动流）；无过滤 → 背景每笔 bid 各一条告警（无负样本，不参与实体断言）
+    stream bid_events gen 1000/s
+  }
+
+  inject {
+    // 命中：标准 3 段目录 url → parts[3..5] = aaaaa/bbbbb/ccccc（与 q22.wfl 内联用例同值）
+    hit<1> for q22_url_dirs bid_events {
+      use(price=100, channel="G",
+          url="https://www.nexmark.com/aaaaa/bbbbb/ccccc/item.htm?query=1") x 1
+    }
+
+    // 命中：换一组段值，把 3/4/5 的索引位再次钉住（d1/d2/d3）
+    hit<1> for q22_url_dirs bid_events {
+      use(price=200, channel="G",
+          url="https://www.nexmark.com/d1/d2/d3/d4/d5/item.htm") x 1
+    }
+
+    // 命中：数字段值 —— 若索引错位（如多算/少算一个 '/'），detail 会立刻不同
+    hit<1> for q22_url_dirs bid_events {
+      use(price=300, channel="G",
+          url="https://x.com/0/1/2/3/4.htm") x 1
+    }
+  }
+}

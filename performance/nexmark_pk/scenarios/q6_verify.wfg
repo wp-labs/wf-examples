@@ -1,0 +1,87 @@
+// q6（Average Selling Price by Seller）—— WFL 规则验证语料
+//
+// 规则：models/queries/q6.wfl · `q6_avg_price_by_seller`
+//   权威 SQL：每 seller 最近 10 笔成交的胜出价均值（ROW_NUMBER + AVG OVER 10 PRECEDING）。
+//   WFL：`match<seller:10m>` + `on event { b.price | avg >= 200 }`（每 seller 滑动 10m 窗的
+//        bid 均价 ≥ 200 即 EMIT）+ `join auction_events snapshot on b.auction == auction_events.id`，
+//        entity = `b.auction`（**join-then-key**：分组键 `seller` 取自 join 侧 auction，实体是驱动侧 bid.auction）。
+//
+// 判定量 = **每个 seller 窗口实例内 bid.price 的均值**，阈值 200：
+//   hit       = 该 seller 名下的 bid 均价 250（≥200）→ on event 即时判定 → 报警
+//   near_miss = 均价 199（**差 1**，唯一有意义的临界样本）→ 不报警
+//   miss      = **不注入配对 auction**（join miss）→ seller 缺失 → 事件连窗口实例都建不出来 → 不报警
+//               （第二条负样本路径：join-then-key 的 join 没配对上时驱动键为空，
+//                 引擎 `precompute_join_then_keys`/oracle 同路径直接跳过该事件）
+//
+// 为什么 q6 不用 `and close`：窗口 10m 比场景 1m 长 → 任何实例都不会自然到期，
+// 报不报警完全由 `on event` 的即时判定决定（与 q1/q2 同形态：不进 close 路径）。
+//
+// 三条必须注意的写法约束：
+//   1) 用例头写 `hit<auction: 1>`（**显式**实体字段）。q6 的 match 键是 `seller`，
+//      生成器按「match 键 ∪ 用例头显式字段」写 `key_overrides`（设计 §3.7/§9.5）：
+//      不写显式字段时 key_overrides 里只有 `seller`，`entity(digit, b.auction)` 找不到
+//      `auction` 的值 → 该实体计入 `unasserted`，INJ1/INJ2 就**断言不到它**（跑得通但没验证）。
+//      实测（把本文件三处用例头改成推断形态 `hit<1>` 后跑 gen）：
+//        Warning: 3 inject entities skipped by the mode assertion (…)
+//        Expected: 0 alerts        ← 期望空 = 注入断言全部空转
+//      显式字段与 VN23 的推断值一致（join-then-key 时推断取 `entity(...)` 的字段），不报错。
+//      副作用：`auction` 进了实体键字段集合 → `use(auction=…)` 会报 VN12；本语料不需要写它。
+//   2) `seller` **不能**写进 `use`：它是 `match<seller>` 的键（VN12），值由生成器分配。
+//      生成器把该值写到**右行**（auction_events.seller）上，落在与背景噪声分开的值带
+//      （`>= 1<<22`，设计 §9.5）——注入的 seller 实例因此不会和背景事件并到一条窗口实例上。
+//   3) `join auction_events as id { … }` 的键写**规则 join 的右侧字段** `id`
+//      （`on b.auction == auction_events.id`）；连接键（左侧 `b.auction`）由生成器自动写入，
+//      花括号里只写目标窗字段（这里没有要覆盖的，用 `use({})`）。
+//      右行时间由**规则形态**决定：snapshot（无 `within`）→ 前挪 1ms，保证驱动事件处理时可见。
+//
+// 背景为什么声明 `entity bid_events.auction zipf(pool=1000)`：
+//   注入的 auction id 是实体 id（首个用例从 1 起的**小数字**）。背景 bid 的 `auction` 是随机
+//   小数字且没有对应的 auction 行 → 本来只会 join miss（无害）；但它**万一等于**某个注入
+//   auction id，就会 snapshot join 到该行、把随机价格（`0..100_000`）掺进那个 seller 的均价里
+//   —— 对 hit 只会抬高（无害），却会把 near_miss 的 199 顶过 200（INJ2 误报）。
+//   实体分布把背景 `auction` 值放到 24 位空间**顶部**（`>= 2^24 − 1000`，与注入实体的底部值域
+//   分区，设计 §10 / VN31）→ 撞车不再可能：语料的二元结论与背景速率无关（速率只决定噪声规模）。
+//
+// 用法：
+//   ./verify_wfg.sh q6                 # 批量入口（L3 引擎级对拍默认开）
+//   wfgen lint scenarios/q6_verify.wfg # L0 静态校验（VN*）
+//   wfgen gen --scenario scenarios/q6_verify.wfg --out data/q6_verify
+//       → L1 注入期硬断言（INJ1：hit 必报；INJ2：near_miss/miss 必不报）+ L2 期望文件
+
+use "../models/schemas/nexmark.wfs"
+use "../models/queries/q6.wfl"
+
+#[duration=1m]
+scenario q6_verify<seed=1> {
+  background {
+    // 源流（q6 的驱动流）；`auction` 走实体池 → 背景噪声不碰注入实体
+    stream bid_events gen 1000/s
+    entity bid_events.auction zipf(pool=1000)
+  }
+
+  inject {
+    // 命中：该 seller 名下 1 条 price=250 的 bid → 均价 250 ≥ 200 → on event 即时报警。
+    // auction 右行由 join 块补发（seller 自动写成生成器分配的 join 侧键值）。
+    hit<auction: 1> for q6_avg_price_by_seller bid_events {
+      use(price=250) x 1
+      join auction_events as id {
+        use({}) x 1
+      }
+    }
+
+    // 临界负样本：均价 199 —— **差 1** 就是阈值 200 的另一侧（有配对 auction，窗口实例确实建起来了，
+    // 只是 avg 不达阈值）→ 不报警。
+    near_miss<auction: 1> for q6_avg_price_by_seller bid_events {
+      use(price=199) x 1
+      join auction_events as id {
+        use({}) x 1
+      }
+    }
+
+    // 普通负样本：bid 本身价格达标（250），但**不补发 auction 右行** → snapshot join miss
+    // → `seller` 无从取值（join-then-key 的驱动键为空）→ 连窗口实例都不建 → 不报警。
+    miss<auction: 1> for q6_avg_price_by_seller bid_events {
+      use(price=250) x 1
+    }
+  }
+}

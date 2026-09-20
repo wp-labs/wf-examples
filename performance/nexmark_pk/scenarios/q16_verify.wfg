@@ -1,0 +1,58 @@
+// q16（Channel Statistics Report）—— WFL 规则验证语料
+//
+// 规则：models/queries/q16.wfl · `q16_channel_stats`
+//   权威 SQL：SELECT channel, count(*), count(*) FILTER (3 价格档),
+//             count(distinct bidder)…, count(distinct auction)… FROM bid GROUP BY channel;
+//   WFL：`stats<1d:fixed> group by (b.channel)`（1 天固定桶 = UTC 日历天）+ 12 度量；
+//        entity = **常量** `entity(digit, 1)`；**每 channel 一行**（桶键 = channel）。
+//
+// ── 判定量是什么 ──────────────────────────────────────────────────────────────
+// 判定量 = **每 channel 的 12 个度量值**（1d 桶收口时）。可观察的结构量是
+// **输出行数 = 出现的 distinct channel 数**；单个 channel 的 12 个值不参与对拍
+// （期望侧 stats 不回填 yield 字段）。
+//
+// ── 用例为什么这么构造（以及为什么这里没有用例）──────────────────────────────
+// 想构造的用例：
+//   hit = 用 `use(channel="G")` 让 channel G 出现在桶里 → 收口时 G 那一行输出；
+//   near_miss / miss = **构造不出来**——channel 是**分组键**而非阈值/排序量，
+//   「某个 channel 差一点出现」没有意义（出现即输出一行，不出现即无行）。
+// ⚠ 与 q15 同因，注入写不进 `.wfg`（2026-09-20 实测）：
+//   stats 规则可注入步骤数 = 0（`stats_clause.is_some() → 0`），而注入用例至少需要
+//   一个 `use … x N` 组（VN21）⇒ VN21 × VN24 交集为空，lint 直接拒绝：
+//       [VN24] injection case 'bid_events' 的 use 事件组数 1 超过规则
+//              'q16_channel_stats' 的事件步骤数 0（每个 `use ... x N` 对应一个步骤）
+//   生成器同样没有 stats 步骤分支 ⇒ 只能表达 background-only 语料（`Expected: 0`）。
+//
+// ── 注意事项（stats 桶的收口时机 / entity 口径）────────────────────────────────
+//   · **收口时机**：1d 桶在**流末收口**输出；1m 场景全部事件落在同一 1d 桶，桶在末尾
+//     收口。`#[duration=1m]` 不是切分敏感量（< 1d 恒为单桶），只为缩短运行时间。
+//   · **entity 口径（期望↔引擎已知差异）**：entity 是常量 1
+//       - 引擎侧 `entity_id` = `"1"`（常量 entity 表达式）；
+//       - 期望侧 `entity_id` = `format!("{:?}", 桶键)` = `Str("<channel值>")`（桶键 = channel）。
+//     两侧口径不同 ⇒ L3 分组必然错配（missing `Str(...)` + unexpected `1`）。
+//     **实测**（本语料 12000 事件，手动跑 `wfusion batch` 于 q16.wfl）：引擎输出
+//     **12000 行**（`chars` 随机 channel ⇒ 几乎每事件一个不同桶），且**全部**
+//     `__wfu_entity_id="1"`、`origin="close:timeout"`、`fired_at="2026-01-02T00:00:00Z"`
+//     —— 常量 entity 让所有行共用同一个 id，期望侧却各是 `Str("<channel>")`。
+//   · **背景噪声**：`channel` 是 `chars` 随机值 ⇒ 背景会制造**大量 distinct channel 桶**
+//     （每桶一行）。对拍只是"两侧同一份数据算出同一批行"，值不参与对拍；但桶数越多、
+//     L3 的逐行配对数越大。若将来注入可用，应把背景 channel 控制成可枚举的小集合，
+//     否则注入的 "G" 行会淹没在背景桶里、且常量 entity 让断言无法区分各行。
+//
+// 用法：
+//   wfgen lint scenarios/q16_verify.wfg
+//   wfgen gen  --scenario scenarios/q16_verify.wfg --out /tmp/q16_gen     # Expected: 0
+//   ./verify_wfg.sh q16        # 预期判 NOINJ——见上，如实结果
+
+use "../models/schemas/nexmark.wfs"
+use "../models/queries/q16.wfl"
+
+#[duration=1m]
+scenario q16_verify<seed=1> {
+  background {
+    // 桶 = channel：背景随机 channel 制造多桶（每桶一行）；速率只影响桶数与度量规模
+    stream bid_events gen 200/s
+  }
+
+  // ⚠ 无 inject 块：stats 规则可注入步骤数为 0（VN21 × VN24，见文件头）。
+}

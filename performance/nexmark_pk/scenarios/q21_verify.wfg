@@ -1,0 +1,68 @@
+// q21（Add channel id）—— WFL 规则验证语料
+//
+// 规则：models/queries/q21.wfl · `q21_channel_id`
+//   权威 SQL：SELECT …, CASE WHEN lower(channel) IN (热通道) THEN '0'..'3'
+//                      ELSE REGEXP_EXTRACT(url, '(&|^)channel_id=([^&]*)', 2) END AS channel_id
+//             FROM bid WHERE REGEXP_EXTRACT(url, …) IS NOT NULL OR lower(channel) IN (…);
+//   WFL：`events { b : bid_events && b.channel_id != "" }` + `on each b -> score(10.0)`，
+//        entity = `b.auction`（digit）。`channel_id` 由 wfgen 按官方 CASE 映射/url 提取，
+//        生成时已知（规则侧只做过滤 + 投影读取，detail = b.channel_id）。
+//
+// 判定量 = **`channel_id` 是否为空串**（`!= ""`）—— 二值判定，没有"差一点"的刻度：
+//   "非空"与"空"之间不存在介于两者的取值（chars 字段要么是空串、要么至少 1 个字符），
+//   所以本语料与 q1/q10（无阈值）同族：**只有 hit / miss，不写 near_miss**。
+//     hit  = channel_id 非空（热通道映射值 "1"，或 cold 通道 url 提取值 "42"）→ 报警
+//     miss = channel_id = ""（cold 通道无 channel_id 部分，官方 10% 情形）→ 过滤，不报警
+//
+// 为什么判定量落在 `channel_id` 而不是 `channel`/`url`：规则的 where 等价于官方
+//   «热通道字段恒非空 / cold 有参非空 / cold 无参为空串被滤掉»（q21.wfl 注释）——
+//   热冷两条来源最后都收敛到同一个字段上，语料直接构造该字段的两种取值即可覆盖两条来源。
+//
+// 关键写法 ①：`channel_id` **不是**实体键字段（实体键是 `auction`），所以可以安全写进
+//   `use(...)`（VN12 不拦）；规则侧 `channel_id != ""` 是不等式，生成器只下推 bind filter 的
+//   等式 → 不存在常量冲突（对照 q3_verify.wfg 的 `category == 10`）。
+//
+// 关键写法 ②：实体键字段是 `auction`（`on each` 无 match 键，生成器把 `entity(...)` 的单字段
+//   当键写；首个用例实体值 = 0，之后顺延）→ **不能**写 `use(auction=…)`（VN12）。
+//
+// 关键写法 ③：背景**必须**用 `entity bid_events.auction zipf(pool=1000)`。背景 bid 的
+//   `channel_id` 默认是 `chars` 随机值（6..16 位、恒非空，见 datagen/field_gen.rs）⇒
+//   背景 bid **每一条都满足** `channel_id != ""`、都会按各自的 `auction` 报警。而背景
+//   `auction` 本来是随机小数字（`0..100_000`），**万一等于**注入实体的低位 id（0/1/…）
+//   就会把 miss 实体顶成"报警"（INJ2 误报）。实体池把背景值域挪到 24 位空间顶部、
+//   与注入实体分区（设计 §10 / VN31）→ 结论与背景 RNG 无关。
+//
+// 用法：
+//   wfgen lint scenarios/q21_verify.wfg
+//   wfgen gen  --scenario scenarios/q21_verify.wfg --out /tmp/q21_gen
+//   ./verify_wfg.sh q21                          # L0/L0'/L1/L2 + L3 引擎级对拍（默认开）
+//   （规则级人工契约另见 models/queries/q21.wfl 的 `test q21_*`。）
+
+use "../models/schemas/nexmark.wfs"
+use "../models/queries/q21.wfl"
+
+#[duration=1m]
+scenario q21_verify<seed=1> {
+  background {
+    // 源流；背景 channel_id 恒非空 → 背景 bid 全报警，故 auction 走实体池避开注入实体（见 ③）
+    stream bid_events gen 1000/s
+    entity bid_events.auction zipf(pool=1000)
+  }
+
+  inject {
+    // 命中（热通道来源）：channel=Google → channel_id 映射为 "1"（非空）→ 报警
+    hit<1> for q21_channel_id bid_events {
+      use(price=100, channel="Google", channel_id="1", url="https://www.nexmark.com/aaaaa/bbbbb/ccccc/item.htm?query=1") x 1
+    }
+
+    // 命中（cold 通道 url 提取来源）：channel_id="42"（非空）→ 报警
+    hit<1> for q21_channel_id bid_events {
+      use(price=200, channel="channel-42", channel_id="42", url="https://www.nexmark.com/aaaaa/bbbbb/ccccc/item.htm?query=1&channel_id=42") x 1
+    }
+
+    // 负样本：cold 通道且 url 无 channel_id 参数 → channel_id = ""（空串）→ 过滤，不报警
+    miss<1> for q21_channel_id bid_events {
+      use(price=300, channel="channel-7", channel_id="", url="https://www.nexmark.com/aaaaa/bbbbb/ccccc/item.htm?query=1") x 1
+    }
+  }
+}

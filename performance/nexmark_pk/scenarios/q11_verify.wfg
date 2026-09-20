@@ -1,0 +1,83 @@
+// q11（User Sessions）—— WFL 规则验证语料
+//
+// 规则：models/queries/q11.wfl · `q11_bidder_session`
+//   权威 SQL：SELECT bidder, count(*) FROM bid GROUP BY bidder,
+//             SESSION(dateTime, INTERVAL '10' SECOND)（会话 gap = 10s）。
+//   WFL：`match<bidder:session(10s)> { on event { b | count >= 1; } and close { n: b | count >= 1; } }`
+//        → 会话到期收口输出一条（detail = 会话内 bid 数），entity = b.bidder。
+//
+// 判定量分析（先定判定量，再决定用例）：
+//   规则的**两个**条件都是 `count >= 1`，而会话只在"窗内 ≥1 条事件"时存在
+//   （gap 10s 内无事件 = 没有会话）——即 `on event` 与 `and close` 对任何**非空**会话
+//   恒成立。判定量因此退化成**二元**的「有没有事件」。
+//
+//   ⇒ near_miss 构造不出来：语料只能写"事件条数"，而任何 ≥1 条 bid 都让实体报警。
+//     「把两笔 bid 的间隔拉到跨过 10s gap」也不行——那只是把一个 2 条的会话切成两个
+//     1 条的会话，实体照样报警（INJ2 会点名实体与 emit_time）。这一条**实测复核**过
+//     （2026-09-20）：把 H3 的构造原样写成 `near_miss` → `wfgen gen` 报
+//     `INJ2: 1 near_miss/miss 实体产出了告警`，明细为 `near_miss 用例第 1 个实体（bidder=3）
+//     会触发规则 q11_bidder_session：命中 close:timeout 路径（emit_time=2026-01-01T00:00:29.000Z）`
+//     ——即"刚好跨过 gap"只是从"1 条告警"变成"2 条告警"，二元结论不变。
+//     探针已回退，本文件未因此改动。
+//   ⇒ miss 同样构造不出来：miss 用例也必须注入 ≥1 条事件（VN21 要求事件组非空），
+//     而 1 条事件就是一个会话 → 照样报警。
+//   所以本语料**只有 hit**——与 q1/q10（无阈值纯投影）同族；区别是本查询"无阈值"
+//   来自 `count >= 1` 的二元性，而不是没有判定。
+//
+// 既然只有 hit，语料的价值落在**钉住会话切分语义**：三个用例把"同会话合并 / 跨 gap
+// 分裂"两个方向都压在引擎级对拍下——
+//   H1  1 条 bid                         → 1 个会话 → 1 条告警
+//   H2  2 条 bid，间隔 1s（< gap 10s）   → **同**一个会话（count=2）→ 1 条告警，detail="2"
+//   H3  2 条 bid，间隔 11s（> gap 10s）  → **两个**会话（各 count=1）→ 2 条告警，detail="1"
+//   间隔由 `spread` 精确控制：只有 1 个事件步骤 → 第 i 条偏移 = spread·i/N，起点取
+//   (duration − spread)/2（见 inject_gen/helpers/generate.rs、helpers/plan.rs）。
+//   H2 用 spread 2s（2 条落在 29s/30s），H3 用 spread 22s（落在 19s/30s，跨过边界）。
+//   `#[duration=1m]` 是钉住的：H3 需要 spread 22s，而 VN25 要求 spread ≤ duration。
+//   H2/H3 的 detail 由 oracle 从真引擎算出、引擎级对拍逐字段比——"合并 vs 分裂"
+//   不是注释里的声称，而是被对拍真正钉住的。
+//
+// 写法约束：
+//   - 实体键字段是 `bidder`（`match` 的 key，生成器按实体 id 无条件写）→ `use(...)` 里
+//     **不能**写 `bidder`（VN12：key_overrides 优先级高于 use，写了会被静默丢掉）。
+//   - 背景 bidder 从 `entity bid_events.bidder zipf(...)` 的**实体池**取值：池占 24 位
+//     地址空间顶部、与注入实体的低值段 [0, total_entity_ids) 分区 → 背景噪声不会撞上
+//     注入实体（否则 H2/H3 的"会话内条数"会被随机背景 bid 污染，断言口径随背景波动）。
+//     用池的另一个好处是背景自己形成**多事件会话**（~1000 个 bidder 各有会话），
+//     比"每个 bidder 只出现一次"更贴近真实会话负载。
+//
+// 用法：
+//   wfgen lint scenarios/q11_verify.wfg
+//   wfgen gen  --scenario scenarios/q11_verify.wfg --out /tmp/q11_gen
+//   ./verify_wfg.sh q11                           # L0/L0'/L1/L2 + L3 引擎级对拍（默认开）
+//   ⚠ 别用 `--duration` 覆盖：它改窗口切分与 H3 的 spread 前提（spread 22s > 10s 会报 VN25），
+//     靠它"凑过"等于换了一套构造。
+
+use "../models/schemas/nexmark.wfs"
+use "../models/queries/q11.wfl"
+
+#[duration=1m]
+scenario q11_verify<seed=1> {
+  background {
+    stream bid_events gen 1000/s
+    entity bid_events.bidder zipf(pool=1000, exponent=1.0, fresh=0.0)
+  }
+
+  inject {
+    // H1（基线"有没有"）：1 条 bid → 1 个会话（count=1）→ 1 条告警
+    hit<1> for q11_bidder_session bid_events {
+      use(price=100, channel="G", url="u") x 1
+    }
+
+    // H2（同会话合并）：2 条 bid 间隔 1s（< gap 10s）→ 同一会话 count=2 → 1 条告警 detail="2"
+    hit<1> for q11_bidder_session bid_events {
+      use(price=200, channel="G", url="u") x 2
+      spread 2s
+    }
+
+    // H3（跨 gap 分裂）：2 条 bid 间隔 11s（> gap 10s）→ 两个会话各 count=1 → 2 条告警 detail="1"
+    hit<1> for q11_bidder_session bid_events {
+      use(price=300, channel="G", url="u") x 2
+      spread 22s
+    }
+  }
+}

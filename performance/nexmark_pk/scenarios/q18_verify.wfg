@@ -1,0 +1,66 @@
+// q18（Find last bid）—— WFL 规则验证语料
+//
+// 规则：models/queries/q18.wfl · `q18_last_bid_stats`
+//   权威 SQL：SELECT * FROM (SELECT *, ROW_NUMBER() OVER
+//             (PARTITION BY bidder, auction ORDER BY dateTime DESC) AS rank_number FROM bid)
+//             WHERE rank_number <= 1;   —— 每 (bidder, auction) 取**最后一条** bid 的字段。
+//   WFL：`stats<1d:fixed> group by (b.bidder, b.auction)` + 4 个 `last(...)` 度量
+//        （price/channel/url/dateTime）；close 时经 `field_values` 把最后合格行的整行
+//        注入 yield 的 `b.*`；entity = `entity(digit, b.auction)`。
+//
+// ── 判定量是什么 ──────────────────────────────────────────────────────────────
+// 判定量 = **每 (bidder, auction) 键「最后一条 bid」的字段值**（last 语义），
+// 以及与权威 dedup 对齐的**基数**（1d 桶下每键 1 行）。
+//   · 结构量 = 输出行数 = 出现的 distinct (bidder, auction) 键数（1d 单桶 ⇒ 每键 1 行）；
+//   · 4 个 last 值本身不参与对拍（期望侧 stats 不回填 yield 字段）。
+// "最后一条"是**时序选择**（不是阈值/排序 rank）：可构造的二元结论仍是「该键是否输出一行」。
+//
+// ── 用例为什么这么构造（以及为什么这里没有用例）──────────────────────────────
+// 想构造的用例：
+//   hit = 键 (bidder, auction) 至少有 1 条 bid → 收口时该键 1 行输出；
+//   若想钉"最后一条"的**选择语义**，可用 `spread` 造 2 条 bid（间隔 1s）→ last = 较晚那条
+//   （本可直接对照权威 ROW_NUMBER(dateTime DESC)）——但近一步的 near_miss（"差 1 秒"）
+//   对 last 没有二元意义（last 总是指向一条确定的记录）。
+// ⚠ 与 q15 同因，注入写不进 `.wfg`（2026-09-20 实测）：
+//   stats 规则可注入步骤数 = 0，注入用例至少需要 1 个 `use … x N` 组（VN21）
+//   ⇒ VN21 × VN24 交集为空：
+//       [VN24] injection case 'bid_events' 的 use 事件组数 1 超过规则
+//              'q18_last_bid_stats' 的事件步骤数 0（每个 `use ... x N` 对应一个步骤）
+//   生成器同样没有 stats 步骤分支 ⇒ 只能表达 background-only 语料（`Expected: 0`）。
+//
+// ── 注意事项（stats 桶的收口时机 / entity 口径）────────────────────────────────
+//   · **收口时机**：1d 桶流末收口输出（q18.wfl 注释：30m 桶会把 >30m 数据切成多桶、
+//     每键多行；1d 桶在有界场景下覆盖全流 ⇒ 每键 1 行，对齐权威 dedup 基数）。
+//     1m 场景全部落在同一 1d 桶，`#[duration=1m]` 非切分敏感量。
+//   · **entity 口径（期望↔引擎已知差异）**：entity = `b.auction`
+//       - 引擎侧 `entity_id` = auction 字段值渲染（如 `"1"`）；
+//       - 期望侧 `entity_id` = `format!("{:?}", 桶键)` = `Pair(Int(<bidder>), Int(<auction>))`
+//         （桶键 = (bidder, auction) 的 ScopeKey Debug）。
+//     两侧口径不同 ⇒ L3 分组错配（missing + unexpected）。
+//     **实测**（本语料 12000 事件，手动跑 `wfusion batch` 于 q18.wfl）：引擎输出
+//     **12000 行**（= distinct (bidder,auction) 键数），`__wfu_entity_id` = auction 值
+//     （如 `"56561"`，summary 里带 `scope=[bidder=7, auction=56561]` = 桶键）——
+//     引擎把桶键放在 summary、把 entity 取成 `b.auction`；期望侧是 `Pair(Int(7), Int(56561))`。
+//   · **last 度量 label 不得与 yield 读的字段名撞名**（q18.wfl 注释）：本规则用
+//     `last_price/last_channel/last_url/last_dateTime`，与 yield 读的
+//     `b.price/b.channel/b.url/b.dateTime` 无撞名 —— 与规则一致，无需额外处理。
+//   · **背景噪声**：(bidder, auction) 二元键 ⇒ 背景制造大量键（每键一行）；速率只影响
+//     键数与 last 取值的分布，不改"键是否输出"的二元结构。
+//
+// 用法：
+//   wfgen lint scenarios/q18_verify.wfg
+//   wfgen gen  --scenario scenarios/q18_verify.wfg --out /tmp/q18_gen     # Expected: 0
+//   ./verify_wfg.sh q18        # 预期判 NOINJ——见上，如实结果
+
+use "../models/schemas/nexmark.wfs"
+use "../models/queries/q18.wfl"
+
+#[duration=1m]
+scenario q18_verify<seed=1> {
+  background {
+    // 桶 = (bidder, auction)：背景多键 → 多桶（每键一行）；速率只影响键数与 last 取值
+    stream bid_events gen 200/s
+  }
+
+  // ⚠ 无 inject 块：stats 规则可注入步骤数为 0（VN21 × VN24，见文件头）。
+}

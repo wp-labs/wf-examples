@@ -1,0 +1,42 @@
+// q10（Log to File System）—— WFL 规则验证语料
+//
+// 规则：models/queries/q10.wfl · `q10_log_all`
+//   权威 SQL：SELECT auction, bidder, price, dateTime, extra FROM bid
+//             （全量 bid 每笔一行，dt/hm 为分区列）。
+//   WFL：`events { b : bid_events }` + `on each b -> score(5.0)`，**无过滤、无窗口**
+//        → 每笔 bid 输出一行，entity = b.auction（digit）。
+//
+// 判定量 = **无**（纯投影）：q10 没有阈值、没有窗口条件、没有比较/排序，所以
+// near_miss / 负样本在语义上不存在——「不命中的 bid」不是一个构造得出来的东西
+// （与 q1 同族，只有 hit 有意义）。
+//
+// 断言口径：注入实体由生成器按实体 id 分配键值（首个用例的 `auction` = 0，顺延 1、2…），
+// `use(...)` 里**不能**写实体键字段 `auction`（VN12：key_overrides 优先级高于 use 的
+// predicate_overrides，写了会被静默丢掉）。
+//
+// 背景流提供非注入事件（不参与实体断言），同时把「全量落盘」的规模一并压在引擎级对拍下：
+// 期望基数 = 背景 bid 数 + 注入 bid 数（`on each` 无过滤 → 背景每笔 bid 也各一条）。
+//
+// 用法：
+//   wfgen lint scenarios/q10_verify.wfg
+//   wfgen gen  --scenario scenarios/q10_verify.wfg --out /tmp/q10_gen
+//   ./verify_wfg.sh q10                          # L0/L0'/L1/L2 + L3 引擎级对拍（默认开）
+//   ./verify_wfg.sh q10 --duration 10s           # 压时长的小样本（无切分敏感量，可随意改）
+
+use "../models/schemas/nexmark.wfs"
+use "../models/queries/q10.wfl"
+
+#[duration=1m]
+scenario q10_verify<seed=1> {
+  background {
+    stream bid_events gen 1000/s
+  }
+
+  inject {
+    // 3 个实体，每个 1 笔 bid → 3 条告警（`on each` = 每事件一个实体：entity = b.auction）。
+    // 注入值固定 price=100/channel="G"/url="u"，让注入事件在数据里可辨识（便于人工核账）。
+    hit<3> for q10_log_all bid_events {
+      use(price=100, channel="G", url="u") x 1
+    }
+  }
+}

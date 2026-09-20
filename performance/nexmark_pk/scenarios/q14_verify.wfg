@@ -1,0 +1,84 @@
+// q14（Calculation）—— WFL 规则验证语料
+//
+// 规则：models/queries/q14.wfl · `q14_calculation`
+//   权威 SQL：SELECT auction, bidder, 0.908*price AS price, … FROM bid
+//             WHERE 0.908*price > 1000000 AND 0.908*price < 50000000;
+//   WFL：`events { b : bid_events && 0.908 * b.price > 1000000 && 0.908 * b.price < 50000000 }`
+//        + `on each b -> score(5.0)`，entity = `b.auction`（digit）。
+//
+// 判定量 = **价格的开区间判定** `0.908 × price ∈ (1_000_000, 50_000_000)`：
+//   两个比较都是**严格**的（`>` / `<`），区间两端都取不到 → 「刚够成立」的 price 可以逐元钉住。
+//   为什么 near_miss 有意义：判定量是可比较的数值，边界两侧各差 1 元就是一个确定的反例。
+//
+// 关键写法 ①：`price` 由 `use(...)` **完全控制**。生成器只从 bind filter 里提取**等式**
+//   约束（`extract_filter_constraints` 只认 `==`），`>` / `<` 这类不等式**不下推**——
+//   所以这里写 `use(price=…)` 不会被规则约束覆盖/冲突（与 q3 的 `category == 10` 等式
+//   下推不同，那个字段不能写进 `use`）。
+//
+// 关键写法 ②：实体键字段是 `auction`（`on each` 规则无 match 键，生成器改把 `entity(...)`
+//   的单字段当键写；首个用例实体值 = 0，之后顺延）。**不能**写 `use(auction=…)`——VN12，
+//   该值由生成器按实体 id 分配，写了会被静默丢弃。
+//
+// 关键写法 ③：背景不需要 `entity … zipf(…)`。背景 bid 的 `price` 是 `digit` 默认随机值
+//   `[0, 100_000)`（见 datagen/field_gen.rs）→ `0.908 × price ≤ 90_720 < 1_000_000`
+//   ⇒ **背景 bid 永远落在区间外**，一条告警都不出，也就不会撞上注入实体污染 INJ2。
+//   （若将来默认值域变大，需要补 `entity bid_events.auction zipf(pool=1000)` 把背景值域
+//     与注入实体分区。）
+//
+// 边界值（f64 实测，写进语料前逐条核过；`0.908` 不是二进制精确值，但两个实现都用 IEEE
+//   f64，结果一致）：
+//     price = 1_101_321 → 999_999.468      → 下界**外侧**（差 0.532）→ 不报警（near_miss）
+//     price = 1_101_322 → 1_000_000.376    → 下界**内侧**（刚过 0.376）→ 报警（hit）
+//     price = 55_066_079 → 49_999_999.732  → 上界**内侧**（差 0.268）→ 报警（hit）
+//     price = 55_066_080 → 50_000_000.640  → 上界**外侧**（过 0.64）→ 不报警（near_miss）
+//     price = 5_000_000 → 4_540_000        → 区间中段 → 报警（hit，与 q14.wfl 内联用例同值）
+//     price = 100       → 90.8             → 远低于下界 → 不报警（miss）
+//
+// 用法：
+//   wfgen lint scenarios/q14_verify.wfg
+//   wfgen gen  --scenario scenarios/q14_verify.wfg --out /tmp/q14_gen
+//   ./verify_wfg.sh q14                          # L0/L0'/L1/L2 + L3 引擎级对拍（默认开）
+//   （规则级人工契约另见 models/queries/q14.wfl 的 `test q14_*`，由 wfadm check / wfgen 侧跑。）
+
+use "../models/schemas/nexmark.wfs"
+use "../models/queries/q14.wfl"
+
+#[duration=1m]
+scenario q14_verify<seed=1> {
+  background {
+    // 源流（q14 的驱动流）；背景 price ∈ [0,100_000) → 永不落入区间（见文件头 ③）
+    stream bid_events gen 1000/s
+  }
+
+  inject {
+    // 命中（区间中段）：0.908 × 5_000_000 = 4_540_000 ∈ (1e6, 5e7) → 必报警。
+    hit<1> for q14_calculation bid_events {
+      use(price=5000000, channel="G", url="u", extra="abaccc") x 1
+    }
+
+    // 命中（下界内侧 1 元）：0.908 × 1_101_322 = 1_000_000.376 > 1e6 → 钉住**开区间下界**。
+    hit<1> for q14_calculation bid_events {
+      use(price=1101322, channel="G", url="u", extra="abaccc") x 1
+    }
+
+    // 命中（上界内侧 1 元）：0.908 × 55_066_079 = 49_999_999.732 < 5e7 → 钉住**开区间上界**。
+    hit<1> for q14_calculation bid_events {
+      use(price=55066079, channel="G", url="u", extra="abaccc") x 1
+    }
+
+    // 临界负样本（下界外侧，差 1 元）：0.908 × 1_101_321 = 999_999.468 < 1e6 → 区间外 → 不报警。
+    near_miss<1> for q14_calculation bid_events {
+      use(price=1101321, channel="G", url="u", extra="abaccc") x 1
+    }
+
+    // 临界负样本（上界外侧，差 1 元）：0.908 × 55_066_080 = 50_000_000.64 > 5e7 → 区间外 → 不报警。
+    near_miss<1> for q14_calculation bid_events {
+      use(price=55066080, channel="G", url="u", extra="abaccc") x 1
+    }
+
+    // 普通负样本：价格远低（0.908 × 100 = 90.8）→ 不报警。
+    miss<1> for q14_calculation bid_events {
+      use(price=100, channel="G", url="u", extra="") x 1
+    }
+  }
+}

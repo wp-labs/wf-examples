@@ -1,0 +1,73 @@
+// q15（Bidding Statistics Report）—— WFL 规则验证语料
+//
+// 规则：models/queries/q15.wfl · `q15_bidding_stats`
+//   权威 SQL：SELECT count(*), count(*) FILTER (3 个价格档),
+//             count(distinct bidder)…, count(distinct auction)…  （12 列）FROM bid GROUP BY day;
+//   WFL：`stats<1d:fixed>`（**空键**固定窗 = UTC 日历天，列式归并执行器）+ 12 度量
+//        （3 档价格 count ×3 + `distinct_count(bidder/auction)` 各 3 档）；
+//        entity = **常量** `entity(digit, 1)`；yield 用 `stat.value(final(<label>))` 读度量终值。
+//
+// ── 判定量是什么 ──────────────────────────────────────────────────────────────
+// 判定量 = **1d 桶收口时的 12 个度量值**（count / distinct_count 的列式归并结果）。
+// 它不是阈值 / 排序类判定量：空键 = 全局单桶 ⇒ **输出行数恒为 1**，任何进桶的 bid
+// 只改度量值、不改输出行数；而 stats 的 yield 字段（12 个值）目前**不参与对拍**
+// （期望侧不回填 fields）→ 可断言的可观察量只剩「该实体是否输出过一行」这个**二元结论**。
+//
+// ── 用例为什么这么构造（以及为什么这里没有用例）──────────────────────────────
+// 想构造的用例（本查询唯一的二元结论）：
+//   hit = 桶里至少 1 条 bid → 收口时输出 1 行；near_miss / miss = **构造不出来**
+//   （没有"不命中的 bid"，也没有"差一点"的阈值）——与 q1/q10 同族：无阈值 ⇒ 只有 hit。
+// ⚠ 但这套用例**写不进 `.wfg`**（工具侧硬约束，2026-09-20 实测，五条 stats 规则全中）：
+//   · wfgen 对 stats 规则的**可注入步骤数 = 0**
+//     （`crates/wfgen/src/validate/syntax.rs::injectable_step_count`：`stats_clause.is_some() → 0`）；
+//   · 注入用例**至少需要一个 `use … x N` 事件组**（VN21：`case.groups.is_empty()` → 报错）。
+//   ⇒ VN21（组数 ≥ 1）与 VN24（组数 ≤ 步骤数 = 0）互相矛盾，交集为空：
+//       [VN24] injection case 'bid_events' 的 use 事件组数 1 超过规则
+//              'q15_bidding_stats' 的事件步骤数 0（每个 `use ... x N` 对应一个步骤）
+//   即便绕过静态校验，生成器 `inject_gen::extract_rule_structure` 也没有 stats 分支
+//   （步骤只从 `match_plan.event_steps` / `each_plan` 取）→ 生成期同样报
+//   「no inject streams map to any step in rule 'q15_bidding_stats'」。
+//   ⇒ 结论：**q15 无法用 `.wfg` 注入验证**；`.wfg` 只能表达背景-only 语料，
+//     `Expected: 0`（oracle 按 `injected_rules` 过滤，无注入用例 → stats 引擎根本不构造）。
+//     权威验证路径是 `wfgen verify-nexmark`（见 docs/EXPECTATION_VERIFY.md）。
+//
+// ── 注意事项（stats 桶的收口时机 / entity 口径）────────────────────────────────
+//   · **收口时机**：1d 固定桶在**流末收口**（batch / shutdown flush）输出，不是事件越界
+//     触发——1m 场景全部事件落在同一个 1d 桶里，桶在场景末尾收口，输出 1 行。所以
+//     `#[duration=1m]` **不是**切分敏感量（只要 < 1d 就仍是单桶）；钉 1m 只为缩短运行时间。
+//   · **entity 口径（期望↔引擎已知差异）**：entity 是常量 1
+//       - 引擎侧 `entity_id` = 规则 `entity(...)` 表达式求值 = `"1"`；
+//       - 期望侧（`StatsOracleEngine::close_window`）`entity_id` = `format!("{:?}", 桶键)`
+//         = `Empty`（空键桶的 ScopeKey Debug）。
+//     两者口径不同 ⇒ 即使注入可用，L3 也会在 `(rule, entity_type, entity_id, origin)`
+//     分组处报 missing/unexpected（一条 missing `Empty` + 一条 unexpected `1`）。
+//     **实测**（本 background-only 语料 12000 事件，手动跑 `wfusion batch` 于 q15.wfl）：
+//       引擎输出 **1 行**：`__wfu_entity_id="1"`、`__wfu_origin="close:timeout"`、
+//       `__wfu_fired_at="2026-01-02T00:00:00Z"`（= 1d 桶末）、`__wfu_emit_time` = 进程
+//       shutdown 时刻（12000 事件全在背景 —— 无注入）。期望侧同位置会是
+//       `entity_id="Empty"` / `origin="close"` / 同 `emit_time`。
+//       summary 12 度量（可核）：total=12000 r1=1209 r2=10791 r3=0；
+//       total_bidder=11307 r1_bidder=1202 r2_bidder=10226 r3_bidder=0；
+//       total_auction=11316 r1_auction=1197 r2_auction=10253 r3_auction=0。
+//   · 期望侧 stats 桶**不回填 yield 字段**（`fields: Vec::new()`）→ detail 的 12 个值
+//     不参与对拍，只对计数 / entity_id 对拍。
+//   · 背景噪声：空键全局桶下，背景只改度量值、不改输出行数（恒 1 行）→ 不干扰二元结论。
+//
+// 用法：
+//   wfgen lint scenarios/q15_verify.wfg
+//   wfgen gen  --scenario scenarios/q15_verify.wfg --out /tmp/q15_gen     # Expected: 0
+//   ./verify_wfg.sh q15        # 预期判 NOINJ（curated 无注入用例）——见上，这是如实结果
+
+use "../models/schemas/nexmark.wfs"
+use "../models/queries/q15.wfl"
+
+#[duration=1m]
+scenario q15_verify<seed=1> {
+  background {
+    // 空键全局桶：背景只改 12 个度量值，不改输出行数（恒 1 行）；速率只影响度量规模
+    stream bid_events gen 200/s
+  }
+
+  // ⚠ 无 inject 块：stats 规则的可注入步骤数为 0，任何 `hit<…> for q15_bidding_stats`
+  //   都会被 VN21 × VN24 直接拒绝（见文件头）。本语料是如实可表达的 background-only 形态。
+}

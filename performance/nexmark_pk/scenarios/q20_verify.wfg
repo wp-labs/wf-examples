@@ -1,0 +1,84 @@
+// q20（Expand bid with auction）—— WFL 规则验证语料
+//
+// 规则：models/queries/q20.wfl · `q20_expand_bid`
+//   权威 SQL：SELECT … FROM bid B INNER JOIN auction A ON B.auction = A.id
+//             WHERE A.category = 10;   —— filter join（每 bid 展开对应 auction，仅留 category=10）
+//   WFL：`events { b : bid_events }` + `on each b -> score(10.0)`
+//        + `join auction_events snapshot on b.auction == auction_events.id`
+//        + `where auction_events.category == 10`，entity = `b.auction`（digit）。
+//
+// 判定量 = **join 之后的 `where` 等值比较** `auction_events.category == 10`（对齐 INNER JOIN）：
+//   `where` 为假 **或** join 查不到右行（None）都抑制输出。等值判定没有"滑动刻度"，但
+//   `category` 是整数 → 「差 1」（10 vs 11）就是天然的临界反例；另一条独立的负路径是
+//   **join miss**（无配对 auction）。因此三类用例：
+//     hit       = 配对 auction 且 category = 10 → where 通过 → 报警
+//     near_miss = 配对 auction 但 category = 11（**差 1**）→ where 抑制 → 不报警
+//     miss      = **不补发**配对 auction → snapshot join miss → 抑制 → 不报警
+//
+// 关键写法 ①：`category` **可以**写进 join 块（且只有这样才能构造负样本）。
+//   生成器只在**规则 bind filter 的等式**里做常量下推（`extract_filter_constraints` 只认
+//   `==`，且只扫 `events` 块的 bind filter 与 guard）；q20 的 `category == 10` 出现在
+//   **join 之后的 where**，不在下推范围内 → `use(category=…)` 不会冲突、不会被写回 10。
+//   （对照 q3_verify.wfg：那里的 `category == 10` 是 bind filter 的等式，写进 `use` 会报
+//     "conflicts with rule step filter"，所以 q3 构造不出 category≠10 的负样本。）
+//
+// 关键写法 ②：join 块头 `join auction_events as id` 的 `id` 必须是规则 `on b.auction ==
+//   auction_events.id` 的**右侧字段**（VN30 据此唯一匹配到该 join 子句）。连接键（左侧
+//   `b.auction`）由生成器自动写入右行（右行 `id` = 左实体键值），花括号里**只写目标窗字段**、
+//   不能写 `id`（VN12）。
+//
+// 关键写法 ③：实体键字段是 `auction`（`on each` 无 match 键，生成器把 `entity(...)` 的单字段
+//   当键写；首个用例实体值 = 0，之后顺延）→ **不能**写 `use(auction=…)`（VN12）。
+//   hit 的 bid `auction` = 0，生成器把配对 auction 行的 `id` 也写成 0（两侧指向同一实体）。
+//
+// 关键写法 ④：背景用 `entity bid_events.auction zipf(pool=1000)` 把背景 `auction` 的值域挪到
+//   24 位空间顶部（与注入实体的低位段分区，设计 §10 / VN31）。背景 bid 的 `auction` 本来是
+//   随机小数字（`0..100_000`）——**万一等于**注入的 auction id（0/1/…），它会 snapshot join 到
+//   注入块产出的 auction 行上：撞到 hit 那行（cat=10）只会多加告警（无害），但避免这种与 seed
+//   相关的随机耦合后，`Expected` 恰为注入命中数、结论完全不依赖背景 RNG。
+//   另注：本语料 background **只出驱动流 bid_events**，不生成 auction_events —— auction 行
+//   只由注入的 join 块产生，join 结果才完全确定（对照 q8/q9 的同款做法）。
+//
+// join 形态：`snapshot` + 无 `within` → 生成器把右行时间**前挪 1ms**
+//   （`SNAPSHOT_LEAD_NANOS`），保证驱动 bid 被处理时右行已可见。
+//
+// 用法：
+//   wfgen lint scenarios/q20_verify.wfg
+//   wfgen gen  --scenario scenarios/q20_verify.wfg --out /tmp/q20_gen
+//   ./verify_wfg.sh q20                          # L0/L0'/L1/L2 + L3 引擎级对拍（默认开）
+
+use "../models/schemas/nexmark.wfs"
+use "../models/queries/q20.wfl"
+
+#[duration=1m]
+scenario q20_verify<seed=1> {
+  background {
+    // 驱动流；auction 值域走实体池（顶部）→ 背景 bid 不参与注入 join（见文件头 ④）
+    stream bid_events gen 1000/s
+    entity bid_events.auction zipf(pool=1000)
+  }
+
+  inject {
+    // 命中：配对 auction 的 category = 10 → where 通过 → 报警
+    hit<1> for q20_expand_bid bid_events {
+      use(price=500) x 1
+      join auction_events as id {
+        use(category=10) x 1
+      }
+    }
+
+    // 临界负样本：category 差 1（11）→ where 抑制 → 不报警（join 配对了，只是值不对）
+    near_miss<1> for q20_expand_bid bid_events {
+      use(price=500) x 1
+      join auction_events as id {
+        use(category=11) x 1
+      }
+    }
+
+    // 普通负样本：bid 本身没问题，但**不补发配对 auction** → snapshot join miss
+    // （INNER JOIN 语义：查不到也抑制）→ 不报警
+    miss<1> for q20_expand_bid bid_events {
+      use(price=500) x 1
+    }
+  }
+}

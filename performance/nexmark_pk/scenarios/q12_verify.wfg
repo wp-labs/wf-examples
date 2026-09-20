@@ -1,0 +1,111 @@
+// q12（Processing Time Windows / bidder × 10s 固定桶计数）—— WFL 规则验证语料
+//
+// 规则：models/queries/q12.wfl · `q12_bidder_10s_window_count`
+//   权威 SQL：B = SELECT *, PROCTIME() AS p_time FROM bid;
+//             SELECT bidder, count(*) AS bid_count, window_start, window_end
+//             FROM TABLE(TUMBLE(TABLE B, DESCRIPTOR(p_time), INTERVAL '10' SECOND))
+//             GROUP BY bidder, window_start, window_end;
+//   WFL：`match<bidder:10s:fixed>`（每个 bidder × 10s 桶一个实例）
+//        + `on event { b | count >= 1 }`（事件路径只标记 event_ok）
+//        + `and close { n: b | count >= 1 }`（桶收口时输出一条），entity = b.bidder；
+//        yield 的 detail 是**字面量** "bids in 10s window"（计数不进 detail，见规则注释）。
+//
+// ── 判定量是什么 ────────────────────────────────────────────────────────────
+//   两个条件都是 `count >= 1`，而**桶实例只在桶内有事件时才建**（空桶不建实例）
+//   → 判定量退化成二元的「有没有事件落在这个 10s 桶里」，没有任何"差一点"的中间量。
+//   ⇒ near_miss 构造不出来：count 从 0 到 1 就是"桶不存在 / 桶存在"本身。
+//   ⇒ miss 同样构造不出来：`miss` 也必须注入 ≥1 条事件（VN21），那 1 条事件必然落在
+//     某个 10s 桶里 → 桶收口 → 该实体照样报警（INJ2 会直接点名）。
+//   所以本语料**只有 hit**——与 q1/q10（无阈值纯投影）、q11（会话 count>=1）同族；
+//   区别是这里"无阈值"来自 count>=1 的二元性 + 桶实例的存在性。
+//
+// ── 既然只有 hit，语料钉什么 ────────────────────────────────────────────────
+//   钉**10s 固定桶的切分语义**（q11「会话合并/分裂」的对偶）：
+//     H1 同桶：2 条 bid 落在**同一个** 10s 桶  → 1 条告警（桶内合并成 count=2，仍只输出一条）
+//     H2 跨桶：2 条 bid 被 10s 边界切成**两个**桶 → 2 条告警
+//   事件时刻由 `spread` 精确控制（helpers/plan.rs `uniform_cluster_start` +
+//   helpers/generate.rs 的 `per_step_window * i / N`）：
+//     单簇（hit<1>）簇起点 = (duration − spread) / 2，第 i 条偏移 = spread·i/N。
+//
+// ── 关键写法 ①：`#[duration=55s]` 是钉住的，不是可随手改的参数 ───────────────
+//   "同桶/跨桶"完全由 (duration, spread) 决定的**时刻落在哪个桶**决定：
+//     · dur=55s（不是 10s 的整数倍）→ N=2 时末条事件恒在 dur/2 = 27.5s；
+//     · H1 spread 10s → 起点 (55−10)/2 = 22.5s → 两条 22.5s / 27.5s 同落 **桶 [20,30)** → 1 条告警；
+//     · H2 spread 20s → 起点 (55−20)/2 = 17.5s → 17.5s 在 **桶 [10,20)**、27.5s 在 **桶 [20,30)**
+//       → 2 条告警。
+//   换成 dur=60s 会把 H1 的末条顶到 30.0s（桶边界，归 [30,40)）→ H1 也变跨桶，
+//   "同桶合并"这条覆盖就**静默消失**（断言仍会通过，因为 hit 只要求"必报"——
+//   实测 `wfgen gen … --duration 60s`：H1 两条落到 25.0s / 30.0s、H2 落到 20.0s / 30.0s，
+//   两个用例都变成"各 2 条告警"，INJ1 照样全绿。这正是窗口切分敏感语料必须钉住
+//   duration 的理由：不钉住时坏的是**覆盖**，不是红灯）。
+//   与 q5/q7 同口径：别用 `--duration` 覆盖（脚本会提示），那等于换了一套桶切分。
+//
+// ── 关键写法 ②：为什么负样本里**不写**"数据末尾的桶" ────────────────────────
+//   `hit` 的桶必须在运行期内**自然收口**（事件时间水位越过桶终点）；本语料靠背景流量
+//   把水位推过每个桶终点，数据末尾那个桶由**收尾 flush** 收口（q7 语料同款口径：
+//   收尾水位对齐到数据末尾，两侧 reason 都是 `close:flush`）。
+//   但 fixed+close 的尾部收口是**引擎非确定区**（扫描预算 + 墙钟超时，
+//   见 docs/EXPECTATION_VERIFY.md §6：q12 在该路径上是「豁免放行而非验证一致」）。
+//   把非确定区写成硬断言（INJ2）＝ 把 flaky 当信号，所以这里只用"运行期内自然收口"
+//   的桶做 hit，不构造尾桶负样本。
+//
+// ── 关键写法 ③：实体键 / 背景值域 ──────────────────────────────────────────
+//   · 实体键字段是 `bidder`（`match` 的键，生成器按实体 id 无条件写）→ `use(...)`
+//     里**不能**写 `bidder`（VN12：key_overrides 优先级高于 use，写了会被静默丢掉）。
+//   · 背景 bidder 走 `entity bid_events.bidder zipf(pool=1000)` 的实体池：池占 24 位
+//     地址空间**顶部**，与注入实体的低值段 [0, total_entity_ids) 分区 → 背景噪声不会
+//     和注入实体并到同一条桶实例上，H1/H2 的"1 条 / 2 条"与背景速率无关
+//     （速率只决定背景自身的桶实例规模）。
+//
+// ── 引擎级对拍现状（2026-09-20 实测，如实记录）──────────────────────────────
+//   `./verify_wfg.sh q12` → **PASS**：期望 2856 / 引擎 2856，missing 0 · unexpected 0 ·
+//   field_mismatch 0，连续 4 次复跑计数逐次一致（无 flaky）。引擎侧注入实体的
+//   `__wfu_summary` 直接印证桶语义：bidder 0 → 恰一条 `n=2.0`（同桶 count=2 合并成一条）；
+//   bidder 1 → 恰两条 `n=1.0`（被 10s 边界切成两个桶）。
+//   ⚠ 诚实标注：q12 在 **verify-nexmark 路径**上是**已知差异（豁免放行，非一致）**——
+//   fixed + close 的收尾收口由引擎扫描预算 + 墙钟超时驱动，大规模快速 replay 会多收尾部桶
+//   （1M 实测 27,446 vs 10,240；见 docs/EXPECTATION_VERIFY.md §6）。本语料与该路径不冲突：
+//   它只用"运行期内由事件时间水位自然收口"的桶（水位由背景流量推过每个桶终点），尾部桶
+//   则两侧都由收尾 flush 一致收口——本规模（55s × 200/s ≈ 1.1 万事件、batch 路径）下
+//   上述非确定项未被触发，故 L3 稳定 PASS。它证明不了那个已知差异已修，也不掩盖它。
+//
+// ── 关键写法 ④：背景速率/池大小别随意调大（规则侧实例预算）────────────────────
+//   q12.wfl 带 `limits { max_memory = "17MB"; max_instances = 5682; on_exceed = throttle }`，
+//   而 `throttle` 对**新实例是拒收**（wf-cep `cep/window.rs` `admit_new_instance` →
+//   `StepResult::Accumulate`，不是只限速率）：并发桶实例一旦顶到 5682，后续新桶会**静默
+//   消失**——注入实体可能因此报不出警（INJ1 从绿灯变红灯，而且是“数据少了”而非“规则错了”）。
+//   本语料的总桶实例数 = 期望告警数 2856，留在预算内；把背景速率提到 ~2× 以上就该看一眼这句。
+//
+// ── 用法 ────────────────────────────────────────────────────────────────────
+//   wfgen lint scenarios/q12_verify.wfg
+//   wfgen gen  --scenario scenarios/q12_verify.wfg --out /tmp/q12_gen
+//   ./verify_wfg.sh q12                           # L0/L0'/L1/L2 + L3 引擎级对拍（默认开）
+//   ⚠ 别用 `--duration` 覆盖：它改桶切分、H1 的"同桶"结论即失效（见关键写法 ①）。
+
+use "../models/schemas/nexmark.wfs"
+use "../models/queries/q12.wfl"
+
+#[duration=55s]
+scenario q12_verify<seed=1> {
+  background {
+    stream bid_events gen 200/s
+    // 实体池：背景 bidder 落在 24 位地址空间顶部，与注入实体（低值段）分区
+    entity bid_events.bidder zipf(pool=1000, exponent=1.0, fresh=0.0)
+  }
+
+  inject {
+    // H1（同桶合并）：spread 10s → 起点 22.5s → 22.5s / 27.5s 同落桶 [20,30)
+    // → 该桶收口**一条**告警（桶内 count=2 不改变输出条数）。
+    hit<1> for q12_bidder_10s_window_count bid_events {
+      use(price=100, channel="G", url="u") x 2
+      spread 10s
+    }
+
+    // H2（跨桶分裂）：spread 20s → 起点 17.5s → 17.5s 落桶 [10,20)、27.5s 落桶 [20,30)
+    // → 两个桶各自收口 → **两条**告警。
+    hit<1> for q12_bidder_10s_window_count bid_events {
+      use(price=200, channel="G", url="u") x 2
+      spread 20s
+    }
+  }
+}

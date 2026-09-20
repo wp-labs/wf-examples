@@ -214,25 +214,52 @@ q7/q11/q14 的 `detail`、q13a 的 `mod_key`、q21/q22 的解包结果。
 |---|---|---|
 | `curated` | `scenarios/<q>_verify.wfg`（人工写） | 有语义断言：`hit` 必报、`near_miss`/`miss` 必不报（`gen` 内置 **INJ1/INJ2** 硬断言） |
 | `smoke` | 自动生成背景-only 场景（跑完删除） | 仅「规则/schema 未漂移」，**不含语义断言** |
+| `GAP` | 规则不可注入时的 curated（如 stats 家族） | 只能背景-only；**不是**通过，也不是失败——原因写在文件头（见下） |
 
 - **curated 必须是真语料**：只有 `background`、没有 `inject` 的 curated 文件会被判 **`NOINJ` 失败**
   （跑了但什么都没验证 = 静默失效）；想要只测漂移就删掉该文件回落 `smoke`。
 - **源流自动推导**：从规则的 `events { alias : WINDOW }` ∩ schema 里声明了 `stream_tag` 的源流
   （链式查询的中间窗会被自然过滤）。
-- **现有语料**（每个文件头都写了构造依据与注意事项）：
+- **现有语料**（16 条 curated；每个文件头都写了判定量、构造依据与注意事项）：
 
-| 语料 | 规则形态 | 能构造的用例 | `--with-engine` |
+| 语料 | 规则形态 | 能构造的用例 | L3 引擎级对拍 |
 |---|---|---|---|
-| `q1_verify.wfg` | `on each` 无阈值 | 仅 hit | ✅ PASS（61000/61000，声明 1m） |
-| `q2_verify.wfg` | bind filter 落在**实体键字段** | hit / near_miss / miss | ✅ PASS（474/474，声明 1m） |
-| `q3_verify.wfg` | bind filter + snapshot join + join 后 `where` | hit / near_miss / miss（州不在白名单 / join miss） | ✅ PASS（1/1，声明 1m） |
-| `q4_verify.wfg` | 链式（内层 deferred reduce join） | hit / miss（**无** near_miss：无阈值） | ⚠ 见文件头：期望 与引擎对**中间窗**的模型差异（known-diff，2 条） |
-| `q5_verify.wfg` | 滑动窗 hop + `and close` + `conv top_ties(1)` | hit / near_miss（差 1 票）/ miss | ✅ PASS（115/115；语料**钉住** `#[duration=20s]`，原因见下） |
+| `q1_verify.wfg` | `on each` 纯投影（`score = 0.908 × price`） | 仅 hit | ✅ 61000/61000 |
+| `q2_verify.wfg` | `on each` + bind filter（`% 123 == 0`） | hit / near_miss / miss | ✅ 474/474 |
+| `q3_verify.wfg` | snapshot join + join 后 `where` | hit / near_miss / miss | ✅ 1/1 |
+| `q4_verify.wfg` | 链式（内层 deferred reduce join） | hit / miss（**无** near_miss：无阈值） | ⚠ 已知差异（2 条，见 `KNOWN_DIFF`） |
+| `q5_verify.wfg` | hop(10s,2s) + `and close` + `conv top_ties(1)` | hit / near_miss（差 1 票）/ miss | ✅ 115/115（语料**钉** `#[duration=20s]`） |
+| `q6_verify.wfg` | **join-then-key**（`match<seller>` + snapshot join） | hit / near_miss（均价差 1）/ miss（join miss） | ✅ 1/1 |
+| `q7_verify.wfg` | `10s:fixed` + `and close` + `conv top_ties(1)` | hit / near_miss（名次差 1）/ miss | ✅ 2/2（**钉** `#[duration=18s]`） |
+| `q8_verify.wfg` | `on each` + deferred join（`bucket_end`） | hit / miss | ✅ 1/1 |
+| `q9_verify.wfg` | `on each` + deferred `reduce maxrow` | hit / miss | ✅ 1/1 |
+| `q10_verify.wfg` | `on each` 纯投影 | 仅 hit | ✅ 60003/60003 |
+| `q11_verify.wfg` | `session(10s)` + `and close` | 仅 hit（会话内计数是二元结论） | ✅ 849/849 |
+| `q12_verify.wfg` | `10s:fixed` + `and close` | 仅 hit | ✅ 2856/2856（**钉** `#[duration=55s]`） |
+| `q13_verify.wfg` | 链式 + **provider** `side_input` snapshot join | ⛔ 不可注入 | ⛔ 缺口（见下） |
+| `q14_verify.wfg` | 价格区间过滤（开区间 `0.908×price ∈ (1e6, 5e7)`） | hit（界内）/ near_miss（界外差 1 元）/ miss | ✅ 3/3 |
+| `q15`–`q19` | `stats<1d:fixed>` / `group by` / `top(10)` | 理论上仅 hit | ⛔ 缺口（stats 不可注入，见下） |
+| `q20_verify.wfg` | `on each` + snapshot join + `where category == 10` | hit / near_miss（category 差 1）/ miss（join miss） | ✅ 1/1 |
+| `q21_verify.wfg` | `on each` + `channel_id != ""` | hit / miss（非空过滤，无 near_miss） | ✅ 60002/60002 |
+| `q22_verify.wfg` | `on each` 纯投影（`split(url,/')` 解包） | 仅 hit | ✅ 60003/60003 |
 
-  `q4` 的 ⚠ 是 **期望 与引擎的模型差异**（不是语料 bug）：① 期望把内层 yield 当告警，
-  引擎把它当中间窗（不落 sink）→ 1 条 missing；② 引擎对 1d 桶收口输出 `q4b` stats 告警，
-  而 `q4.wfl` 自注外层是 known-diff → 1 条 unexpected。已在脚本 `KNOWN_DIFF` 表里登记（不计失败），
-  详见 `q4_verify.wfg` 文件头。
+  16 条 curated 跑引擎全部**精确配对**（`missing`/`unexpected`/`field_mismatch` 均为 0）。
+  窗口/桶切分敏感的语料都把 `#[duration]` 钉住并在文件头说明理由。
+
+**已知缺口：q13 与 q15–q19 目前写不出可注入语料**（脚本记 `GAP` 或 N/A，**不判失败**；不是"懒得写"）：
+
+- **q15–q19（stats 家族）**：wfgen 把 stats 规则的**可注入步骤数定为 0**
+  （`crates/wfgen/src/validate/syntax.rs::injectable_step_count`：`stats_clause.is_some() → 0`），
+  而注入用例**至少要一个 `use … x N` 组**（VN21）⇒ `1 > 0` 报 VN24，交集为空；生成期
+  `inject_gen::extract_rule_structure` 也没有 stats 分支。这五个语料只能写成**背景-only**
+  （文件头逐条记了“想构造什么、为什么写不进来”）。
+  另：即便注入可用，L3 也过不了——期望侧 stats 收口与引擎还有三处口径差
+  （`oracle/mod.rs` 的 `close_window`：`entity_id = format!("{:?}", key)` vs 引擎的实体表达式值、
+  `origin = "close"` vs 引擎 `close:timeout`、`fields` 为空）。
+  → **stats 的权威验证路径是 `wfgen verify-nexmark`（`verify_daemon.sh`）**，不是 `.wfg` 语料。
+- **q13**：q13a 的输出落到**中间窗** `bid_mod`（引擎侧是内部 relay、不落 sink，同 q4 ①），
+  而 q13b 要 join **provider 静态表** `side_input`（knowdb CSV）——语料的 `join` 块只能为**流窗**造右行。
+  → 保留 smoke（只证 lint/gen 未漂移），瓶颈原因由脚本打印（`known_gap_reason`）。
 - **`--duration` 会覆盖语料自带的 `#[duration]`**，而窗口切分敏感的语料靠这个值成立：`q5` 的
   `near_miss` 是「差 1 票」构造（`top_ties(1)` 对**并列最高**全输出），只在原切分下严格成立。
   实测把 q5 的 20s 覆盖成 1m：簇起点从 9.0s 抬到 29.0s，切片把 20 条/19 条重新切开 →
@@ -265,8 +292,8 @@ gen 产物 JSONL --wfgen dump-frames--> events.arrow_framed
 
 - **file + batch 形态**（与仓库自己的 gen↔engine 对拍 `crates/wfgen/tests/*` 同形）：不起 daemon、
   不占端口、不发 SIGTERM，也不需要「追平启发式」——`wfusion batch` 跑完输入即退出。
-  全量 22 查询（5 个 curated 跑引擎 + 17 个 smoke）实测 **~9s**（按各语料声明的 `#[duration]`；
-  用 `--duration 10s` 压时长的约 5s），退出码 0。
+  全量 22 查询（16 个 curated 跑引擎 + 5 个 GAP + 1 个 smoke）实测 **~22s**（按各语料声明的 `#[duration]`；
+  用 `--duration 10s` 压时长可更快），退出码 0。
 - ⚠ **只对含 `inject` 的语料有意义**：`gen` 的期望由注入用例驱动 —— 场景里没有
   `inject` 时 `Expected: 0`（期望文件为空），无可比对。实测：同一个场景加一条 `inject` 后
   `Expected` 从 `0` 变 `5001`。所以 smoke 档一律记 **N/A**（不是通过），也不会白跑引擎。

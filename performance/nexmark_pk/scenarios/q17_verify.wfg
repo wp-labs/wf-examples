@@ -1,0 +1,57 @@
+// q17（Auction Statistics Report）—— WFL 规则验证语料
+//
+// 规则：models/queries/q17.wfl · `q17_auction_stats`
+//   权威 SQL：SELECT auction, count(*), count(*) FILTER (3 价格档),
+//             min/max/avg/sum(price) FROM bid GROUP BY auction;
+//   WFL：`stats<1d:fixed> group by (b.auction)`（1 天固定桶 = UTC 日历天）+ 8 度量
+//        （4 count 分档 + `min/max/avg/sum(price)`）；**每 auction 一行**；
+//        entity = `entity(digit, b.auction)`（= 分组键）。
+//
+// ── 判定量是什么 ──────────────────────────────────────────────────────────────
+// 判定量 = **每 auction 的 8 个度量值**（1d 桶收口时）。结构量 = **输出行数 =
+// 出现的 distinct auction 数**。8 个值本身不参与对拍（期望侧 stats 不回填 yield 字段）。
+// 注意 min/max/avg/sum 是**聚合**、count 是**计数**——都不是阈值判别量：没有"差一点的
+// 聚合"，所以 near_miss（差 1）在这一族里没有语义（与阈值类 q2/q7 的 near_miss 不同）。
+//
+// ── 用例为什么这么构造（以及为什么这里没有用例）──────────────────────────────
+// 想构造的用例：
+//   hit = auction 桶里至少 1 条 bid → 收口时该 auction 行输出；
+//   miss 的"自然候选" = 该 auction 0 条 bid → 桶不存在 → 不输出——但注入用例**必须**
+//   注入 ≥1 条事件（VN21），而 1 条就成桶，所以连 miss 也构造不出来；near_miss 无阈值可言。
+//   ⇒ 只有 hit 有意义（与 q1/q10 同族）。
+// ⚠ 与 q15 同因，注入写不进 `.wfg`（2026-09-20 实测）：
+//   stats 规则可注入步骤数 = 0，注入用例至少需要 1 个 `use … x N` 组（VN21）
+//   ⇒ VN21 × VN24 交集为空：
+//       [VN24] injection case 'bid_events' 的 use 事件组数 1 超过规则
+//              'q17_auction_stats' 的事件步骤数 0（每个 `use ... x N` 对应一个步骤）
+//   生成器同样没有 stats 步骤分支 ⇒ 只能表达 background-only 语料（`Expected: 0`）。
+//
+// ── 注意事项（stats 桶的收口时机 / entity 口径）────────────────────────────────
+//   · **收口时机**：1d 桶流末收口输出；1m 场景单桶，`#[duration=1m]` 非切分敏感量。
+//   · **entity 口径（期望↔引擎已知差异）**：entity = `b.auction`
+//       - 引擎侧 `entity_id` = auction 字段值渲染（如 `"0"`）；
+//       - 期望侧 `entity_id` = `format!("{:?}", 桶键)` = `Int(0)`（ScopeKey Debug）。
+//     `"0"` ≠ `Int(0)` ⇒ L3 分组错配（missing + unexpected）。
+//     **实测**（本语料 12000 事件，手动跑 `wfusion batch` 于 q17.wfl）：引擎输出
+//     **11316 行**（= distinct auction 数），`__wfu_entity_id` = auction 值（如 `"0"`）、
+//     `origin="close:timeout"`、`fired_at="2026-01-02T00:00:00Z"`（= 1d 桶末）。
+//   · **背景噪声**：分组键是 auction（低值 id 段 + 背景实体池），背景制造**大量桶**
+//     （每桶一行）；速率只影响桶数与聚合规模，不影响"单桶是否输出"的二元结构。
+//
+// 用法：
+//   wfgen lint scenarios/q17_verify.wfg
+//   wfgen gen  --scenario scenarios/q17_verify.wfg --out /tmp/q17_gen     # Expected: 0
+//   ./verify_wfg.sh q17        # 预期判 NOINJ——见上，如实结果
+
+use "../models/schemas/nexmark.wfs"
+use "../models/queries/q17.wfl"
+
+#[duration=1m]
+scenario q17_verify<seed=1> {
+  background {
+    // 桶 = auction：背景多 auction → 多桶（每桶一行）；速率只影响桶数与聚合规模
+    stream bid_events gen 200/s
+  }
+
+  // ⚠ 无 inject 块：stats 规则可注入步骤数为 0（VN21 × VN24，见文件头）。
+}
