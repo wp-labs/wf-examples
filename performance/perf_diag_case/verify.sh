@@ -34,11 +34,11 @@ READY=0
 for i in $(seq 1 50); do nc -z 127.0.0.1 "$PORT" 2>/dev/null && { READY=1; break; }; sleep 0.2; done
 [ "$READY" = 1 ] || { echo "FAIL: daemon 未就绪"; tail -20 data/daemon.log; exit 1; }
 
-echo "== 2. dump 帧 =="
+echo "== 2. dump 帧（纯离线，不连接运行时）=="
 "$GEN" dump-frames --scenario scenarios/evt.wfg --input data/evt.jsonl \
-  --addr 127.0.0.1:$PORT --ws models/schemas/evt.wfs --output data/evt.frames \
+  --ws models/schemas/evt.wfs --output data/evt.frames \
   --chunk 10000 --max-frame-bytes 8388608 --max-frame-rows 100000 || {
-  echo "FAIL: dump-frames（若报 schema/握手错，说明 --perf-diag 窗口未注册）"; tail -20 data/daemon.log; exit 1; }
+  echo "FAIL: dump-frames（场景/ schema 报错？）"; tail -20 data/daemon.log; exit 1; }
 
 echo "== 3. 驱动诊断（3 诊断档 × N=${N}）=="
 # rounds=1：sentinel 驱动的切换在首个哨兵后即发生，同档的重复轮次会吃到

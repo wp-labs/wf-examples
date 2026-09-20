@@ -164,10 +164,11 @@ else
   "$PY" scripts/gen_events.py "$N" > data/burst.jsonl
 
   # 预编码成 Arrow frames（绕开 `wfgen send` JSONL 实时编码客户端墙）。
-  # 必须在 step 0 的 daemon 运行期间 dump，且 send-arrow 回放到同一 daemon（schema 一致）。
+  # dump-frames 现在是**纯离线编码**（不连接运行时），可在 daemon 之外先 dump；
+  # send-arrow 仍回放到 step 0 的 daemon（schema 一致）。
   echo "==> 2b. 预编码帧（dump-frames → ${FRAMES}）"
   "$WFGEN" dump-frames --scenario scenarios/throughput.wfg --input data/burst.jsonl \
-    --addr 127.0.0.1:$PORT --ws models/schemas/network.wfs --output "$FRAMES" \
+    --ws models/schemas/network.wfs --output "$FRAMES" \
     --chunk 10000 --max-frame-bytes 8388608 --max-frame-rows 100000 > /dev/null 2>&1
   rm -f data/burst.jsonl
 fi

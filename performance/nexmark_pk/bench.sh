@@ -357,7 +357,7 @@ stat_samples() {
 }
 
 # ---- 写查询 conf：基于 conf/wfusion.toml，覆盖 rules + 并行度（+ 可选限速） ----
-# 并行度默认取 conf/wfusion.toml；-p/-r flag 或环境变量覆盖。
+# 并行度默认取 conf/wfusion.toml；可调旋钮只剩环境变量 RULE_PARALLELISM（旧 -p/-r flag 已无）。
 write_conf() {
   local Q="$1" M="$2"
   local RULES="models/queries/$Q.wfl"
@@ -373,10 +373,25 @@ write_conf() {
     done
     RULES="data/mix_rules/*.wfl"
   fi
-  RULE_V_EFF="${RULE:-$(sed -n 's/^rule_shards = *//p' conf/wfusion.toml | head -1)}"
-  sed -e "s|^rules = .*|rules = \"${RULES}\"|" \
-      -e "s|^rule_shards = .*|rule_shards = ${RULE_V_EFF}|" \
+  # 匹配 `key = val` 与 `key=val` 两种写法（conf 里是 `rule_shards=  10`，`=` 前无空格：
+  # 旧模式 `^rule_shards = ` 永不匹配 → RULE_PARALLELISM 静默失效，调了没用）。
+  RULE_V_EFF="${RULE:-$(sed -n 's/^rule_shards *= *//p' conf/wfusion.toml | head -1)}"
+  if [ -n "$RULE_V_EFF" ] && ! printf '%s' "$RULE_V_EFF" | grep -qE '^[0-9]+$'; then
+    echo "bad RULE_PARALLELISM '$RULE_V_EFF'（需正整数，实际取值见 conf/wfusion.toml）" >&2
+    exit 2
+  fi
+  sed -e "s|^rules *= .*|rules = \"${RULES}\"|" \
+      -e "s|^rule_shards *= .*|rule_shards = ${RULE_V_EFF}|" \
       conf/wfusion.toml > /tmp/bench_conf.toml
+  # 替换后自检（脚本无 set -e）：conf 换写法 / 改键名时必须显式失败，不能静默沿用旧值。
+  if ! grep -qF "rules = \"${RULES}\"" /tmp/bench_conf.toml; then
+    echo "write_conf: rules 替换未生效（期望 rules = \"${RULES}\"）——conf 键名/写法已漂移" >&2
+    exit 2
+  fi
+  if ! grep -qE "^rule_shards *= *${RULE_V_EFF}$" /tmp/bench_conf.toml; then
+    echo "write_conf: rule_shards 替换未生效（期望 ${RULE_V_EFF:-<空>}）——conf 键名/写法已漂移" >&2
+    exit 2
+  fi
   # 限速：MAX_INGEST_RATE 设置时在 [runtime] 注入 max_ingest_rate
   if [ -n "${MAX_INGEST_RATE:-}" ]; then
     awk -v r="max_ingest_rate = ${MAX_INGEST_RATE}" '/^rule_exec_timeout = /{print; print r; next} {print}' \
@@ -500,26 +515,22 @@ if [ "$FEED" = "replay" ] && [ ! -s "$FRAMES" ]; then
   # 否则会跳过生成→ send-arrow 推空帧→空等 MAX_SEC（之前 30m 空等 15 分钟无输出）。
   rm -f "$FRAMES"
   write_conf q1 replay
-  local_dummy=$(start_daemon) || exit 1
   # 管道直连 gen→dump-frames（--input - 读 stdin）：不再落 data/burst_bench.jsonl
   # 中间文件——100M 的 JSONL ~30GB，是磁盘峰值大头（os error 28 实测根因）。
+  # dump-frames 纯离线编码（不连接运行时），不再需要临时 daemon。
   # 注意：sorted 模式（默认，事件时间有序→窗口驱逐生效）仍写 60 桶临时文件到
   # $TMPDIR（同盘），100M ~30GB；想换盘可 TMPDIR=<大数据盘> 指走。
   # gen 的 --check 报告走 stderr 透传终端；pipefail 保证 gen 失败也能报错。
   ( set -o pipefail
     "$WFGEN" gen-nexmark "$TOTAL_N" --check | \
       "$WFGEN" dump-frames --scenario scenarios/nexmark.wfg --input - \
-        --ws models/schemas/nexmark.wfs --addr 127.0.0.1:$PORT --output "$FRAMES" --chunk 1000000 \
+        --ws models/schemas/nexmark.wfs --output "$FRAMES" --chunk 1000000 \
         --max-frame-bytes "$MAX_FRAME_BYTES" --max-frame-rows "$MAX_FRAME_ROWS" > /dev/null 2>&1
   ) || {
     echo "    错误: gen-nexmark/dump-frames 失败（确认 wfgen 含 --check：$WFGEN）" >&2
     rm -f "$FRAMES"
-    kill_daemon "$local_dummy"; wait_port_free
     exit 1
   }
-  # kill_daemon（非裸 kill）：只等端口会漏掉"端口已释放但进程未退出"的孤儿，
-  # 孤儿继续烧 CPU 会污染本轮首跑测量
-  kill_daemon "$local_dummy"; wait_port_free
   rm -f data/burst_bench.jsonl
   # 产出的帧仍为空 → 上一步静默失败（无 set -e），删掉坏缓存并显式退出，
   # 避免带着 0 字节缓存继续跑出"假结果/空等"。
@@ -790,9 +801,9 @@ fi
 # 单查询 --verify 传 --query 只验证该查询的规则（26 → 1 个文件）。
 if [ "$VERIFY" = "1" ] && [ "$FEED" = "replay" ]; then
   if [ "$QUERY" = "mix" ]; then
-    # mix 是多规则同跑：EMIT 计数受规则间交互影响，不能与 oracle 单规则期望对拍
+    # mix 是多规则同跑：EMIT 计数受规则间交互影响，不能与期望单规则期望对拍
     # （历史 q8/q11 数量级差异；正确性验证走 verify_daemon.sh 逐查询单跑保真）——跳过并明示。
-    echo "== verify: query=mix 跳过——混跑 EMIT 不能与 oracle 单规则对拍（正确性请用 verify_daemon.sh 逐查询）=="
+    echo "== verify: query=mix 跳过——混跑 EMIT 不能与期望单规则对拍（正确性请用 verify_daemon.sh 逐查询）=="
   else
     # stderr 保留（进度条走 stderr；stdout 是 JSON + diff 报告）
     VERIFY_SCOPE=""

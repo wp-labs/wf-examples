@@ -266,13 +266,10 @@ ensure_frames() {
   echo "==> 生成 $(comma "$N") 事件（源 IP 长尾 + 泊松时间 12min 固定跨度）→ 预编码帧"
   "$PY" scripts/gen_events.py "$N" > data/diag_gen.jsonl || {
     echo "    错误: gen_events.py 失败" >&2; rm -f data/diag_gen.jsonl; return 1; }
-  # dump-frames 需要一个在跑的 daemon 做 schema 握手（与 run.sh 同款）
-  write_conf
-  start_daemon data/diag_daemon_frames.log || return 1
+  # dump-frames 纯离线编码（不连接运行时）；不需要为它起临时 daemon。
   "$WFGEN" dump-frames --scenario scenarios/throughput.wfg --input data/diag_gen.jsonl \
-    --addr 127.0.0.1:$PORT --ws models/schemas/network.wfs --output "$FRAMES" \
+    --ws models/schemas/network.wfs --output "$FRAMES" \
     --chunk 10000 --max-frame-bytes 8388608 --max-frame-rows 100000 > /dev/null 2>&1
-  kill_daemon "$DAEMON_PID"; DAEMON_PID=""; wait_port_free
   rm -f data/diag_gen.jsonl
   [ -s "$FRAMES" ] || { echo "    错误: dump-frames 产物为空（已删坏缓存）" >&2; rm -f "$FRAMES"; return 1; }
   echo "  frames: ${FRAMES}（$(du -h "$FRAMES" | cut -f1)）"

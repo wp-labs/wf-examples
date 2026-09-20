@@ -39,16 +39,13 @@ sed -e 's|rules = "models/rules/\*.wfl"|rules = "/tmp/sw_rules.wfl"|' -e '/max_i
 pkill -9 -f "wfusion daemon" 2>/dev/null; sleep 1
 echo "== gen+dump ${N} (once, reuse across sweeps) =="
 GEN_SINGLE_IP=10.0.0.1 "$PY" scripts/gen_events.py "$N" > data/burst.jsonl 2>/dev/null
-"$WF" daemon --config "$CONF" --work-dir . > /tmp/qd_sw.log 2>&1 &
-D0=$!
-for i in $(seq 1 40); do nc -z 127.0.0.1 "$PORT" 2>/dev/null && break; sleep 0.2; done
+# dump-frames 纯离线编码（不连接运行时）——不需要为它起 daemon
 "$GEN" dump-frames --scenario scenarios/throughput.wfg --input data/burst.jsonl \
   --ws models/schemas/network.wfs --output "$FRAMES" --chunk 10000 \
   --max-frame-bytes 8388608 --max-frame-rows 100000 >/dev/null 2>&1
 rm -f data/burst.jsonl
 FW=$(ls -la "$FRAMES" | awk '{print $5}'); EV=$(( FW / N ))
 echo "frames=$FW B 每事件=$EV B"
-kill $D0 2>/dev/null; sleep 1
 
 emit() {
   "$PY" <<'EOF'

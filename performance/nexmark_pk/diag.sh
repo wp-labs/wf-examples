@@ -374,13 +374,10 @@ ensure_frames() {
   rm -f "$FRAMES"
   "$WFGEN" gen-nexmark "$TOTAL_N" --check > data/diag_gen.jsonl || {
     echo "    错误: gen-nexmark 失败" >&2; rm -f data/diag_gen.jsonl; return 1; }
-  # dump-frames 需要一个在跑的 daemon 做 schema 握手（与 bench.sh 同款临时 daemon）
-  write_conf q1
-  start_daemon data/diag_daemon_frames.log || return 1
+  # dump-frames 纯离线编码（不连接运行时）；不需要为它起临时 daemon。
   "$WFGEN" dump-frames --scenario scenarios/nexmark.wfg --input data/diag_gen.jsonl \
-    --ws models/schemas/nexmark.wfs --addr 127.0.0.1:$PORT --output "$FRAMES" --chunk 1000000 \
+    --ws models/schemas/nexmark.wfs --output "$FRAMES" --chunk 1000000 \
     --max-frame-bytes "$MAX_FRAME_BYTES" --max-frame-rows "$MAX_FRAME_ROWS" > /dev/null 2>&1
-  kill_daemon "$DAEMON_PID"; DAEMON_PID=""; wait_port_free
   rm -f data/diag_gen.jsonl
   [ -s "$FRAMES" ] || { echo "    错误: dump-frames 产物为空（已删坏缓存）" >&2; rm -f "$FRAMES"; return 1; }
   echo "  frames: ${FRAMES}（$(du -h "$FRAMES" | cut -f1)）"
