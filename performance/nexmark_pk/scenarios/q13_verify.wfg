@@ -33,8 +33,10 @@ use "../models/queries/q13.wfl"
 #[duration=1m]
 scenario q13_verify<seed=1> {
   background {
-    // 源流（q13 的驱动流）；`auction` 走实体池 → 背景噪声不碰注入实体
-    stream bid_events gen 200/s
+    // 源流（q13 的驱动流）；`auction` 走实体池 → 背景噪声不碰注入实体。
+    // 速率取 20/s（而非千级）：本链的判定量是**每个 bid 一行告警**的存在性，
+    // 与速率无关；速率只影响比对行数（L3 是逐条对拍）——降速保住覆盖、缩短验证时间。
+    stream bid_events gen 20/s
     entity bid_events.auction zipf(pool=1000)
   }
 
