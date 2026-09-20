@@ -200,6 +200,12 @@ close_all 尾桶收口语义，q3 = join 索引与提交前沿竞态。**每个�
 | L2 | 期望文件（`.except.jsonl` + meta） | 给出了可对拍的期望 |
 | L3 | 引擎输出 vs 期望逐条全等（**默认开**，`--no-engine` 关） | 两套实现是否一致 |
 
+> ⚠ **L0 不跑规则语义检查**：`wfgen lint` 只校验 `.wfg` 结构（LN*/VN*），**不**对 `use`
+> 进来的 `.wfl` 跑 `check_wfl`。规则语义错误由 **L1 的 `wfgen gen`**（`compile_wfl` →
+> `check_wfl`）与引擎加载（`wf-runtime` 的 `lifecycle/compile.rs`）暴露——实测：把
+> bind filter 写成 `&& first(...)`、或 `on each ... where <window>.has(...)`，
+> `wfgen lint` 报 `OK`、`wfgen gen` 报编译错。L0 只能当“语料结构校验”，别当“规则语义已校验”。
+
 **L0'（规则内联手写用例）**：本仓 10 个规则文件带 `test` 块（共 21 条：19 条可跑 + q13 的 2 条
 harness 刻意拒绝）、`verify_wfg.sh` 会逐个跑。它不需要生成数据，`--lint-only` 下也跑；缺 `wfl`
 二进制时启动会响亮提醒（`WFL=/path/to/wfl` 可指定）。

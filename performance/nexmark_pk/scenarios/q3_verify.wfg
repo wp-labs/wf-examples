@@ -17,11 +17,10 @@
 //   1) `category` **不能**写进 `use`：规则的 bind filter 是常量等式，生成器会**自动**
 //      施加该约束；重写会报 “use step field 'category' conflicts with rule step filter”。
 //      副作用：本语料构造不出「category ≠ 10」的负样本（生成器会强行写回 10）。
-//   2) join 的连接键是规则 join 的**左侧字段 `a.seller`**（不是实体键 `a.id`）：生成器把
-//      配对 person 的 `id` 设成**左实体键值**，所以这里要写 `use(seller=<该用例的实体键值>)`
-//      —— hit 用 seller=0、near_miss 用 seller=1（首个用例的实体键值 = 0，规律见
-//      q2_verify.wfg；键值由生成器按实体 id 分配，不可指定）。顺序变了会**大声失败**
-//      （INJ1 点名实际键值），不会静默通过。
+//   2) join 的连接键 `a.seller` 由生成器**自动**写入：连接条件要求两侧同值，生成器把
+//      驱动侧字段镜像成实体标识值（首个用例 = 0），再拿同一个值写配对 person 的 `id`
+//      —— 两侧因此必然对上。所以这里**不写** `use(seller=…)`（写了会报 VN12：那是
+//      生成器书写的字段），也不需要知道实体 id 的分配规律。
 //
 // 用法：
 //   ./verify_wfg.sh q3 --with-engine       # 批量入口（含引擎级对拍）
@@ -41,7 +40,7 @@ scenario q3_verify<seed=1> {
   inject {
     // 卖家州在白名单 → where 通过 → 必报警
     hit<1> for q3_auction_seller auction_events {
-      use(seller=0) x 1
+      use({}) x 1
       join person_events as id {
         use(state="OR") x 1
       }
@@ -49,7 +48,7 @@ scenario q3_verify<seed=1> {
 
     // 临界负样本：州差一点，不在白名单 → where 抑制
     near_miss<1> for q3_auction_seller auction_events {
-      use(seller=1) x 1
+      use({}) x 1
       join person_events as id {
         use(state="XX") x 1
       }
@@ -57,7 +56,7 @@ scenario q3_verify<seed=1> {
 
     // 普通负样本：不注入 person → join miss → state 缺失 → 抑制
     miss<1> for q3_auction_seller auction_events {
-      use(seller=2) x 1
+      use({}) x 1
     }
   }
 }

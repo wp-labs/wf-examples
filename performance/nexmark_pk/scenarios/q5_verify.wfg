@@ -11,18 +11,18 @@
 //   near_miss = 19 条 bid（**差 1 票**）→ 不是 top-1 → 不报
 //   miss      = 1 条 bid（陪跑）       → 不报
 //
-// 关键写法 ① 三个用例都要 `spread 2s`，把各自的簇压在同一个短时间段里。
-//   否则默认 spread = 规则窗口长度（10s），三个簇会落到**不同窗口**——near_miss 在自己
-//   那个窗口里就是 top-1，反而报警（实测报 INJ2：near_miss 实体命中 close:timeout 路径）。
+// 关键写法 ① 三个用例都要 `spread 0s`：把各自的簇压在**同一个时刻**。
+//   半开窗会把跨窗的簇按比例切开——`spread 2s` 时簇跨 [9.0s, 11.0s)，窗 [0s,10s)
+//   就只看到两个簇的各一半（20 条取 10、19 条也取 10）→ 并列最高 → top_ties 同时输出，
+//   near_miss 报警（实测报 INJ2）。压在同时刻后：包含该时刻的窗看到的就是完整的
+//   20 / 19 / 1，`hit > near_miss` 在**每个**覆盖窗里都严格成立。
+//   注：此前 `spread 2s` 能过是**靠背景噪声凑票**（背景 `bid` 的 `auction` 偶尔等于
+//   注入实体的键值，恰好给 hit 补了 1 票打散并列）；生成器现在让背景回避注入键值域
+//   （设计 §10 / `ReservedKeyBands`），坐实了这个并列——语料不该建在背景噪声上。
 //
-// 关键写法 ② `#[duration=20s]` 是**钉住的**，不要当普通参数随便改。near_miss 的“差 1 票”
-//   只在**两个簇共享窗口切片**时才严格成立（top_ties 对**并列最高**的实体全输出），而窗口
-//   切片由 `(duration, hop 10s/2s)` 共同决定：
-//     · 簇起点 = (duration − slide)/2（单簇取中点）→ duration=20s 时 = 9.0s；
-//     · duration=1m 时起点抬到 29.0s，切片把 20 条 / 19 条重新切开，near_miss 在某个
-//       切片里与 hit 并列最高 → 报 INJ2（这里就是被这一点坑到）。
-//   即窗口切分敏感的语料应把 duration 钉在它被验证过的值上；用 `--duration` 覆盖
-//   （脚本会提示）等于换了一套切分，near_miss 可能不再成立。
+// 关键写法 ② `#[duration=20s]` 决定簇落在哪个时刻（单簇取 `(duration − spread)/2`），
+//   只影响"被几个覆盖窗看到"（几何量）；`spread 0s` 后票数不再随窗口切分变化，
+//   因此 near_miss 的"差 1 票"对 duration 不再敏感（但仍应钉住：改了会改几何量）。
 //
 // 关键写法 ③ 本语料链不住**几何量**（size/slide、扇出）——那两个可观察量在
 //   `models/queries/q5.wfl` 的内联 `test` 块里钉（`hits == size/slide == 5`，
@@ -52,19 +52,19 @@ scenario q5_verify<seed=1> {
     // 票数最高 → 每窗口的 top-1 → 报警
     hit<1> for q5_hottest_auction bid_events {
       use(price=100, channel="G", url="u") x 20
-      spread 2s
+      spread 0s
     }
 
     // 临界负样本：只比命中少 1 票 → 不是 top-1
     near_miss<1> for q5_hottest_auction bid_events {
       use(price=100, channel="G", url="u") x 19
-      spread 2s
+      spread 0s
     }
 
     // 普通负样本：陪跑票数
     miss<1> for q5_hottest_auction bid_events {
       use(price=100, channel="G", url="u") x 1
-      spread 2s
+      spread 0s
     }
   }
 }

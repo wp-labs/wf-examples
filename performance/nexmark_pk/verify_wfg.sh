@@ -247,8 +247,8 @@ EOF
         --meta "$out_dir/$stem.except.meta.jsonl" > "$out_dir/engine_verify.json" 2>&1
 
     # 回显裁定词（stdout）供调用方分流。
-    # 1) **不看 wfgen verify 的退出码**：两侧都是 0 条时它照样 exit 0（status=pass），
-    #    那是“空对空”而不是证据。
+    # 1) **不看 wfgen verify 的退出码**：两侧都是 0 条时它默认 exit 1（需 --allow-empty 才
+    #    放行），而这里的“空对空 = NA”是**独立**的第三种裁定（不是通过、也不是失败）。
     # 2) **也不信报告里的 status 字段**：直接按 verify 的 pass 定义（missing / unexpected /
     #    field_mismatch 全为 0）从计数重算，标签写错也不会误报通过。
     "$PY" -c '
