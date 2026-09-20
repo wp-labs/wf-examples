@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # verify_wfg.sh — 按查询批量跑「.wfg 语料」的 WFL 验证
-# 层次：L0 静态校验 · L0' 规则内联手写用例 · L1 注入断言 · L2 期望文件 ·
+# 层次：L0 静态校验（.wfg 结构 + .wfl 规则语义） · L0' 规则内联手写用例 · L1 注入断言 · L2 期望文件 ·
 #       L3 引擎级对拍（**默认开**，`--no-engine` 关）
 #
 # 用法：
@@ -574,7 +574,9 @@ for q in $EXPANDED; do
         continue
     fi
 
-    # ---- L0 静态校验 ----
+    # ---- L0 静态校验（.wfg 结构 LN*/VN* + .wfl 规则语义 [WFL]）----
+    # `wfgen lint` 对 use 进来的每条 .wfl 跑 check_wfl（只报 error，warning 不致命）
+    # 再 compile_wfl 兜底，与 `wfgen gen` 同一份 checker → 不再有「lint 说 OK、gen 才报错」。
     lint_out="$("$WFGEN" lint "$scenario" 2>&1)"
     if [ "$lint_out" = "OK" ]; then
         lint_cell="OK"

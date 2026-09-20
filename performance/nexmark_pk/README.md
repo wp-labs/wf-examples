@@ -194,17 +194,17 @@ close_all 尾桶收口语义，q3 = join 索引与提交前沿竞态。**每个�
 
 | 层 | 做什么 | 答的是 |
 |---|---|---|
-| L0 | `.wfg` 静态校验（LN*/VN*） | 语料写对了吗 |
+| L0 | `.wfg` 静态校验（LN*/VN*）+ `.wfl` 规则语义（`[WFL] error`，与 `gen` 同一份 checker） | 语料与规则写对了吗 |
 | **L0'** | **规则内联手写用例（`test` 块，跑真引擎 match-engine）** | **规则本身的语义/几何** |
 | L1 | 注入断言 INJ1/INJ2（hit 必报 / near_miss·miss 必不报） | 语料的意图实现了吗 |
 | L2 | 期望文件（`.except.jsonl` + meta） | 给出了可对拍的期望 |
 | L3 | 引擎输出 vs 期望逐条全等（**默认开**，`--no-engine` 关） | 两套实现是否一致 |
 
-> ⚠ **L0 不跑规则语义检查**：`wfgen lint` 只校验 `.wfg` 结构（LN*/VN*），**不**对 `use`
-> 进来的 `.wfl` 跑 `check_wfl`。规则语义错误由 **L1 的 `wfgen gen`**（`compile_wfl` →
-> `check_wfl`）与引擎加载（`wf-runtime` 的 `lifecycle/compile.rs`）暴露——实测：把
-> bind filter 写成 `&& first(...)`、或 `on each ... where <window>.has(...)`，
-> `wfgen lint` 报 `OK`、`wfgen gen` 报编译错。L0 只能当“语料结构校验”，别当“规则语义已校验”。
+> **L0 = 语料结构 + 规则语义**：`wfgen lint` 对 `use` 进来的每条 `.wfl` 跑 `check_wfl`
+> （只把 `error` 当失败，`warning` 不算）再 `compile_wfl` 兜底，与 `wfgen gen` 结论一致。
+> 实测：bind filter 写成 `&& first(...)`、`on each ... where <window>.has(...)`、阈值非常量
+> （`count >= first(x)`，warp-fusion#101）现在 `lint` 就报 `[WFL] error`、退出非 0。
+> 规则语义的**几何**（窗口时长、序列能否真对齐）仍要看 L0' / L3。
 
 **L0'（规则内联手写用例）**：本仓 10 个规则文件带 `test` 块（共 21 条：19 条可跑 + q13 的 2 条
 harness 刻意拒绝）、`verify_wfg.sh` 会逐个跑。它不需要生成数据，`--lint-only` 下也跑；缺 `wfl`
