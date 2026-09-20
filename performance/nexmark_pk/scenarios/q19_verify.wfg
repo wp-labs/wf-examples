@@ -5,54 +5,39 @@
 //             (PARTITION BY auction ORDER BY price DESC) AS rank_number FROM bid)
 //             WHERE rank_number <= 10;   —— 每 auction 价格最高的 10 个 bid。
 //   WFL：`stats<10m:fixed> group by (b.auction)` + `top(10, b.price)`；close 时每个条目
-//        一条 alert（rank 序：price DESC，同价先到者在前——确定性 tie-break）；
-//        entity = `entity(digit, b.auction)`。
+//        一条 alert（rank 序：price DESC，同价先到者在前）；entity = `entity(digit, b.auction)`。
 //
 // ── 判定量是什么 ──────────────────────────────────────────────────────────────
-// 判定量 = **每 auction 在 10m 桶内 price 的 top-10 排序**（per-key 有界 top-N）。
-// 可观察的结构量 = 每个 auction 桶的**输出条目数 = min(该桶内 bid 数, 10)**。
-// `top` 是**排序/截断**（不是阈值）：每个条目都是一条独立 alert，不存在"报警 vs 不报警"
-// 的阈值边界，因此本查询的可构造二元结论只有「该 auction 桶是否有条目输出」。
+// 判定量 = **每 auction 桶在 10m 收口时的条目数 = min(该桶内 bid 数, 10)**，以及
+// 桶是否至少输出过条目。条目行字段（bidder/price）不参与对拍。
+// top 是**排序/截断**而非阈值：每个条目都是一条独立 alert，没有"报警 vs 不报警"的边界。
+// 但条目数 `min(count, 10)` 是**几何量**——本语料用每实体 12 条事件把 `top(10)` 的
+// **截断点**也压在回归下（11/12 条必须只出 10 条），比"只有 hit"多一层可观察量。
+// L3 的分组键 = (rule, entity_type, entity_id, origin)：entity_id = `b.auction`（如 "0"），
+// origin = `close:timeout`。
 //
-// ── 用例为什么这么构造（以及为什么这里没有用例）──────────────────────────────
-// 想构造的用例：
-//   hit = auction 桶内 ≥1 条 bid → 至少 1 个 top 条目输出（若条数 ≥11 则输出整 10 条）；
-//   miss = 该 auction 0 条 bid → 无桶；但注入用例必须注入 ≥1 条事件（VN21），
-//   1 条即成桶 ⇒ 连 miss 都构造不出来。
-//   near_miss 的"自然候选"是 top-N 的**第 10/11 名边界**（11 条时第 11 名被截掉），
-//   但 top 的输出是**多条 alert 的集合**而不是"命中/不命中"的二元判定，
-//   near_miss（差一点不命中）在"每键 top-N 全量输出"的语义下没有对应物。
-//   ⇒ 只有 hit 有意义。
-// ⚠ 与 q15 同因，注入写不进 `.wfg`（2026-09-20 实测）：
-//   stats 规则可注入步骤数 = 0，注入用例至少需要 1 个 `use … x N` 组（VN21）
-//   ⇒ VN21 × VN24 交集为空：
-//       [VN24] injection case 'bid_events' 的 use 事件组数 1 超过规则
-//              'q19_auction_top10_stats' 的事件步骤数 0（每个 `use ... x N` 对应一个步骤）
-//   生成器同样没有 stats 步骤分支 ⇒ 只能表达 background-only 语料（`Expected: 0`）。
+// ── 用例为什么这么构造 ────────────────────────────────────────────────────────
+//   hit = 桶内 ≥1 条 bid → 至少 1 个 top 条目输出。
+//   本语料每条实体注 **12** 条 bid（price 相同）→ 每桶条目数应恰为 10（截断生效）；
+//   期望侧 oracle 的 `n_records = max(各度量条目数)` 与引擎"每条目一条 alert"同语义。
+//   near_miss / miss = **构造不出来**：注入用例必须注入 ≥1 条事件（VN21），1 条即成桶；
+//   第 10/11 名边界不是"命中/不命中"的二元判定，而是"集合里有没有第 11 条"——top 全量
+//   输出后没有对应的 near_miss 对象（同 q1/q10 族）。
 //
-// ── 注意事项（stats 桶的收口时机 / entity 口径）────────────────────────────────
-//   · **收口时机**：`10m:fixed` 桶在**流末收口**输出。这里 `#[duration=1m]` 是**钉住**的：
-//     duration < 10m ⇒ 全部事件落同一 10m 桶（桶在末尾收口）；若用 `--duration` 覆盖到
-//     > 10m，就会被切成**多个 10m 桶**，每桶各出各的 top-10（切分语义改变）。
-//     —— 与 q5/q7 的"钉住 duration"同口径，别当普通参数改。
-//   · **entity 口径（期望↔引擎已知差异）**：entity = `b.auction`
-//       - 引擎侧 `entity_id` = auction 字段值渲染（如 `"0"`）；
-//       - 期望侧 `entity_id` = `format!("{:?}", 桶键)` = `Int(0)`（ScopeKey Debug）。
-//     两侧口径不同 ⇒ L3 分组错配（missing + unexpected）。
-//     **实测**（本语料 12000 事件，手动跑 `wfusion batch` 于 q19.wfl）：引擎输出
-//     **12000 行**（top-10 条目；本语料每 auction 平均 ~1 条 bid ⇒ 条目数 ≈ 事件数），
-//     `__wfu_entity_id` = auction 值（如 `"0"`）、`origin="close:timeout"`、
-//     `__wfu_fired_at="2026-01-01T00:10:00Z"`（= 10m 桶末，印证单桶）。
-//   · **期望侧条目数口径**：oracle 的 `close_window` 取 `n_records = max(各度量条目数)`，
-//     对 `top(10)` 即"该桶实际条目数"；引擎侧同语义（每条目一条 alert）——计数口径一致，
-//     但被 entity_id 分组错配掩盖。
-//   · **背景噪声**：分组键是 auction，背景制造大量桶（每桶 ≤10 条）；10m 桶 × 1m 数据
-//     内存很小；速率只影响每桶条目数与桶数。
+// ── 注意事项（窗口切分 / entity 口径 / 实体键约束）────────────────────────────────
+//   · **`#[duration=1m]` 是钉住的**：`10m:fixed` 桶 —— duration < 10m ⇒ 全部事件落同一
+//     10m 桶（桶在流末收口）；若用 `--duration` 覆盖到 > 10m 就会被切成多个 10m 桶，
+//     每桶各出各的 top-10（切分语义改变）。与 q5/q7 的"钉住 duration"同口径。
+//   · `auction` 是规则的实体字段（也是分组键）⇒ **不能**写进 `use(...)`（VN12）。
+//   · 背景 `auction` 走实体池 `zipf(pool=1000)` ⇒ 背景桶与注入实体（小 id）分区，
+//     注入桶的条数不被背景稀释。
+//   · 12 条同价事件触发确定性 tie-break（同价先到者在前）；条目数 10 与 tie-break 无关，
+//     故本语料对 tie-break 的取值不敏感（值不参与对拍）。
 //
 // 用法：
 //   wfgen lint scenarios/q19_verify.wfg
-//   wfgen gen  --scenario scenarios/q19_verify.wfg --out /tmp/q19_gen     # Expected: 0
-//   ./verify_wfg.sh q19        # 预期判 NOINJ——见上，如实结果
+//   wfgen gen  --scenario scenarios/q19_verify.wfg --out /tmp/q19_gen
+//   ./verify_wfg.sh q19        # L0/L0'/L1/L2 + L3 引擎级对拍（默认开）
 
 use "../models/schemas/nexmark.wfs"
 use "../models/queries/q19.wfl"
@@ -60,9 +45,16 @@ use "../models/queries/q19.wfl"
 #[duration=1m]
 scenario q19_verify<seed=1> {
   background {
-    // 桶 = auction（10m 固定窗）：背景多 auction → 多桶（每桶 ≤10 条目）
     stream bid_events gen 200/s
+    // 分组键 auction 走实体池 → 背景桶与注入实体（小 id）分区
+    entity bid_events.auction zipf(pool=1000)
   }
 
-  // ⚠ 无 inject 块：stats 规则可注入步骤数为 0（VN21 × VN24，见文件头）。
+  inject {
+    // 命中：2 个实体（auction=0/1），每个 12 条 bid → 每桶 top(10) 截断到 10 条 alert。
+    // L1 逐实体断言（INJ1）：entity_id = "0"/"1" 的告警必须存在。
+    hit<2> for q19_auction_top10_stats bid_events {
+      use(price=100) x 12
+    }
+  }
 }

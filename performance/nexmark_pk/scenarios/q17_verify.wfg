@@ -3,45 +3,37 @@
 // 规则：models/queries/q17.wfl · `q17_auction_stats`
 //   权威 SQL：SELECT auction, count(*), count(*) FILTER (3 价格档),
 //             min/max/avg/sum(price) FROM bid GROUP BY auction;
-//   WFL：`stats<1d:fixed> group by (b.auction)`（1 天固定桶 = UTC 日历天）+ 8 度量
-//        （4 count 分档 + `min/max/avg/sum(price)`）；**每 auction 一行**；
+//   WFL：`stats<1d:fixed> group by (b.auction)` + 8 度量；**每 auction 一行**；
 //        entity = `entity(digit, b.auction)`（= 分组键）。
 //
 // ── 判定量是什么 ──────────────────────────────────────────────────────────────
-// 判定量 = **每 auction 的 8 个度量值**（1d 桶收口时）。结构量 = **输出行数 =
-// 出现的 distinct auction 数**。8 个值本身不参与对拍（期望侧 stats 不回填 yield 字段）。
-// 注意 min/max/avg/sum 是**聚合**、count 是**计数**——都不是阈值判别量：没有"差一点的
-// 聚合"，所以 near_miss（差 1）在这一族里没有语义（与阈值类 q2/q7 的 near_miss 不同）。
+// 判定量 = **每 auction 在 1d 收口时是否产出一行**（8 个度量值不参与对拍）。
+//   · 桶存在 ⟺ 该 auction 至少 1 条 bid；
+//   · 1d 桶在**流末收口**（`#[duration=1m]` < 1d ⇒ 全部事件同一桶，场景末尾 close）。
+// L3 的分组键 = (rule, entity_type, entity_id, origin)：entity_id = 规则 `entity(...)`
+// 的求值结果 = `b.auction` 字段值（如 "0"），origin = `close:timeout`。
+// min/max/avg/sum/count 都是**聚合**而非阈值判别量：没有"差一点的聚合"，故无 near_miss。
 //
-// ── 用例为什么这么构造（以及为什么这里没有用例）──────────────────────────────
-// 想构造的用例：
-//   hit = auction 桶里至少 1 条 bid → 收口时该 auction 行输出；
-//   miss 的"自然候选" = 该 auction 0 条 bid → 桶不存在 → 不输出——但注入用例**必须**
-//   注入 ≥1 条事件（VN21），而 1 条就成桶，所以连 miss 也构造不出来；near_miss 无阈值可言。
-//   ⇒ 只有 hit 有意义（与 q1/q10 同族）。
-// ⚠ 与 q15 同因，注入写不进 `.wfg`（2026-09-20 实测）：
-//   stats 规则可注入步骤数 = 0，注入用例至少需要 1 个 `use … x N` 组（VN21）
-//   ⇒ VN21 × VN24 交集为空：
-//       [VN24] injection case 'bid_events' 的 use 事件组数 1 超过规则
-//              'q17_auction_stats' 的事件步骤数 0（每个 `use ... x N` 对应一个步骤）
-//   生成器同样没有 stats 步骤分支 ⇒ 只能表达 background-only 语料（`Expected: 0`）。
+// ── 用例为什么这么构造 ────────────────────────────────────────────────────────
+// 注入实体（`hit<2>`）由生成器按实体 id 分配 `auction` 键值：首个实体 auction=0、顺延 1。
+// 每条实体 2 条 bid（price=5000 → r1 档）→ 两个 auction 桶各在收口时输出 1 行。
+//   hit = 桶里 ≥1 条 bid → 收口输出；
+//   near_miss / miss = **构造不出来**：注入用例必须注入 ≥1 条事件（VN21），而 1 条就成桶
+//   ——"该 auction 0 条 bid ⇒ 桶不存在 ⇒ 无输出"无法作为断言对象（没被注入的 auction
+//   不在实体清单里）。⇒ 只有 hit 有意义（同 q1/q10 族）。
 //
-// ── 注意事项（stats 桶的收口时机 / entity 口径）────────────────────────────────
-//   · **收口时机**：1d 桶流末收口输出；1m 场景单桶，`#[duration=1m]` 非切分敏感量。
-//   · **entity 口径（期望↔引擎已知差异）**：entity = `b.auction`
-//       - 引擎侧 `entity_id` = auction 字段值渲染（如 `"0"`）；
-//       - 期望侧 `entity_id` = `format!("{:?}", 桶键)` = `Int(0)`（ScopeKey Debug）。
-//     `"0"` ≠ `Int(0)` ⇒ L3 分组错配（missing + unexpected）。
-//     **实测**（本语料 12000 事件，手动跑 `wfusion batch` 于 q17.wfl）：引擎输出
-//     **11316 行**（= distinct auction 数），`__wfu_entity_id` = auction 值（如 `"0"`）、
-//     `origin="close:timeout"`、`fired_at="2026-01-02T00:00:00Z"`（= 1d 桶末）。
-//   · **背景噪声**：分组键是 auction（低值 id 段 + 背景实体池），背景制造**大量桶**
-//     （每桶一行）；速率只影响桶数与聚合规模，不影响"单桶是否输出"的二元结构。
+// ── 注意事项（stats 桶的收口时机 / entity 口径 / 实体键约束）────────────────────
+//   · `auction` 是规则的**实体字段**（也是分组键）⇒ **不能**写进 `use(...)`（VN12：
+//     生成器用实体 id 覆盖它）；价格等非键字段可以写。
+//   · 背景 `auction` 走实体池 `zipf(pool=1000)`：池值落在 24 位空间顶部、与注入实体的
+//     小数字值域分区（设计 §10/VN31）⇒ 背景不会和注入实体并到同一个桶。
+//   · `#[duration=1m]` 钉住：只是缩短运行；< 1d ⇒ 仍是单桶（切分不敏感量）。
+//   · 背景噪声会改变各桶的 8 个度量值，但度量值不参与对拍；对拍的桶集合/计数两侧同源。
 //
 // 用法：
 //   wfgen lint scenarios/q17_verify.wfg
-//   wfgen gen  --scenario scenarios/q17_verify.wfg --out /tmp/q17_gen     # Expected: 0
-//   ./verify_wfg.sh q17        # 预期判 NOINJ——见上，如实结果
+//   wfgen gen  --scenario scenarios/q17_verify.wfg --out /tmp/q17_gen
+//   ./verify_wfg.sh q17        # L0/L0'/L1/L2 + L3 引擎级对拍（默认开）
 
 use "../models/schemas/nexmark.wfs"
 use "../models/queries/q17.wfl"
@@ -49,9 +41,16 @@ use "../models/queries/q17.wfl"
 #[duration=1m]
 scenario q17_verify<seed=1> {
   background {
-    // 桶 = auction：背景多 auction → 多桶（每桶一行）；速率只影响桶数与聚合规模
     stream bid_events gen 200/s
+    // 分组键 auction 走实体池 → 背景桶与注入实体（小 id）分区
+    entity bid_events.auction zipf(pool=1000)
   }
 
-  // ⚠ 无 inject 块：stats 规则可注入步骤数为 0（VN21 × VN24，见文件头）。
+  inject {
+    // 命中：2 个实体（auction=0/1），每个 2 条 bid → 2 个桶各输出 1 行。
+    // L1 逐实体断言（INJ1）：告警 entity_id 必须是 "0"/"1"。
+    hit<2> for q17_auction_stats bid_events {
+      use(price=5000) x 2
+    }
+  }
 }

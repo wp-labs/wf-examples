@@ -312,19 +312,20 @@ has_inject_assert() { grep -qE '^[[:space:]]*(hit|near_miss|miss)[[:space:]]*<' 
 # 差异被修好后这里会变成 PASS，脚本会提示把它从表里删掉（自清理）。
 known_diff_reason() {
     case "$1" in
-        q4) printf '%s' "期望把内层 yield 当告警（引擎当中间窗，不落 sink；1 条 missing）+ 1d 桶收口告警（1 条 unexpected）" ;;
+        q4) printf '%s' "期望把内层 yield 当告警（引擎当中间窗，不落 sink）→ missing；更长 duration 下还会出现 1d 桶收口告警（unexpected）" ;;
         *)  printf '' ;;
     esac
 }
 
 # ---- 已知缺口（**不可验证**的原因，与 KNOWN_DIFF 区分）----
-# 有的查询在当前工具链下写不出可注入语料：不是"懒得写"，是硬约束。这些查询的
-# 期望级/引擎级证据只能走别的路径（stats 家族 → `wfgen verify-nexmark` / verify_daemon.sh）。
+# 有的查询在当前工具链下写不出可注入语料：不是"懒得写"，是硬约束。这些查询的证据
+# 只能走别的路径（如 q13 的 provider join）。
+# 注：stats 家族（q15–q19）曾在这里（可注入步骤数 = 0），2026-09-20 已给 stats
+# 合成 1 个步骤、并开了 oracle 的实体/收口口径 → 它们现在是正常 curated。
 # 未登记的原因一律按普通 smoke/N-A 处理。
 known_gap_reason() {
     case "$1" in
         q13) printf '%s' "q13a 的中间窗 relay 不落 sink（同 q4 ①）+ q13b 需 provider(side_input) 不可注入" ;;
-        q15|q16|q17|q18|q19) printf '%s' "stats 规则不可注入（可注入步骤数 = 0）" ;;
         *) printf '' ;;
     esac
 }
@@ -434,6 +435,7 @@ N_ENGINE_NA=0
 N_KNOWN=0
 N_UTEST=0
 N_GAP=0
+N_INERT=0
 for q in $EXPANDED; do
     rule="models/queries/$q.wfl"
     scenario="scenarios/${q}_verify.wfg"
@@ -505,13 +507,13 @@ for q in $EXPANDED; do
     fi
 
     # ---- curated 必须是真语料：没有 hit/near_miss/miss 就等于"没验证" ----
-    # 例外：**规则本身不可注入**时（stats 规则的可注入步骤数 = 0，见 wfgen
-    # `validate/syntax.rs::injectable_step_count`：VN21 要求 ≥1 组、VN24 要求 ≤0 → 交集为空），
-    # curated 只能写成 background-only。这不是"跑了但没验证"的放羊，而是工具限制；
-    # 记 GAP（可见、计入汇总、不判失败），并把原因写在语料文件头。
+    # 例外：**规则本身不可注入**的形态（历史上 stats 家族就是：可注入步骤数 = 0，
+    # VN21 要求 ≥1 组、VN24 要求 ≤0 → 交集为空；2026-09-20 已给 stats 合成 1 步）。
+    # 这类 curated 只能写成 background-only：记 GAP（可见、计入汇总、不判失败），
+    # 并把原因写在语料文件头——不是"跑了但没验证"的放羊，而是工具限制。
     if [ "$kind" = "curated" ] && ! has_inject_assert "$scenario"; then
-        if grep -qE '^[[:space:]]*stats<' "$rule"; then
-            row "$q" "$kind" GAP - "$scenario" "规则不可注入（stats 可注入步骤数 = 0）→ 语料只能背景-only；期望级证据走 verify-nexmark（见 README）"
+        if [ -n "$(known_gap_reason "$q")" ]; then
+            row "$q" "$kind" GAP - "$scenario" "规则不可注入（$(known_gap_reason "$q")）→ 语料只能背景-only"
             N_GAP=$((N_GAP + 1))
         else
             row "$q" "$kind" NOINJ - "$scenario" "curated 语料无注入用例 → 等于未验证；补 inject 或删掉该文件回落 smoke"
@@ -555,16 +557,28 @@ for q in $EXPANDED; do
         inj="$(printf '%s' "$gen_out" | sed -n 's/^Inject assert: *//p' | head -1)"
         expected="$(printf '%s' "$gen_out" | sed -n 's/^Expected: *\([0-9,]*\) .*/\1/p' | head -1)"
         events="$(printf '%s' "$gen_out" | sed -n 's/^Generated *\([0-9,]*\) events.*/\1/p' | head -1)"
+        # 生成器的“注入实体被判不参与断言”警告（如常量实体 `entity(digit, 1)`：实体标识不是
+        # `entity(...)` 的字段 → 计入 unasserted）。此时 INJ1/INJ2 **空转**：语料里有 hit 用例，
+        # 但没任何东西被断言——必须说出来，不能与真 smoke 混为一谈。
+        skip_warn="$(printf '%s' "$gen_out" | sed -n 's/^Warning: *\(.*\)$/\1/p' | head -1)"
         note="${inj:-gen 失败}"
         if [ -n "$events" ]; then
             if [ -n "$inj" ]; then
                 note="entities ${inj%% *} · expected=${expected} · events=${events}"
+            elif [ -n "$skip_warn" ]; then
+                note="注入断言未生效（${skip_warn}）· expected=${expected} · events=${events}"
+                INERT_NOTE="$skip_warn"
             else
                 note="无注入断言（smoke）· events=${events}"
             fi
             [ -n "$DURATION" ] && note="$note · dur=$DURATION"
         fi
         row "$q" "$kind" "$lint_cell" "$gen_cell" "$out_dir" "$note"
+        if [ -n "${INERT_NOTE:-}" ]; then
+            echo "  [${q}] inject: N/A（注入断言空转：${INERT_NOTE}）——实体是常量 → INJ1/INJ2 断言不到它；本查询的证据只到 L3（两侧独立算出同一行）"
+            N_INERT=$((N_INERT + 1))
+            INERT_NOTE=""
+        fi
         run_rule_inline_tests "$q" "$rule"
         [ "$gen_cell" = "FAIL" ] && printf '%s\n' "$(printf '%s' "$gen_out" | sed 's/^/        | /')"
         # --duration 覆盖语料的 #[duration] 会改窗口切分：top-N 类语料的 near_miss（差 1 票）
@@ -659,6 +673,9 @@ if [ "$N_KNOWN" -gt 0 ]; then
 fi
 if [ "$N_GAP" -gt 0 ]; then
     echo "   注：已知缺口 ${N_GAP} 条（规则不可注入 → 语料只能背景-only，不计失败，见脚本 known_gap_reason 与 README）。"
+fi
+if [ "$N_INERT" -gt 0 ]; then
+    echo "   注：${N_INERT} 条语料的**注入断言空转**（实体是常量 → 生成器计入 unasserted）：它们的证据只到 L3，不包含逐实体断言。"
 fi
 if [ "$N_UTEST" -gt 0 ]; then
     echo "   注：规则内联用例（\`test\` 块，真引擎 match-engine）已跑 ${N_UTEST} 个规则文件；断言失败即判失败。"
